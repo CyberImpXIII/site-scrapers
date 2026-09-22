@@ -1,0 +1,14 @@
+{
+  "name": "site-scrapers",
+  "version": "1.0.0",
+  "description": "Per-site Puppeteer scrapers used instead of interactive browser tool calls for sites already 'known good'.",
+  "private": true,
+  "type": "commonjs",
+  "main": "run.js",
+  "scripts": {
+    "scrape": "node run.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.0.0"
+  }
+}
