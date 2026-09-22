@@ -10,30 +10,45 @@ remember or re-derive it.
 
 ## Architecture
 
-- **`engine.js`** — the only scraping code. Takes a hostname + params, looks
-  up that site's recipe in the DB, executes it, extracts fields, logs the
-  run, prints one JSON object. Nothing site-specific is hardcoded here.
+- **`engine.js`** — the only scraping code. Takes a hostname (+ optional
+  `#page_type`) + params, looks up that recipe in the DB, executes it,
+  extracts fields, logs the run, prints one JSON object. Nothing
+  site-specific is hardcoded here.
 - **`data/scrapers.db`** (SQLite, via Node's built-in `node:sqlite`) — the
   knowledge base. Three tables:
-  - `sites` — one row per hostname: how to navigate there (`nav_method` +
-    `nav_template`), how to detect a loaded results page
-    (`card_anchor_text`), pagination config, a `status`
-    (`working`/`broken`/`needs-review`), and free-text `notes`.
-  - `site_fields` — named, enumerable fields per site (e.g. `title`,
-    `salary`, `location`, `href`), each with an extraction rule
-    (`positional_segment` / `regex_anywhere` / `anchor_attribute`).
+  - `sites` — one row per `(hostname, page_type)` pair: how to navigate
+    there (`nav_method` + `nav_template`), a `status`
+    (`working`/`broken`/`needs-review`), and free-text `notes`. Two
+    `page_type`s exist:
+    - `listing` (default, back-compat) — a results page with repeated
+      cards. Uses `card_anchor_text` to find them, extracts one record per
+      card, pagination config, `result_count_regex` for a self-consistency
+      check.
+    - `article` — a single-record page (e.g. a job/post detail page). Uses
+      `content_selector` (defaults to `document.body`) and `nav_method:
+      "direct_url"` (goto `params.url` as-is). `content_stop_text`
+      optionally truncates the extracted text at a literal marker, to cut
+      off "related content" widgets that would otherwise bloat the output.
+  - `site_fields` — named, enumerable fields per site, each with an
+    extraction rule: `positional_segment` / `regex_anywhere` /
+    `anchor_attribute` (all recipes), plus `title_regex` (matches against
+    `document.title`, often cleaner than blob parsing) and `full_blob` (the
+    whole extracted text, e.g. for a catch-all `description` field) —
+    article recipes only.
   - `scrape_runs` — an audit log of every invocation (params, success,
     result count vs. the site's own claimed count, duration, error). This
     is the reliability history — not just a static status flag.
-- **`register.js`** — how a newly-learned site gets documented: pass it a
-  JSON recipe (inline or a file), it upserts `sites` + `site_fields`. This
-  replaces "write a new `sites/<hostname>.js` file."
+- **`register.js`** — how a newly-learned site/page gets documented: pass it
+  a JSON recipe (inline or a file), it upserts `sites` + `site_fields`. This
+  replaces "write a new `sites/<hostname>.js` file." See its header comment
+  for both the `listing` and `article` JSON shapes.
 - **`query.js`** — how to check what's already documented, without reading
   any code:
   ```
-  node query.js sites                # every known site + status
-  node query.js site hiringcafe.com  # full recipe + fields for one site
-  node query.js runs hiringcafe.com  # recent run history / reliability
+  node query.js sites                          # every known site+page_type + status
+  node query.js site hiringcafe.com             # full recipe + fields (page_type defaults to listing)
+  node query.js site hiringcafe.com#article     # same, for the article recipe
+  node query.js runs hiringcafe.com#article     # recent run history / reliability
   ```
 - **`scrape.sh`** — thin wrapper around `engine.js` using the right Node
   binary (see version note below).
@@ -41,30 +56,46 @@ remember or re-derive it.
 ## Workflow (for Claude to follow)
 
 1. **Before assuming a site needs interactive discovery**, run
-   `node query.js site <hostname>`. If it's there and `status: "working"`,
-   skip straight to step 2.
-2. **Known, working site** → `./scrape.sh <hostname> '<json params>'`. Add a
-   trailing `--raw` only when debugging field extraction — it includes each
-   record's source text as `_raw`, roughly doubling output size.
-   Always check the `success` field in the JSON, not just exit code —
-   `exit 0` only means "ran without crashing." A `documented:false` field
-   means nothing is known about this site yet; `documented:true` +
-   `success:false` means it's known but broken/needs-review right now, or
-   this specific run failed (check `error`/`timedOut`/`consistencyWarning`).
+   `node query.js site <hostname>` (add `#article` if you specifically want
+   a detail-page recipe rather than the results-listing one). If it's there
+   and `status: "working"`, skip straight to step 2.
+2. **Known, working site** → `./scrape.sh <hostname>[#page_type] '<json params>'`
+   (`#page_type` defaults to `listing` if omitted — existing calls are
+   unaffected). Add a trailing `--raw` only when debugging field extraction
+   — it includes each record's source text as `_raw`, roughly doubling
+   output size. Always check the `success` field in the JSON, not just exit
+   code — `exit 0` only means "ran without crashing." A `documented:false`
+   field means nothing is known about this site/page_type yet;
+   `documented:true` + `success:false` means it's known but
+   broken/needs-review right now, or this specific run failed (check
+   `error`/`timedOut`/`consistencyWarning`).
 3. **Unknown site, or `success:false`** → fall back to normal interactive
    Claude-in-Chrome tools for that visit.
 4. **After a successful interactive session**, write a small JSON recipe
-   (see shape in `register.js`'s header comment) and run
-   `node register.js '<json>'` to document it. Inspect the live DOM first
-   (dump a card's `outerHTML` via a one-off Puppeteer snippet) rather than
+   (see shape in `register.js`'s header comment — `listing` for a
+   card-repeated results page, `article` for a single-record detail/post
+   page) and run `node register.js '<json>'` to document it. Inspect the
+   live DOM/text first (dump a card's `outerHTML`, or an article page's
+   `document.body.innerText`, via a one-off Puppeteer snippet) rather than
    guessing selectors — Tailwind/JIT-styled sites in particular have
    auto-generated class names that are more brittle than they look; prefer
    anchor-text traversal + positional/regex extraction over CSS class
    selectors where the class names look auto-generated (see
-   `hiringcafe.com`'s recipe and its `notes` field for a worked example,
-   including a real edge case — a stock-ticker badge with no separating
-   space that broke the `company_name` regex — found and fixed as a
-   one-row DB update, not a code change).
+   `hiringcafe.com`'s listing recipe and its `notes` field for a worked
+   example, including a real edge case — a stock-ticker badge with no
+   separating space that broke the `company_name` regex — found and fixed
+   as a one-row DB update, not a code change). For article recipes,
+   `document.title` is often more reliable than blob-position parsing for
+   title/company/location — see `title_regex` and the `hiringcafe.com`
+   article recipe's `notes` for a real quirk it caught (a workplace-type
+   *filter widget* on the page listing all options, which an unanchored
+   regex matched instead of the job's actual value).
+
+**Not yet built:** a third script to auto-detect which `page_type` a given
+URL is (so a fresh session doesn't have to guess/know in advance whether a
+link is a listing or an article page). Planned next step — deliberately
+deferred so `listing`/`article` extraction could be validated independently
+first.
 
 ## Why this saves tokens
 
@@ -84,6 +115,21 @@ reduction. The ceiling isn't higher than that because the underlying listing
 text still has to enter context somewhere — what gets eliminated is the
 scaffolding around it (screenshots, tree dumps, chunking retries), not the
 data itself.
+
+**Article pages save tokens for a different reason.** There's no "N cards in
+one call" multiplier — a detail page is always one record either way — so
+the win is entirely "skip the markup/attributes/nav-chrome, keep only
+content text." Measured on a `hiringcafe.com` job-detail page: raw
+`outerHTML` (roughly what a DOM/accessibility-tree dump would cost) was
+176,060 chars (~44K tokens); the `article` recipe's full JSON output (8
+named fields + a `description` full-text field) was 4,816 chars (~1.2K
+tokens) — about a 36x cut. Most of that gap is markup/attributes, not
+content: the page's own visible text (`document.body.innerText`) was 8,062
+chars on that same page — but note that number is *unstable*: a lazy-loaded
+"Similar jobs" widget (itself full listing-card markup for ~8 unrelated
+jobs) can add 20K+ chars if it finishes loading before extraction runs,
+which is why the recipe uses `content_stop_text` to truncate before it
+rather than relying on a fixed wait time.
 
 ## Determinism notes
 

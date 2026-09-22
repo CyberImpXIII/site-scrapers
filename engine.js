@@ -3,7 +3,12 @@
 // reach and read a site lives as data in sites/site_fields rows (db.js).
 //
 // Usage:
-//   node engine.js <hostname-or-url> '<json params>' [--raw]
+//   node engine.js <hostname-or-url>[#page_type] '<json params>' [--raw]
+//
+// page_type suffix ('#listing' | '#article') picks which recipe to use for a
+// hostname. Omitting it defaults to 'listing' (back-compat). A 'listing' page
+// extracts repeated cards (jobs array); an 'article' page extracts one record
+// (single content block, e.g. a job detail page) from `params.url`.
 //
 // --raw includes each record's source innerText blob as `_raw` (useful when
 // tuning a site's field extraction rules) — roughly doubles output size, so
@@ -12,17 +17,17 @@
 // Always prints exactly one JSON object to stdout:
 //   { success, documented, ... site data or diagnostic fields ... }
 //
-// success:false + documented:false  -> nothing known about this site yet.
-//                                       Fall back to interactive tools, then
-//                                       call register.js to document it.
+// success:false + documented:false  -> nothing known about this site/page_type
+//                                       yet. Fall back to interactive tools,
+//                                       then call register.js to document it.
 // success:false + documented:true   -> site is documented but currently
 //                                       marked broken/needs-review, or this
 //                                       run hit a real failure. Check the
 //                                       `notes`/`error`/`timedOut` fields.
-// success:true                      -> trust `jobs` (or whatever the card
-//                                       array is called) and `resultCount`.
+// success:true (listing)            -> trust `jobs` and `count`.
+// success:true (article)            -> trust `article` (single object).
 
-const { openDb, getSite, getFields, logRun } = require('./db');
+const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
 const { withPage } = require('./lib/runner');
 
 function toStr(val) {
@@ -136,6 +141,69 @@ async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, incl
   );
 }
 
+// Article pages are one record per page, not repeated cards. Pull text from
+// contentSelector (default body), optionally truncate at contentStopText
+// (cuts off "related content" widgets etc. that would otherwise bloat the
+// blob), then run the same field-extraction kinds as extractCards, plus two
+// article-only kinds: 'title_regex' (matches against document.title, which
+// is often cleaner/more stable than positional blob parsing) and 'full_blob'
+// (the entire post-truncation text, for a catch-all body/description field).
+async function extractArticle(page, { contentSelector, contentStopText, minTextLen, fields, includeRaw }) {
+  return page.evaluate(
+    (contentSelector, contentStopText, minTextLen, fields, includeRaw) => {
+      const container = (contentSelector && document.querySelector(contentSelector)) || document.body;
+      if (!container) return { record: null, blobLen: 0 };
+
+      let text = container.innerText || '';
+      if (contentStopText) {
+        const idx = text.indexOf(contentStopText);
+        if (idx !== -1) text = text.slice(0, idx);
+      }
+
+      const blob = text
+        .split('\n')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .join(' | ');
+      const segments = blob.split(' | ');
+      const record = {};
+
+      for (const f of fields) {
+        if (f.extract_kind === 'positional_segment') {
+          record[f.field_name] = segments[f.segment_index] ?? null;
+        } else if (f.extract_kind === 'regex_anywhere') {
+          try {
+            const re = new RegExp(f.regex_pattern);
+            const m = blob.match(re);
+            record[f.field_name] = m ? (m[1] !== undefined ? m[1] : m[0]) : null;
+          } catch {
+            record[f.field_name] = null;
+          }
+        } else if (f.extract_kind === 'title_regex') {
+          try {
+            const re = new RegExp(f.regex_pattern);
+            const m = document.title.match(re);
+            record[f.field_name] = m ? (m[1] !== undefined ? m[1] : m[0]) : null;
+          } catch {
+            record[f.field_name] = null;
+          }
+        } else if (f.extract_kind === 'full_blob') {
+          record[f.field_name] = blob;
+        } else if (f.extract_kind === 'anchor_attribute') {
+          record[f.field_name] = container.getAttribute(f.attribute_name);
+        }
+      }
+      if (includeRaw) record._raw = blob;
+      return { record, blobLen: blob.length };
+    },
+    contentSelector,
+    contentStopText,
+    minTextLen,
+    fields,
+    includeRaw
+  );
+}
+
 async function main() {
   const startedAt = Date.now();
   const [, , hostnameArg, paramsArg, ...rest] = process.argv;
@@ -146,13 +214,13 @@ async function main() {
     process.exit(1);
   }
 
-  let hostname = hostnameArg;
+  let hostnamePart = hostnameArg;
   try {
-    if (hostnameArg.startsWith('http')) hostname = new URL(hostnameArg).hostname;
+    if (hostnameArg.startsWith('http')) hostnamePart = new URL(hostnameArg).hostname;
   } catch {
     /* leave as-is */
   }
-  hostname = hostname.replace(/^www\./, '');
+  const { hostname, pageType } = parseSiteArg(hostnamePart);
 
   let params = {};
   if (paramsArg) {
@@ -165,13 +233,13 @@ async function main() {
   }
 
   const db = openDb();
-  const site = getSite(db, hostname);
+  const site = getSite(db, hostname, pageType);
 
   if (!site) {
     console.log(JSON.stringify({
       success: false,
       documented: false,
-      error: `No site documented for "${hostname}". Fall back to interactive browser tools, then run register.js.`,
+      error: `No site documented for "${hostname}#${pageType}". Fall back to interactive browser tools, then run register.js.`,
     }));
     process.exit(1);
   }
@@ -188,6 +256,73 @@ async function main() {
   }
 
   const fields = getFields(db, site.id);
+
+  if (site.page_type === 'article') {
+    let articleOutcome;
+    try {
+      articleOutcome = await withPage(async page => {
+        if (site.nav_method === 'direct_url') {
+          const url = substitute(site.nav_template, params);
+          if (!url) throw new Error(`Missing param for nav_template "${site.nav_template}" (expected e.g. {"url": "..."})`);
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        } else if (site.nav_method === 'ui_steps') {
+          await runUiSteps(page, site.nav_template, params);
+        } else {
+          throw new Error(`Unsupported nav_method for page_type=article: ${site.nav_method}`);
+        }
+
+        let timedOut = false;
+        try {
+          await page.waitForFunction(
+            (sel, minLen) => {
+              const el = (sel && document.querySelector(sel)) || document.body;
+              return !!(el && el.innerText && el.innerText.trim().length >= minLen);
+            },
+            { timeout: site.ready_timeout_ms },
+            site.content_selector,
+            site.card_min_text_len
+          );
+        } catch {
+          timedOut = true;
+        }
+
+        const { record, blobLen } = await extractArticle(page, {
+          contentSelector: site.content_selector,
+          contentStopText: site.content_stop_text,
+          minTextLen: site.card_min_text_len,
+          fields,
+          includeRaw,
+        });
+
+        return { timedOut, record, blobLen, url: page.url() };
+      });
+    } catch (e) {
+      logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
+      console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));
+      process.exit(1);
+    }
+
+    const success = !articleOutcome.timedOut && articleOutcome.blobLen > 0;
+
+    logRun(db, {
+      siteId: site.id,
+      params,
+      success,
+      resultCount: success ? 1 : 0,
+      timedOut: articleOutcome.timedOut,
+      durationMs: Date.now() - startedAt,
+    });
+
+    console.log(JSON.stringify({
+      success,
+      documented: true,
+      timedOut: articleOutcome.timedOut,
+      url: articleOutcome.url,
+      article: articleOutcome.record,
+    }));
+    process.exit(success ? 0 : 1);
+  }
+
   let outcome;
 
   try {
