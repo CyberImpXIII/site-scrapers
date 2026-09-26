@@ -294,6 +294,44 @@ Collected pages and the final page are merged and de-duplicated by `href`
 (or by whole record when a recipe has no `href` field). Output includes
 `pagesVisited` (1 + number of `collect`s).
 
+### Overlays and optional steps
+
+A cookie/consent banner or interstitial modal covering the page will break
+whatever step comes next. Three generic actions handle it, and which one a
+recipe references *is* the choice of what consent signal to send:
+
+- **`dismiss_overlay`** (default) — clicks Reject / Decline / Necessary-only
+  / No-thanks / Dismiss / Got-it / aria Close. Deliberately does **not**
+  match Accept or Agree: auto-accepting across every site is the least
+  privacy-preserving option and fills the saved session jar with that site's
+  tracking cookies. A banner offering *only* Accept is left alone.
+- **`dismiss_overlay_accept`** — opt-in; will click Accept as a last resort.
+  It runs a full decline pass first, as a separate earlier step, so
+  preferring to decline is guaranteed rather than depending on which button
+  happens to come first in the DOM (a selector list matches in DOM order,
+  not in the order the selectors are written). Verified: with Accept placed
+  *before* Reject in the markup, it still clicks Reject.
+- **`remove_overlay`** — deletes the overlay from the DOM instead of
+  answering it. No Accept, no Reject, no consent signal of either kind, which
+  is the most privacy-preserving of the three and the right call when the
+  banner is merely in the way rather than gating content.
+
+All three are safely optional — nothing fails when there's no overlay. That
+relies on a pattern worth knowing: a bare `click` with `stop_if_missing`
+raises `StopRepeat`, which at the *top level* ends the entire remaining step
+list. Wrapping it in `repeat` with `times: 1` catches that and continues, so
+"try this, carry on regardless" is `repeat(1) { click stop_if_missing }`.
+
+`remove_element` is the step behind `remove_overlay`: it deletes every node
+matching `selector` (Puppeteer's `::-p-text()`/`::-p-aria()` work here, since
+it uses `page.$$` rather than a native `querySelectorAll`), and with
+`restore_scroll: true` also clears the `overflow:hidden` lock overlays
+usually set on `body`/`html` — without that, removing the node leaves the
+page unscrollable and silently breaks `scroll_bottom`/`infinite_scroll`
+afterward. Nothing matching is a no-op, not a failure. For a site whose
+overlay you've actually seen, compose `remove_element` directly with that
+exact selector rather than relying on `remove_overlay`'s generic list.
+
 The step types behind this work in any ui_steps list:
 `repeat` (`times` may be a number or `{{param}}`, capped at 50),
 `click` with `stop_if_missing: true` (absent/disabled element ends the

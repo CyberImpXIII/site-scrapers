@@ -213,6 +213,26 @@
 //   "...": "(the rest of the shape is the same as the plain example below)"
 // }
 //
+// ui_steps 'remove_element' step: deletes every node matching `selector`
+// rather than interacting with it —
+// {"action":"remove_element","selector":"#cookie-banner","restore_scroll":true}
+// Puppeteer's ::-p-text()/::-p-aria() selectors work here (it uses page.$$,
+// not a native querySelectorAll inside evaluate). `restore_scroll` also
+// clears the overflow:hidden lock overlays usually set on body/html —
+// without it, removing the node leaves the page unscrollable and silently
+// breaks a later scroll_bottom/infinite_scroll. Matching nothing is a
+// no-op, not a failure. Mainly used by the remove_overlay generic action,
+// which clears a consent banner WITHOUT clicking accept or reject (no
+// consent signal either way); compose this step directly with an exact
+// selector for a site whose overlay you have actually seen.
+//
+// Making any step optional: a `click` with stop_if_missing raises
+// StopRepeat, which at the TOP level ends the whole remaining step list —
+// so an optional dismissal would silently skip everything after it. Wrap it
+// in a repeat to scope that: {"action":"repeat","times":1,"steps":[ ...the
+// optional click... ]} means "try it, carry on regardless". Every
+// overlay-handling generic action is built this way.
+//
 // ui_steps 'run_generic_action' step: like run_action, but reuses a named
 // entry from the generic_actions LIBRARY instead of another site's recipe —
 // a recurring, hostname-independent puppeteer "macro" (a heuristic generic

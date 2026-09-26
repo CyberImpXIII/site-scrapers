@@ -279,6 +279,35 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         if (!hooks.collect) throw new Error('"collect" step only works in listing recipes');
         await hooks.collect();
         break;
+      case 'remove_element': {
+        // Delete matching nodes outright instead of interacting with them.
+        // For a consent/cookie overlay this is the option that sends NO
+        // signal either way — you neither accept nor reject, you just stop
+        // it covering the page. Uses page.$$ (not querySelectorAll inside
+        // evaluate) so Puppeteer's ::-p-text()/::-p-aria() selectors still
+        // work here; a plain evaluate would only understand native CSS.
+        // Never fails when nothing matches — removing nothing is a fine
+        // outcome, so there's no stop_if_missing to think about.
+        const handles = sel ? await page.$$(sel).catch(() => []) : [];
+        for (const h of handles) {
+          await h.evaluate(e => e.remove()).catch(() => {});
+        }
+        if (step.restore_scroll) {
+          // Overlays typically lock scrolling on body/html while open;
+          // removing the node alone leaves the page unscrollable, which
+          // silently breaks scroll_bottom and infinite_scroll afterward.
+          await page
+            .evaluate(() => {
+              for (const el of [document.documentElement, document.body]) {
+                if (!el) continue;
+                el.style.setProperty('overflow', 'auto', 'important');
+                el.style.setProperty('position', 'static', 'important');
+              }
+            })
+            .catch(() => {});
+        }
+        break;
+      }
       case 'repeat': {
         const times = Math.min(Math.max(Math.floor(numericParam(step.times, params, 0)), 0), MAX_REPEAT);
         for (let i = 0; i < times; i++) {
