@@ -15,3 +15,12 @@ data/.sessions/
 # environment keeps/builds its own local copy; openDb() creates it fresh if
 # missing.
 data/scrapers.db
+# SQLite WAL sidecars (present while a run is in flight, and left behind if
+# a process dies mid-run).
+data/scrapers.db-wal
+data/scrapers.db-shm
+
+# failure-diagnostics captures (screenshot/DOM/console/network) -- may
+# contain page content from whatever a recipe was looking at when it
+# failed. Disposable debugging data, not an audit trail; never committed.
+data/.debug/

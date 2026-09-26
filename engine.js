@@ -48,11 +48,16 @@
 // duplicating its steps. All run_action references are expanded to a flat
 // step list up front, before the browser launches, so a dangling reference
 // or a reference cycle fails fast with a clear error.
+//
+// Any run failure (thrown error, timeout, or zero results) captures a
+// screenshot + DOM + recent console/network-failure logs to a gitignored
+// data/.debug/ directory, reported as `debugDir` in the output JSON — see
+// lib/debug.js. On by default; params.noDiagnostics: true skips it.
 
 const fs = require('fs');
 const path = require('path');
 const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
-const { withPage } = require('./lib/runner');
+const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
@@ -127,7 +132,11 @@ function writeCaptureEnv(captured, { hostname, pageType, recipeName }) {
   if (!captured || Object.keys(captured).length === 0) return null;
   fs.mkdirSync(CAPTURE_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const file = path.join(CAPTURE_DIR, `${hostname}-${pageType}-${recipeName}-${stamp}.env`);
+  // Sanitized like the session/debug writers do — these come from DB rows,
+  // and a hostname containing a path separator would otherwise write
+  // outside CAPTURE_DIR.
+  const safe = s => String(s).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const file = path.join(CAPTURE_DIR, `${safe(hostname)}-${safe(pageType)}-${safe(recipeName)}-${stamp}.env`);
   const lines = [
     `# Captured from a handoff step on ${hostname}#${pageType}:${recipeName} at ${new Date().toISOString()}`,
     '# TEMPORARY — may contain secrets (passwords, one-time codes). Never committed to git.',
@@ -568,12 +577,21 @@ async function main() {
   // parallel session — e.g. a second account — default 'default'); a run
   // opts out entirely with params.noSession: true.
   const sessionName = params.session || 'default';
-  const sessionOpt = params.noSession ? undefined : { hostname: site.hostname, sessionName };
+  // session_mode:'none' is the RECIPE declaring it must run logged out
+  // (its logged-in DOM differs, so a persisted session silently yields 0
+  // results). Honoring it here means such a recipe is correct by
+  // construction instead of depending on every caller remembering to pass
+  // noSession — a footgun whose failure mode looks like "the site changed".
+  const sessionDisabled = params.noSession || site.session_mode === 'none';
+  const sessionOpt = sessionDisabled ? undefined : { hostname: site.hostname, sessionName };
+  // Failure-diagnostics capture (screenshot/DOM/console/network) is ON BY
+  // DEFAULT too; params.noDiagnostics: true skips it for one call.
+  const debugOpt = params.noDiagnostics ? undefined : siteMeta;
 
   if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
     try {
-      articleOutcome = await withPage(async page => {
+      articleOutcome = await withPage(async (page, diagnostics) => {
         let captures = [];
         if (site.nav_method === 'direct_url') {
           const url = substitute(site.nav_template, params);
@@ -611,11 +629,16 @@ async function main() {
           includeRaw,
         });
 
-        return { timedOut, record, blobLen, url: page.url(), captures };
-      }, { headed, session: sessionOpt });
+        let debugDir = null;
+        if ((timedOut || blobLen === 0) && diagnostics) {
+          debugDir = await captureFailureDiagnostics(page, siteMeta, { error: null, ...diagnostics });
+        }
+
+        return { timedOut, record, blobLen, url: page.url(), captures, debugDir };
+      }, { headed, session: sessionOpt, debugMeta: debugOpt });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
-      console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));
+      console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
       process.exit(1);
     }
 
@@ -630,6 +653,7 @@ async function main() {
       // file path + captured KEY NAMES only — never the captured values.
       handoffCaptures: articleOutcome.captures,
       sessionUsed: sessionOpt ? sessionName : null,
+      debugDir: articleOutcome.debugDir ?? null,
     };
     const outputJson = JSON.stringify(output);
 
@@ -650,7 +674,7 @@ async function main() {
   let outcome;
 
   try {
-    outcome = await withPage(async page => {
+    outcome = await withPage(async (page, diagnostics) => {
       const extractOpts = {
         cardAnchorText: site.card_anchor_text,
         cardSelector: site.card_selector,
@@ -729,11 +753,16 @@ async function main() {
         }, site.result_count_regex);
       }
 
-      return { timedOut, jobs, claimedCount, url: page.url(), captures, pagesVisited: pagesCollected + 1 };
-    }, { headed, session: sessionOpt });
+      let debugDir = null;
+      if ((timedOut || jobs.length === 0) && diagnostics) {
+        debugDir = await captureFailureDiagnostics(page, siteMeta, { error: null, ...diagnostics });
+      }
+
+      return { timedOut, jobs, claimedCount, url: page.url(), captures, pagesVisited: pagesCollected + 1, debugDir };
+    }, { headed, session: sessionOpt, debugMeta: debugOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
-    console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));
+    console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
     process.exit(1);
   }
 
@@ -761,6 +790,7 @@ async function main() {
     jobs: outcome.jobs,
     handoffCaptures: outcome.captures,
     sessionUsed: sessionOpt ? sessionName : null,
+    debugDir: outcome.debugDir ?? null,
   };
   const outputJson = JSON.stringify(output);
 

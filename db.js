@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS sites (
   nav_method TEXT NOT NULL,                          -- 'url_param' | 'ui_steps' | 'direct_url' (article: goto params.url as-is)
   nav_template TEXT NOT NULL,                        -- URL template (url_param/direct_url) OR JSON step array (ui_steps)
   nav_params_schema TEXT,                            -- JSON: documents accepted params, for callers
+  session_mode TEXT,                                 -- NULL/'default': use the caller's named session (persistence is on by default). 'none': this recipe MUST run logged out -- the engine skips loading AND saving a session for it. For pages whose logged-in DOM differs from the logged-out one (e.g. linkedin.com's guest job search finds 0 cards with a logged-in session), where relying on the caller to remember params.noSession means silent 0-result runs.
   pagination_method TEXT NOT NULL DEFAULT 'none',    -- 'none' | 'steps' (run pagination_config ui_steps after page 1, e.g. the generic 'paginate' action) | 'url_param' / 'click_next' (not implemented)
   pagination_config TEXT,                            -- pagination_method 'steps': JSON ui_steps array
   action_type TEXT,                                  -- action recipes only: which entry of action_types this is (e.g. 'login', 'add_to_cart') -- register.js validates this against action_types, preferring reuse over inventing near-duplicate names. NULL for listing/article.
@@ -189,6 +190,13 @@ function migrateCardSelectorColumn(db) {
   db.exec('ALTER TABLE sites ADD COLUMN card_selector TEXT');
 }
 
+// Old DBs predate session_mode. Plain ADD COLUMN.
+function migrateSessionModeColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(sites)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'session_mode')) return;
+  db.exec('ALTER TABLE sites ADD COLUMN session_mode TEXT');
+}
+
 // Old DBs predate output_chars on scrape_runs. Plain ADD COLUMN.
 function migrateOutputCharsColumn(db) {
   const cols = db.prepare('PRAGMA table_info(scrape_runs)').all();
@@ -196,14 +204,39 @@ function migrateOutputCharsColumn(db) {
   db.exec('ALTER TABLE scrape_runs ADD COLUMN output_chars INTEGER');
 }
 
+// Every engine.js run is its own process opening this same file, so two
+// scrapes started at once are two SQLite writers. Without these pragmas
+// that fails HARD and immediately: SQLite's default rollback journal takes
+// an exclusive write lock, and with no busy timeout the loser gets
+// SQLITE_BUSY ("database is locked") instead of waiting. It bit openDb()
+// itself — which writes on every open (CREATE TABLE IF NOT EXISTS, the
+// ALTER TABLE migrations, the seed check) even for read-only commands like
+// `query.js sites` — so a losing process died before printing any JSON at
+// all. That is the real cause of the previously-noted "N parallel scrapes
+// all failed with empty or truncated JSON", which had been guessed at as
+// browser/memory resource contention.
+//
+// WAL lets readers run concurrently with a writer; busy_timeout makes a
+// blocked writer wait its turn instead of failing instantly.
+function applyConcurrencyPragmas(db) {
+  try {
+    db.exec('PRAGMA journal_mode = WAL');
+  } catch {
+    /* WAL needs a real file on a filesystem that supports it; plain journal still works */
+  }
+  db.exec('PRAGMA busy_timeout = 10000');
+}
+
 function openDb() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
+  applyConcurrencyPragmas(db);
   db.exec(SCHEMA);
   migrateSitesTable(db);
   migrateRecipeNameColumn(db);
   migrateActionTypeColumn(db);
   migrateCardSelectorColumn(db);
+  migrateSessionModeColumn(db);
   migrateOutputCharsColumn(db);
   seedActionTypes(db);
   return db;
@@ -251,7 +284,7 @@ function upsertSite(db, s) {
   const existing = getSite(db, s.hostname, pageType, recipeName);
   if (existing) {
     db.prepare(
-      `UPDATE sites SET display_name=?, status=?, nav_method=?, nav_template=?, nav_params_schema=?,
+      `UPDATE sites SET display_name=?, status=?, nav_method=?, nav_template=?, nav_params_schema=?, session_mode=?,
          pagination_method=?, pagination_config=?, action_type=?, card_anchor_text=?, card_selector=?, card_min_text_len=?,
          content_selector=?, content_stop_text=?, ready_timeout_ms=?, result_count_regex=?, notes=?, last_verified=?
        WHERE hostname=? AND page_type=? AND recipe_name=?`
@@ -261,6 +294,7 @@ function upsertSite(db, s) {
       s.nav_method,
       s.nav_template,
       s.nav_params_schema ?? null,
+      s.session_mode ?? null,
       s.pagination_method ?? 'none',
       s.pagination_config ?? null,
       s.action_type ?? null,
@@ -282,9 +316,9 @@ function upsertSite(db, s) {
   } else {
     db.prepare(
       `INSERT INTO sites (hostname, page_type, recipe_name, display_name, status, nav_method, nav_template, nav_params_schema,
-         pagination_method, pagination_config, action_type, card_anchor_text, card_selector, card_min_text_len, content_selector,
+         session_mode, pagination_method, pagination_config, action_type, card_anchor_text, card_selector, card_min_text_len, content_selector,
          content_stop_text, ready_timeout_ms, result_count_regex, notes, first_seen, last_verified)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       s.hostname,
       pageType,
@@ -294,6 +328,7 @@ function upsertSite(db, s) {
       s.nav_method,
       s.nav_template,
       s.nav_params_schema ?? null,
+      s.session_mode ?? null,
       s.pagination_method ?? 'none',
       s.pagination_config ?? null,
       s.action_type ?? null,
@@ -395,6 +430,59 @@ function getRuns(db, siteId, limit = 10) {
     .all(siteId, limit);
 }
 
+// Reliability of each recipe over its most recent `recentN` runs, next to
+// the status someone typed once. scrape_runs was always meant to give
+// "3/3 recent runs succeeded" instead of a stale flag, but nothing
+// actually computed it — so a recipe could sit at status:"working" while
+// failing most runs and no one querying `sites` would see it. Recent-window
+// (not lifetime) so an old rough patch doesn't permanently condemn a recipe
+// that works now. `statusDisagrees` is the thing worth acting on: declared
+// working, but recent runs say otherwise.
+function getRecipeHealth(db, recentN = 10) {
+  const rows = db
+    .prepare(
+      `WITH ranked AS (
+         SELECT r.site_id, r.success, r.ran_at, r.error, r.timed_out,
+                ROW_NUMBER() OVER (PARTITION BY r.site_id ORDER BY r.id DESC) AS rn
+         FROM scrape_runs r
+         WHERE r.site_id IS NOT NULL
+       )
+       SELECT s.hostname, s.page_type, s.recipe_name, s.status,
+              COUNT(k.site_id) AS recentRuns,
+              SUM(CASE WHEN k.success = 1 THEN 1 ELSE 0 END) AS recentOk,
+              MAX(k.ran_at) AS lastRunAt,
+              (SELECT r2.error FROM scrape_runs r2
+                WHERE r2.site_id = s.id AND r2.success = 0 AND r2.error IS NOT NULL
+                ORDER BY r2.id DESC LIMIT 1) AS lastError
+       FROM sites s
+       LEFT JOIN ranked k ON k.site_id = s.id AND k.rn <= ?
+       GROUP BY s.id
+       ORDER BY s.hostname, s.page_type, s.recipe_name`
+    )
+    .all(recentN);
+
+  return rows.map(r => {
+    const recentRuns = r.recentRuns ?? 0;
+    const recentOk = r.recentOk ?? 0;
+    const successRate = recentRuns > 0 ? Math.round((recentOk / recentRuns) * 100) : null;
+    return {
+      hostname: r.hostname,
+      page_type: r.page_type,
+      recipe_name: r.recipe_name,
+      status: r.status,
+      recentRuns,
+      recentOk,
+      successRate,
+      lastRunAt: r.lastRunAt,
+      lastError: r.lastError,
+      // Enough runs to mean something, declared healthy, mostly isn't.
+      statusDisagrees: r.status === 'working' && recentRuns >= 3 && successRate < 50,
+      // Never actually exercised — "working" here is an untested assertion.
+      neverRun: recentRuns === 0,
+    };
+  });
+}
+
 // Per-recipe output-size summary from real run history — chars/4 is a
 // standard rough token-estimate heuristic (not exact; genuinely varies by
 // content), good enough to turn "how much does calling this recipe cost"
@@ -430,6 +518,7 @@ module.exports = {
   insertField,
   logRun,
   getRuns,
+  getRecipeHealth,
   getEfficiencyStats,
   parseSiteArg,
   listActionTypes,

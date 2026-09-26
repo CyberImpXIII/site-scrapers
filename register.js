@@ -17,8 +17,9 @@
 // engine.js/query.js via "<hostname>#<page_type>:<recipe_name>".
 //
 // Session cookies persist across runs ON BY DEFAULT, per (hostname,
-// sessionName) — not something a recipe declares, purely a call-time
-// concern. Every engine.js run loads that session's saved cookies before
+// sessionName) — mostly a call-time concern, with one recipe-level
+// exception: "session_mode": "none" (see below). Every engine.js run loads
+// that session's saved cookies before
 // navigating and saves the (possibly updated) jar back afterward, so a
 // successful login survives to the next call without repeating a handoff —
 // see "Human handoff" in README.md for how that combines with a `handoff`
@@ -30,6 +31,18 @@
 // (metadata only — hostname/sessionName/savedAt/cookieCount, never cookie
 // values) and force a fresh login with `node query.js clear-session
 // <hostname>[:sessionName]`.
+//
+// "session_mode": "none" — set this on a recipe whose page only works
+// LOGGED OUT, i.e. its signed-in DOM differs enough that a persisted
+// session breaks extraction. The engine then skips loading and saving a
+// session for that recipe regardless of what the caller passes. Use it
+// instead of documenting "remember to pass noSession" in
+// nav_params_schema: that failure mode is silent (0 cards, looks like the
+// site changed) and depends on every caller reading the note first. Real
+// case: linkedin.com#listing is the logged-out guest job search, and the
+// saved linkedin.com session (from linkedin.com#action:login) is logged in
+// — it returned 0 cards until that recipe declared session_mode:"none".
+// Omit the field (NULL) for the normal case.
 //
 // JSON shape (page_type: "listing", repeated cards — the default):
 // {
@@ -371,6 +384,49 @@ function main() {
     console.log(JSON.stringify({
       success: false,
       error: 'Required: hostname, nav_method, nav_template',
+    }));
+    process.exit(1);
+  }
+
+  // Reject unknown enum values rather than storing them. A typo'd page_type
+  // ("listng") used to register happily and then fail confusingly at run
+  // time: it skipped the page_type-specific validation below, fell through
+  // engine.js's article/action branch into the LISTING path with no card
+  // selector, and was invisible to `query.js site <hostname>` (which
+  // defaults to page_type "listing"). Same idea for the other two: catch it
+  // here, not after launching a browser.
+  const VALID_PAGE_TYPES = ['listing', 'article', 'action'];
+  const VALID_NAV_METHODS = ['url_param', 'ui_steps', 'direct_url'];
+  const VALID_STATUSES = ['working', 'broken', 'needs-review'];
+
+  if (!VALID_PAGE_TYPES.includes(pageType)) {
+    console.log(JSON.stringify({
+      success: false,
+      error: `Unknown page_type "${pageType}". Use one of: ${VALID_PAGE_TYPES.join(', ')}.`,
+    }));
+    process.exit(1);
+  }
+
+  if (!VALID_NAV_METHODS.includes(def.nav_method)) {
+    console.log(JSON.stringify({
+      success: false,
+      error: `Unknown nav_method "${def.nav_method}". Use one of: ${VALID_NAV_METHODS.join(', ')}.`,
+    }));
+    process.exit(1);
+  }
+
+  if (def.status !== undefined && !VALID_STATUSES.includes(def.status)) {
+    console.log(JSON.stringify({
+      success: false,
+      error: `Unknown status "${def.status}". Use one of: ${VALID_STATUSES.join(', ')}.`,
+    }));
+    process.exit(1);
+  }
+
+  if (def.session_mode !== undefined && def.session_mode !== null && !['default', 'none'].includes(def.session_mode)) {
+    console.log(JSON.stringify({
+      success: false,
+      error: `Unknown session_mode "${def.session_mode}". Use "none" (recipe must run logged out) or omit it.`,
     }));
     process.exit(1);
   }

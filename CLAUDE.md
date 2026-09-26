@@ -88,7 +88,11 @@ to use for a hostname — e.g. two different accounts never share cookies as
 long as each run passes a distinct `session` name. `params.noSession: true`
 skips persistence for one call. `node query.js sessions [hostname]` lists
 what's saved (metadata only, never cookie values); `node query.js
-clear-session <hostname>[:sessionName]` forces a fresh login next time. A
+clear-session <hostname>[:sessionName]` forces a fresh login next time. If a
+recipe's page only works LOGGED OUT (its signed-in DOM differs, so a saved
+session silently yields 0 results), give the recipe `"session_mode": "none"`
+rather than documenting "remember to pass noSession" — the engine then
+enforces it regardless of the caller. A
 login recipe's `handoff` combines with this for free — a still-valid session
 typically means the resume condition (e.g. redirected past `/login`) is
 already true the instant the handoff step starts, so no human is needed at

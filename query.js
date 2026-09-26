@@ -14,7 +14,9 @@
 //   node query.js expand generic:<name>                       # same, for a generic_actions library entry
 //   node query.js generic-actions                             # list the generic_actions library (name/description/action_type, no steps)
 //   node query.js generic-action <name>                       # one generic action, full detail including steps
+//   node query.js health [recentN]                            # observed reliability per recipe vs its declared status (default last 10 runs)
 //   node query.js efficiency                                  # real output-size history per recipe (avg/min/max chars + rough est. tokens)
+//   node query.js debug-captures                              # failed-run diagnostics (screenshot/DOM/console/network dirs), newest last
 //
 // #page_type ('#listing' | '#article' | '#action') picks which recipe when a
 // hostname has more than one; omitting it defaults to 'listing'. A hostname
@@ -34,6 +36,7 @@ const {
   getSite,
   getFields,
   getRuns,
+  getRecipeHealth,
   getEfficiencyStats,
   parseSiteArg,
   listActionTypes,
@@ -42,6 +45,7 @@ const {
 } = require('./db');
 const { listSessions, clearSession } = require('./lib/sessions');
 const { expandSteps, refKey, genericRefKey } = require('./lib/composeActions');
+const { listDebugCaptures } = require('./lib/debug');
 
 function main() {
   const [, , cmd, arg, limitArg] = process.argv;
@@ -154,8 +158,19 @@ function main() {
     return;
   }
 
+  if (cmd === 'health') {
+    const recentN = arg ? parseInt(arg, 10) : 10;
+    console.log(JSON.stringify(getRecipeHealth(db, Number.isFinite(recentN) ? recentN : 10), null, 2));
+    return;
+  }
+
   if (cmd === 'efficiency') {
     console.log(JSON.stringify(getEfficiencyStats(db), null, 2));
+    return;
+  }
+
+  if (cmd === 'debug-captures') {
+    console.log(JSON.stringify(listDebugCaptures(), null, 2));
     return;
   }
 
@@ -176,7 +191,7 @@ function main() {
   }
 
   console.log(JSON.stringify({
-    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name> | efficiency`,
+    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name> | efficiency | health [recentN] | debug-captures`,
   }));
   process.exit(1);
 }
