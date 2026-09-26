@@ -187,6 +187,23 @@ deliberately pass `new_failure_type_description`. A taxonomy that fragments
 ("cookie_wall" beside "consent_overlay") cannot answer "have we seen this
 before", which is the only reason the database exists.
 
+**Job applications go through a handful of ATS platforms**, and they are
+standardized enough that one shape covers them. `open_apply_form` gets a
+posting to the point where its form is on screen (dismiss overlay →
+optional Apply click → wait → dismiss again), and `describe_form` reports
+every field with selector, type, label and whether it is required. Together
+they hand you a structured form description to decide what to enter.
+Verified against real Greenhouse, Lever and Ashby postings, whose recipes
+are now byte-identical 3-step definitions. **Neither action fills or submits
+anything, and `open_apply_form` must never be extended with a step that
+clicks Submit/Send** — describing a form is safe to run unattended, filling
+one is not.
+
+Required-ness is reported with `requiredEvidence`, because Greenhouse and
+Lever mark it only with a `*`/`✱` in the label and leave the HTML attribute
+off. Trusting the attribute alone understated a 32-field form as almost
+entirely optional.
+
 **Don't guess a selector — probe for it.** `probe` steps report what's on
 the page and never change it or fail the run; results land in the output
 JSON's `diagnostics`. Four generic actions wrap them: `diagnose_page` (all

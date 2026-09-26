@@ -35,6 +35,21 @@ function pageFor(query) {
       <input id="p" name="password" type="password" value="prefilled-secret-value">
       <input type="submit" value="Sign in"></form></body></html>`;
   }
+  if (query.get('page') === 'hashed') {
+    // Mimics a real Workday tenant: the card wrapper carries only a
+    // build-hashed emotion class, while the title link has a stable
+    // data-automation-id. Also gives most-but-not-all cards a "Full-Time"
+    // link so the sharedLine majority rule is exercised.
+    const rows = Array.from({ length: 6 }, (_, i) =>
+      `<li class="css-1q2dra3">
+         <a data-automation-id="jobTitle" href="/job/${i}">Engineer ${i}</a>
+         <p>Acme Corp - Remote. A description long enough to clear the average-length threshold.</p>
+         ${i < 5 ? '<a href="/t">Full-Time</a>' : '<a href="/t">Contract</a>'}
+         <span>${i}w</span><span>Featured</span>
+       </li>`
+    ).join('');
+    return `<html><head><meta charset="utf-8"></head><body><ul id="hits">${rows}</ul></body></html>`;
+  }
   const cards = Array.from({ length: 6 }, (_, i) =>
     `<div class="job-card"><h3>Engineer ${i}</h3>
      <p>Acme Corp - Remote - Full Time. A description long enough to clear the average-length threshold.</p>
@@ -277,4 +292,43 @@ test('partial results do not make a run report success', () => {
   const success = !timedOut && count > 0;
   assert.equal(success, false, 'success must stay false so no existing caller changes behaviour');
   assert.equal(isPartial(timedOut, count), true, 'but the usable data must be discoverable');
+});
+
+// --- Probe selector quality -----------------------------------------------
+// A parallel stress test found repeated_structure proposing selectors that
+// were technically right and practically useless: a build-hashed emotion
+// class on a Workday tenant, and a "sharedLine" of "7wFeatured" -- a
+// per-card age string concatenated to a badge with no separating space,
+// which cleared a lax 3-of-6 threshold and would have matched almost nothing.
+
+test('a build-hashed class is flagged, and a stable data hook offered instead', async () => {
+  const result = await run('probe_hashed', [
+    { action: 'goto', url: `${baseUrl}?page=hashed` },
+    { action: 'run_generic_action', ref: 'probe_card_candidates' },
+  ]);
+  const top = byKind(result, 'repeated_structure').candidates[0];
+
+  assert.equal(top.count, 6);
+  assert.equal(top.selectorIsGenerated, true, 'css-1q2dra3 is a build hash and must be called out');
+  assert.ok(top.stableHook, 'a data-automation-id exists on a descendant and must be surfaced');
+  assert.match(top.stableHook, /data-automation-id="jobTitle"/);
+  assert.match(top.stableHook, /:has\(/, 'the hook is on a child, so the card is expressed structurally');
+  // The brittle class must not leak into the proposed selector itself.
+  assert.ok(!top.childSelector.includes('css-1q2dra3'), `childSelector still uses the hash: ${top.childSelector}`);
+});
+
+test('sharedLine comes from link text only, and reports how many cards have it', async () => {
+  const result = await run('probe_shared', [
+    { action: 'goto', url: `${baseUrl}?page=hashed` },
+    { action: 'run_generic_action', ref: 'probe_card_candidates' },
+  ]);
+  const top = byKind(result, 'repeated_structure').candidates[0];
+
+  // "Full-Time" is a real <a> in 5 of 6 cards -- above the 80% bar.
+  assert.equal(top.sharedLine, 'Full-Time');
+  assert.equal(top.sharedLineIn, '5/6', 'the fraction is what tells you it is not universal');
+
+  // Neither the concatenated-badge string nor a bare separator can appear,
+  // because only <a>/<button> text is considered at all.
+  assert.ok(!/Featured/.test(String(top.sharedLine)), 'span text is not eligible — card_anchor_text matches a/button');
 });

@@ -433,6 +433,29 @@ class names (Tailwind JIT and similar) make selectors brittle.
 typed password, and diagnostics are written to disk and read back into a
 transcript. `hasValue: true` is reported; the value never is.
 
+### Selector suggestions, and their limits
+
+`repeated_structure` reports three things about each candidate, because the
+obvious one is not always the usable one:
+
+- `stableHook` — a selector built from a `data-testid`/`data-automation-id`
+  style attribute the site set deliberately, expressed structurally
+  (`li:has(a[data-automation-id="jobTitle"])`) when the hook is on a
+  descendant rather than the card itself.
+- `selectorIsGenerated` — true when `childSelector` rests on a build-hashed
+  class (`css-1q2dra3`, `sc-bdVaJa`, `Card_root__a1b2c`). Those work today
+  and break on the site's next deploy.
+- `sharedLine` / `sharedLineIn` — a `card_anchor_text` candidate **taken from
+  `<a>`/`<button>` text only**, since that is exactly what extraction matches
+  against, and only when it appears in at least 80% of the cards.
+  `sharedLineIn` ("58/65") is what tells you it is not universal.
+
+Those last two rules came from real misses. A looser threshold over all
+innerText lines proposed `"7wFeatured"` — a per-card relative-age string
+concatenated to a Featured badge with no separating whitespace, present in
+just the cards that happened to be 7 weeks old — and then `"·"`, a separator
+character. Neither could ever have matched as `card_anchor_text`.
+
 ### Failures diagnose themselves
 
 The sweep (`blockers`, `repeated_structure`, `forms`) runs **automatically

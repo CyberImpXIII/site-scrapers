@@ -214,6 +214,31 @@ async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) 
 // Describes a step precisely enough to act on without dumping the whole
 // recipe: which position, what it was trying to do, and (for a step pulled
 // in from a reusable action) where it came from.
+// A url_param or direct_url recipe has no ui_steps, so a failure has no
+// step to point at and `failedStep` is null. Two independent troubleshooting
+// runs recorded exactly that as a dead end ("failedStep null -- url_param
+// nav has no ui_steps to blame"). What was actually in flight is the wait
+// for cards/content, so say so: which matcher was being waited on, and for
+// how long. That is the equivalent information, and without it the operator
+// is left re-reading the recipe to work out what the timeout even meant.
+function navFailureContext(site, { phase }) {
+  return {
+    phase,
+    nav_method: site.nav_method,
+    matcher: site.card_selector
+      ? { kind: 'card_selector', value: site.card_selector }
+      : site.card_anchor_text
+        ? { kind: 'card_anchor_text', value: site.card_anchor_text, match: 'exact text, not substring' }
+        : site.content_selector
+          ? { kind: 'content_selector', value: site.content_selector }
+          : null,
+    ready_timeout_ms: site.ready_timeout_ms,
+    note:
+      'This recipe has no ui_steps, so there is no failing step — the wait above is what expired. ' +
+      'diagnostics.json in debugDir reports what the page actually contained.',
+  };
+}
+
 // Whether a failed run nevertheless carries usable output. Extracted as a
 // function so the decision is testable: the race that produces it (content
 // rendering microseconds past the wait deadline) cannot be reproduced
@@ -770,6 +795,9 @@ async function main() {
       documented: true,
       timedOut: articleOutcome.timedOut,
       url: articleOutcome.url,
+      ...(!success && site.nav_method !== 'ui_steps'
+        ? { failureContext: navFailureContext(site, { phase: 'waiting for content' }) }
+        : {}),
       ...(partialResults
         ? {
             partialResults: true,
@@ -930,6 +958,9 @@ async function main() {
     success,
     documented: true,
     timedOut: outcome.timedOut,
+    ...(!success && site.nav_method !== 'ui_steps'
+      ? { failureContext: navFailureContext(site, { phase: 'waiting for cards' }) }
+      : {}),
     ...(partialResults
       ? {
           partialResults: true,
