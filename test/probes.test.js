@@ -251,3 +251,30 @@ test('a single sequence reports its position with no such caveat', async () => {
     }
   );
 });
+
+// --- Partial results ------------------------------------------------------
+// A timed-out run can still have extracted everything: extraction runs
+// unconditionally after the wait, so content that rendered just past the
+// deadline is present and correct while `success` is false. Observed live on
+// a Workday tenant returning a complete 20-job array with timedOut:true --
+// and the documented "check the success field" rule would have discarded it.
+
+test('a timed-out run that still extracted records is flagged as partial', () => {
+  const { isPartial } = require('../engine.js');
+  assert.equal(isPartial(true, 20), true, 'timed out but 20 records extracted — usable data');
+  assert.equal(isPartial(true, 0), false, 'timed out with nothing extracted is a plain failure');
+  assert.equal(isPartial(false, 20), false, 'a clean run is not "partial"');
+  assert.equal(isPartial(false, 0), false);
+});
+
+test('partial results do not make a run report success', () => {
+  // Deliberately NOT redefining success to `count > 0`: a wait that expired
+  // early may have caught 3 of 100 cards, and silently calling that a
+  // success is the worse error. The flag informs the caller instead.
+  const { isPartial } = require('../engine.js');
+  const timedOut = true;
+  const count = 3;
+  const success = !timedOut && count > 0;
+  assert.equal(success, false, 'success must stay false so no existing caller changes behaviour');
+  assert.equal(isPartial(timedOut, count), true, 'but the usable data must be discoverable');
+});

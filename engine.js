@@ -214,6 +214,16 @@ async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) 
 // Describes a step precisely enough to act on without dumping the whole
 // recipe: which position, what it was trying to do, and (for a step pulled
 // in from a reusable action) where it came from.
+// Whether a failed run nevertheless carries usable output. Extracted as a
+// function so the decision is testable: the race that produces it (content
+// rendering microseconds past the wait deadline) cannot be reproduced
+// deterministically through the CLI, but the RULE can be pinned -- in
+// particular that `success` stays false, so no existing caller silently
+// changes behaviour.
+function isPartial(timedOut, extractedCount) {
+  return Boolean(timedOut) && extractedCount > 0;
+}
+
 // Module-level because a step list is run from several places (main steps,
 // pagination steps, nested repeats) and the failure path needs the last
 // step attempted regardless of which one was running.
@@ -752,12 +762,22 @@ async function main() {
     }
 
     const success = !articleOutcome.timedOut && articleOutcome.blobLen > 0;
+    // Same just-past-the-deadline case as the listing flow below.
+    const partialResults = isPartial(articleOutcome.timedOut, articleOutcome.blobLen);
 
     const output = {
       success,
       documented: true,
       timedOut: articleOutcome.timedOut,
       url: articleOutcome.url,
+      ...(partialResults
+        ? {
+            partialResults: true,
+            partialNote:
+              'The wait deadline passed, but content was still extracted and is present in "article". ' +
+              'It is usable; it may also be truncated. Consider raising ready_timeout_ms.',
+          }
+        : {}),
       article: articleOutcome.record,
       // file path + captured KEY NAMES only — never the captured values.
       handoffCaptures: articleOutcome.captures,
@@ -883,6 +903,19 @@ async function main() {
 
   const success = !outcome.timedOut && outcome.jobs.length > 0;
 
+  // A timed-out run can still have extracted everything: extraction runs
+  // unconditionally after the wait, so content that finished rendering just
+  // past the deadline is present and correct in `jobs` while `success` is
+  // false. A caller following the documented "check the success field" rule
+  // would throw that away — observed on a Workday tenant returning a
+  // complete, correct 20-job array with timedOut:true.
+  //
+  // `success` is deliberately NOT redefined to jobs.length > 0: a wait that
+  // expired early may have caught 3 of 100 cards, and silently calling that
+  // a success is the worse error. This flags the case explicitly instead and
+  // leaves the judgement to the caller, who can see `count`.
+  const partialResults = isPartial(outcome.timedOut, outcome.jobs.length);
+
   // Self-consistency check: if the site tells us its own result count and it
   // wildly disagrees with what we scraped, don't just trust jobs.length > 0.
   let consistencyWarning = null;
@@ -897,6 +930,14 @@ async function main() {
     success,
     documented: true,
     timedOut: outcome.timedOut,
+    ...(partialResults
+      ? {
+          partialResults: true,
+          partialNote:
+            `The wait deadline passed, but ${outcome.jobs.length} records were still extracted and are present in "jobs". ` +
+            'They are usable; they may also be incomplete. Check count before discarding them, and consider raising ready_timeout_ms.',
+        }
+      : {}),
     url: outcome.url,
     claimedCount: outcome.claimedCount,
     consistencyWarning,
@@ -933,4 +974,4 @@ async function main() {
 // situation the CLI can't produce on its own.
 if (require.main === module) main();
 
-module.exports = { runUiSteps, progress, describeStep };
+module.exports = { runUiSteps, progress, describeStep, isPartial };

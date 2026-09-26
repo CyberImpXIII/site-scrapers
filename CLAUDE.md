@@ -20,7 +20,10 @@ a page_type (implicit `recipe_name` = `default`).
    (article/action recipes take whatever params their `nav_params_schema`
    documents — often `{"url": "<full page url>"}` for article, or credentials/
    inputs substituted into `ui_steps` for action). Check the `success` field,
-   not exit code. Add trailing `--raw` only when debugging extraction
+   not exit code. **A `success:false` run can still carry usable data**: if
+   `partialResults` is true, the wait deadline passed but records were
+   extracted anyway and are present in `jobs`/`article` — check `count`
+   before discarding them, and consider raising `ready_timeout_ms`. Add trailing `--raw` only when debugging extraction
    (roughly doubles output size) — omit it otherwise.
 3. `documented:false` → nothing known. `documented:true, success:false` →
    broken/needs-review, or this run failed — check `error`/`timedOut`/

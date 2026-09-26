@@ -764,11 +764,44 @@ function getRuns(db, siteId, limit = 10) {
 function getRecipeHealth(db, recentN = 10) {
   const rows = db
     .prepare(
-      `WITH ranked AS (
+      // Scoped to the recipe's CURRENT version. A recipe judged on runs from
+      // a definition that has since been fixed reads as broken when it
+      // isn't — observed live: a Workday recipe whose timeout was raised
+      // returned 20 jobs cleanly while still showing 25% from pre-fix runs.
+      // Health is a question about the definition in place now.
+      //
+      // Matched by DEFINITION, not by version label. Promoting copies the
+      // current definition to a new vN.0, so label-matching would zero a
+      // recipe's track record the instant it was blessed — observed live:
+      // three recipes registered with "stable": true showed 0 runs at v2.0
+      // while v1.2, byte-identical, had a perfect record. Runs under any
+      // version whose definition equals the current one still count.
+      //
+      // version_label rather than version_id, because pruning clears the FK
+      // on old scaffolding but never the label. Recipes registered before
+      // versioning have NULL labels on both sides, which still matches.
+      `WITH current_def AS (
+         SELECT rv.site_id, rv.definition
+           FROM recipe_versions rv
+          WHERE rv.id = (SELECT id FROM recipe_versions
+                          WHERE site_id = rv.site_id
+                          ORDER BY major DESC, minor DESC LIMIT 1)
+       ),
+       equivalent_labels AS (
+         SELECT rv.site_id, 'v' || rv.major || '.' || rv.minor AS label
+           FROM recipe_versions rv
+           JOIN current_def cd ON cd.site_id = rv.site_id AND cd.definition = rv.definition
+       ),
+       ranked AS (
          SELECT r.site_id, r.success, r.ran_at, r.error, r.timed_out,
                 ROW_NUMBER() OVER (PARTITION BY r.site_id ORDER BY r.id DESC) AS rn
          FROM scrape_runs r
          WHERE r.site_id IS NOT NULL
+           AND (
+             r.version_label IS NULL
+             OR NOT EXISTS (SELECT 1 FROM current_def cd WHERE cd.site_id = r.site_id)
+             OR r.version_label IN (SELECT label FROM equivalent_labels el WHERE el.site_id = r.site_id)
+           )
        )
        SELECT s.hostname, s.page_type, s.recipe_name, s.status,
               COUNT(k.site_id) AS recentRuns,
@@ -798,8 +831,16 @@ function getRecipeHealth(db, recentN = 10) {
       successRate,
       lastRunAt: r.lastRunAt,
       lastError: r.lastError,
-      // Enough runs to mean something, declared healthy, mostly isn't.
-      statusDisagrees: r.status === 'working' && recentRuns >= 3 && successRate < 50,
+      // Declared healthy, observably isn't. Two separate cases, because one
+      // threshold can't cover both:
+      //   - 3+ runs and mostly failing: the >= 3 floor stops a single flaky
+      //     failure from crying wolf.
+      //   - NEVER succeeded, even once: not noise at any run count. This is
+      //     what a freshly registered recipe looks like when whoever wrote
+      //     it declared "working" without a passing run behind it, and the
+      //     >= 3 floor alone let that through silently.
+      statusDisagrees:
+        r.status === 'working' && recentRuns >= 1 && (successRate === 0 || (recentRuns >= 3 && successRate < 50)),
       // Never actually exercised — "working" here is an untested assertion.
       neverRun: recentRuns === 0,
     };
