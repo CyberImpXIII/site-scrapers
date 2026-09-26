@@ -72,10 +72,16 @@ remember or re-derive it.
   - `scrape_runs` — an audit log of every invocation (params, success,
     result count vs. the site's own claimed count, duration, error). This
     is the reliability history — not just a static status flag.
-- **`register.js`** — how a newly-learned site/page/action gets documented:
-  pass it a JSON recipe (inline or a file), it upserts `sites` +
-  `site_fields`. This replaces "write a new `sites/<hostname>.js` file." See
-  its header comment for the `listing`, `article`, and `action` JSON shapes.
+  - `generic_actions` — a hostname-*independent* library of reusable
+    puppeteer "macros": named `ui_steps` sequences any recipe can pull in
+    with `run_generic_action`, for behavior that doesn't depend on the site
+    (a heuristic generic login, dismissing a cookie-consent banner). See
+    "Composing actions" below.
+- **`register.js`** — how a newly-learned site/page/action *or* a new
+  `generic_actions` library entry gets documented: pass it a JSON recipe
+  (inline or a file), it upserts the right table(s). This replaces "write a
+  new `sites/<hostname>.js` file." See its header comment for the
+  `listing`, `article`, `action`, and `generic_action` JSON shapes.
 - **`query.js`** — how to check what's already documented, without reading
   any code:
   ```
@@ -84,7 +90,10 @@ remember or re-derive it.
   node query.js site hiringcafe.com#article           # same, for the article recipe
   node query.js site example.com#action:login         # a specific named action recipe
   node query.js runs hiringcafe.com#article           # recent run history / reliability
-  node query.js expand example.com#action:purchase_item  # a composed recipe's run_action refs, fully flattened
+  node query.js expand example.com#action:purchase_item  # a composed recipe's run_action/run_generic_action refs, fully flattened
+  node query.js expand generic:generic_login          # same, for a generic_actions library entry
+  node query.js generic-actions                       # the library: name/description/action_type (no steps)
+  node query.js generic-action generic_login           # one library entry, full detail including steps
   ```
 - **`scrape.sh`** — thin wrapper around `engine.js` using the right Node
   binary (see version note below).
@@ -188,6 +197,55 @@ changes), `purchase_item` just references it:
 - See exactly what a composed recipe will run, fully flattened, with `node
   query.js expand <hostname>#page_type:recipe_name` — this is the fastest
   way to sanity-check a composition without executing it.
+
+### The `generic_actions` library
+
+`run_action` composes a *specific site's* recipe. `run_generic_action`
+composes a hostname-**independent** entry from `generic_actions` instead —
+a reusable puppeteer "macro" for behavior that doesn't depend on the site at
+all: a heuristic generic login (find the password-type input and whatever's
+immediately before it, type into both, submit), dismissing a cookie-consent
+banner, an infinite-scroll "load more" loop. Use `run_action` when you're
+reusing something a specific site's recipe already figured out; use
+`run_generic_action` when the steps are genuinely site-agnostic and you'd
+rather write them once.
+
+```json
+{"action":"run_generic_action","ref":"generic_login"}
+```
+
+Register a library entry with `"kind": "generic_action"` instead of the
+usual hostname/page_type shape:
+```json
+{
+  "kind": "generic_action",
+  "name": "generic_login",
+  "description": "Heuristic login: types into the first password-type input found, and the input immediately before it, then submits.",
+  "action_type": "login",
+  "nav_params_schema": "{\"email\":\"string\",\"password\":\"string\"}",
+  "steps": [
+    {"action":"type","selector":"input[type=email], input[autocomplete=username]","text":"{{email}}"},
+    {"action":"type","selector":"input[type=password]","text":"{{password}}"},
+    {"action":"click","selector":"button[type=submit]"}
+  ]
+}
+```
+
+Everything about composition works identically here: expansion is
+recursive (a generic action's own steps can use `run_action` or
+`run_generic_action`, including reusing *other* generic actions), cycle
+detection covers this namespace exactly like the site-recipe one (verified
+live — a self-referencing generic action, a two-entry mutual cycle, and a
+dangling reference each failed immediately with a distinct, correct
+message), and `register.js` checks references non-fatally the same way. The
+one difference: a generic action has no fixed hostname of its own, so a
+*bare* `run_action` ref inside one (meaning "whatever hostname eventually
+calls this") can't be checked until something with a real hostname actually
+invokes the chain — register.js's non-fatal check and `query.js expand
+generic:<name>` both skip that specific case rather than falsely flagging
+it. `action_type` is optional here (purely for discovery via `node query.js
+action-types`) since some macros — dismissing a cookie banner, say — aren't
+really a taxonomy "action_type" in the login/add_to_cart sense at all.
 
 ## Session persistence
 

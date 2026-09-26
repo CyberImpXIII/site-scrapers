@@ -111,6 +111,23 @@ resolve — building bottom-up or top-down are both fine — but `engine.js`
 fails fast, before launching a browser, on a dangling reference, a
 referenced recipe that isn't `status:"working"`, or a reference cycle.
 
+**A hostname-independent library also exists** — `generic_actions`, a table
+of reusable, named "macros" not tied to any site (a heuristic generic login,
+dismissing a cookie-consent banner, an infinite-scroll "load more" loop).
+Pull one into any recipe with `{"action":"run_generic_action","ref":"generic_login"}`
+— same inline-execution/expansion/cycle-detection machinery as `run_action`,
+just keyed by name instead of hostname. Register one with `node register.js`
+using `{"kind":"generic_action","name":...,"steps":[...]}` instead of the
+usual hostname/page_type shape (see register.js's header comment for the
+full example). Browse the library with `node query.js generic-actions`
+(list) or `node query.js generic-action <name>` (one, full detail);
+`node query.js expand generic:<name>` flattens one the same way `expand`
+does for a site recipe. Reach for a generic action instead of a site-
+specific `run_action` when the steps genuinely don't depend on the site
+(heuristic element-finding, not exact selectors) — a `run_action` reference
+to a specific site's recipe is still the right call when you're reusing
+something that recipe already figured out for that one site.
+
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 
 Full details: README.md.

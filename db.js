@@ -62,9 +62,29 @@ function seedActionTypes(db) {
   for (const [name, description] of ACTION_TYPES_SEED) insert.run(name, description, now);
 }
 
+// A puppeteer-level "library" of reusable, hostname-independent ui_steps
+// sequences — recurring macros (a generic login heuristic, dismissing a
+// cookie banner, an infinite-scroll "load more" loop) that any site's
+// action recipe can pull in with a `run_generic_action` step, instead of
+// each recipe re-deriving the same steps. Unlike `sites`, these aren't
+// keyed to a hostname — `name` is the whole identity.
+const GENERIC_ACTIONS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS generic_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  action_type TEXT,             -- optional categorization against action_types, for discovery -- not required, since some macros (e.g. "dismiss_cookie_banner") aren't really an action_type in the login/add_to_cart sense
+  nav_params_schema TEXT,       -- JSON: documents accepted {{params}}, same convention as sites.nav_params_schema
+  steps TEXT NOT NULL,          -- JSON array of ui_steps (same vocabulary as a site recipe's nav_template: goto/click/type/waitForSelector/wait/handoff/run_action/run_generic_action)
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
+
 const SCHEMA = `
 ${SITES_TABLE_SQL}
 ${ACTION_TYPES_TABLE_SQL}
+${GENERIC_ACTIONS_TABLE_SQL}
 CREATE TABLE IF NOT EXISTS site_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL REFERENCES sites(id),
@@ -289,6 +309,32 @@ function insertActionType(db, name, description) {
   return getActionType(db, name);
 }
 
+function listGenericActions(db) {
+  return db
+    .prepare('SELECT id, name, description, action_type, nav_params_schema, created_at, updated_at FROM generic_actions ORDER BY name')
+    .all();
+}
+
+function getGenericAction(db, name) {
+  return db.prepare('SELECT * FROM generic_actions WHERE name = ?').get(name);
+}
+
+function upsertGenericAction(db, g) {
+  const now = new Date().toISOString();
+  const existing = getGenericAction(db, g.name);
+  if (existing) {
+    db.prepare(
+      `UPDATE generic_actions SET description=?, action_type=?, nav_params_schema=?, steps=?, updated_at=? WHERE name=?`
+    ).run(g.description ?? existing.description, g.action_type ?? null, g.nav_params_schema ?? null, g.steps, now, g.name);
+    return getGenericAction(db, g.name).id;
+  }
+  db.prepare(
+    `INSERT INTO generic_actions (name, description, action_type, nav_params_schema, steps, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?)`
+  ).run(g.name, g.description ?? null, g.action_type ?? null, g.nav_params_schema ?? null, g.steps, now, now);
+  return getGenericAction(db, g.name).id;
+}
+
 function insertField(db, siteId, f, order) {
   db.prepare(
     `INSERT INTO site_fields (site_id, field_name, extract_kind, segment_index, regex_pattern, attribute_name, example_value, field_order)
@@ -341,5 +387,8 @@ module.exports = {
   listActionTypes,
   getActionType,
   insertActionType,
+  listGenericActions,
+  getGenericAction,
+  upsertGenericAction,
   DB_PATH,
 };

@@ -187,6 +187,33 @@
 //   "nav_template": "[{\"action\":\"run_action\",\"ref\":\"login\"},{\"action\":\"goto\",\"url\":\"{{product_url}}\"},{\"action\":\"click\",\"selector\":\"#add-to-cart\"},{\"action\":\"click\",\"selector\":\"#checkout\"}]",
 //   "...": "(the rest of the shape is the same as the plain example below)"
 // }
+//
+// ui_steps 'run_generic_action' step: like run_action, but reuses a named
+// entry from the generic_actions LIBRARY instead of another site's recipe —
+// a recurring, hostname-independent puppeteer "macro" (a heuristic generic
+// login, dismissing a cookie-consent banner, an infinite-scroll "load more"
+// loop) any recipe can pull in with just a name, no hostname involved:
+// {"action":"run_generic_action","ref":"dismiss_cookie_banner"}. Expanded
+// and cycle-checked the same way and at the same time as run_action (a
+// generic action's own steps can themselves use run_action/
+// run_generic_action, recursively). Register one with "kind":
+// "generic_action" instead of a hostname/page_type shape:
+// {
+//   "kind": "generic_action",
+//   "name": "generic_login",
+//   "description": "Heuristic login: types into the first password-type input found, and the input immediately before it, then submits.",
+//   "action_type": "login",              // optional -- categorization only, for discovery via `node query.js action-types`/`generic-actions`
+//   "nav_params_schema": "{\"email\":\"string\",\"password\":\"string\"}",
+//   "steps": [
+//     {"action":"type","selector":"input[type=email], input[autocomplete=username]","text":"{{email}}"},
+//     {"action":"type","selector":"input[type=password]","text":"{{password}}"},
+//     {"action":"click","selector":"button[type=submit]"}
+//   ]
+// }
+// "steps" may be given as a native JSON array (as above) or as a JSON
+// string, same flexibility as nav_template elsewhere. Manage the library
+// with `node query.js generic-actions` (list) and `node query.js
+// generic-action <name>` (one, full detail).
 // {
 //   "hostname": "example.com",
 //   "page_type": "action",
@@ -206,8 +233,73 @@
 // }
 
 const fs = require('fs');
-const { openDb, upsertSite, insertField, listActionTypes, getActionType, insertActionType } = require('./db');
-const { resolveOneLevel } = require('./lib/composeActions');
+const {
+  openDb,
+  upsertSite,
+  insertField,
+  listActionTypes,
+  getActionType,
+  insertActionType,
+  upsertGenericAction,
+} = require('./db');
+const { checkUnresolvedRefs } = require('./lib/composeActions');
+
+function registerGenericAction(db, def) {
+  if (!def.name || !def.steps) {
+    console.log(JSON.stringify({ success: false, error: 'kind "generic_action" requires name and steps' }));
+    process.exit(1);
+  }
+
+  const stepsJson = typeof def.steps === 'string' ? def.steps : JSON.stringify(def.steps);
+  let parsedSteps;
+  try {
+    parsedSteps = JSON.parse(stepsJson);
+  } catch (e) {
+    console.log(JSON.stringify({ success: false, error: `Bad steps JSON: ${e.message}` }));
+    process.exit(1);
+  }
+  if (!Array.isArray(parsedSteps)) {
+    console.log(JSON.stringify({ success: false, error: '"steps" must be a JSON array' }));
+    process.exit(1);
+  }
+
+  if (def.action_type) {
+    const known = getActionType(db, def.action_type);
+    if (!known) {
+      if (!def.new_action_type_description) {
+        console.log(JSON.stringify({
+          success: false,
+          error: `action_type "${def.action_type}" isn't in the action_types taxonomy. Reuse an existing one if it fits, or add ` +
+            '"new_action_type_description" to the JSON to register it as a deliberate new type.',
+          existingActionTypes: listActionTypes(db),
+        }));
+        process.exit(1);
+      }
+      insertActionType(db, def.action_type, def.new_action_type_description);
+    }
+  }
+
+  // callerHostname is null here — a generic action has no fixed hostname
+  // until something invokes it, so a bare run_action ref inside it can't be
+  // checked yet (checkUnresolvedRefs skips those, doesn't flag them).
+  const unresolvedReferences = checkUnresolvedRefs(db, parsedSteps, null);
+
+  const genericActionId = upsertGenericAction(db, {
+    name: def.name,
+    description: def.description,
+    action_type: def.action_type,
+    nav_params_schema: def.nav_params_schema,
+    steps: stepsJson,
+  });
+
+  console.log(JSON.stringify({
+    success: true,
+    kind: 'generic_action',
+    name: def.name,
+    genericActionId,
+    unresolvedReferences,
+  }));
+}
 
 function main() {
   const arg = process.argv[2];
@@ -229,6 +321,11 @@ function main() {
   } catch (e) {
     console.log(JSON.stringify({ success: false, error: `Bad JSON: ${e.message}` }));
     process.exit(1);
+  }
+
+  if (def.kind === 'generic_action') {
+    registerGenericAction(openDb(), def);
+    return;
   }
 
   const pageType = def.page_type || 'listing';
@@ -275,21 +372,15 @@ function main() {
     }
   }
 
-  // Non-fatal: a run_action ref may point at a recipe that doesn't exist
-  // yet (building composed recipes bottom-up or top-down are both fine) —
-  // warn, don't block. engine.js does the real, fatal check at run time.
-  const unresolvedReferences = [];
+  // Non-fatal: a run_action/run_generic_action ref may point at something
+  // that doesn't exist yet (building composed recipes bottom-up or
+  // top-down are both fine) — warn, don't block. engine.js does the real,
+  // fatal check at run time.
+  let unresolvedReferences = [];
   if (def.nav_method === 'ui_steps') {
     try {
       const steps = JSON.parse(def.nav_template);
-      if (Array.isArray(steps)) {
-        for (const step of steps) {
-          if (step.action === 'run_action' && step.ref) {
-            const { error } = resolveOneLevel(db, step.ref, def.hostname);
-            if (error) unresolvedReferences.push({ ref: step.ref, error });
-          }
-        }
-      }
+      if (Array.isArray(steps)) unresolvedReferences = checkUnresolvedRefs(db, steps, def.hostname);
     } catch {
       /* malformed nav_template JSON isn't this check's job — ui_steps execution will surface it */
     }

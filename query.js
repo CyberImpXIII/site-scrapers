@@ -10,7 +10,10 @@
 //   node query.js action-types                              # the action_type taxonomy for page_type "action"
 //   node query.js sessions [hostname]                        # saved session cookie jars (metadata only, never cookie values)
 //   node query.js clear-session <hostname>[:sessionName]      # delete one saved session, forcing a fresh login/handoff next run
-//   node query.js expand <hostname>#page_type:recipe_name     # flatten a ui_steps recipe's run_action references, show what will actually run
+//   node query.js expand <hostname>#page_type:recipe_name     # flatten a ui_steps recipe's run_action/run_generic_action references
+//   node query.js expand generic:<name>                       # same, for a generic_actions library entry
+//   node query.js generic-actions                             # list the generic_actions library (name/description/action_type, no steps)
+//   node query.js generic-action <name>                       # one generic action, full detail including steps
 //
 // #page_type ('#listing' | '#article' | '#action') picks which recipe when a
 // hostname has more than one; omitting it defaults to 'listing'. A hostname
@@ -24,9 +27,19 @@
 // and prefer reusing an existing action_type over inventing a near-duplicate
 // (e.g. "add_to_cart" vs "add-to-basket") — register.js enforces this.
 
-const { openDb, listSites, getSite, getFields, getRuns, parseSiteArg, listActionTypes } = require('./db');
+const {
+  openDb,
+  listSites,
+  getSite,
+  getFields,
+  getRuns,
+  parseSiteArg,
+  listActionTypes,
+  listGenericActions,
+  getGenericAction,
+} = require('./db');
 const { listSessions, clearSession } = require('./lib/sessions');
-const { expandSteps, refKey } = require('./lib/composeActions');
+const { expandSteps, refKey, genericRefKey } = require('./lib/composeActions');
 
 function main() {
   const [, , cmd, arg, limitArg] = process.argv;
@@ -76,9 +89,30 @@ function main() {
 
   if (cmd === 'expand') {
     if (!arg) {
-      console.log(JSON.stringify({ error: 'Usage: node query.js expand <hostname>#page_type:recipe_name' }));
+      console.log(JSON.stringify({ error: 'Usage: node query.js expand <hostname>#page_type:recipe_name | expand generic:<name>' }));
       process.exit(1);
     }
+
+    if (arg.startsWith('generic:')) {
+      const name = arg.slice('generic:'.length);
+      const ga = getGenericAction(db, name);
+      if (!ga) {
+        console.log(JSON.stringify({ error: `No generic action documented for "${name}"`, documented: false }));
+        process.exit(1);
+      }
+      try {
+        // No fixed hostname to resolve a bare run_action against — pass
+        // null, same as register.js's check (bare refs are only valid once
+        // something with a real hostname invokes this).
+        const steps = expandSteps(db, JSON.parse(ga.steps), null, new Set([genericRefKey(name)]));
+        console.log(JSON.stringify({ name, steps }, null, 2));
+      } catch (e) {
+        console.log(JSON.stringify({ error: e.message }));
+        process.exit(1);
+      }
+      return;
+    }
+
     const { hostname, pageType, recipeName } = parseSiteArg(arg);
     const site = getSite(db, hostname, pageType, recipeName);
     if (!site) {
@@ -99,6 +133,25 @@ function main() {
     return;
   }
 
+  if (cmd === 'generic-actions') {
+    console.log(JSON.stringify(listGenericActions(db), null, 2));
+    return;
+  }
+
+  if (cmd === 'generic-action') {
+    if (!arg) {
+      console.log(JSON.stringify({ error: 'Usage: node query.js generic-action <name>' }));
+      process.exit(1);
+    }
+    const ga = getGenericAction(db, arg);
+    if (!ga) {
+      console.log(JSON.stringify({ error: `No generic action documented for "${arg}"`, documented: false }));
+      process.exit(1);
+    }
+    console.log(JSON.stringify({ ...ga, steps: JSON.parse(ga.steps) }, null, 2));
+    return;
+  }
+
   if (cmd === 'runs') {
     if (!arg) {
       console.log(JSON.stringify({ error: 'Usage: node query.js runs <hostname>[#page_type[:recipe_name]] [limit]' }));
@@ -116,7 +169,7 @@ function main() {
   }
 
   console.log(JSON.stringify({
-    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name`,
+    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name>`,
   }));
   process.exit(1);
 }
