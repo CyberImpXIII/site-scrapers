@@ -138,6 +138,46 @@ and never appear in `engine.js`'s stdout or the `scrape_runs` log — the
 result JSON's `handoffCaptures` field reports the file path and which keys
 were captured, not the values themselves.
 
+## Session persistence
+
+Every `engine.js` run persists cookies across invocations — **on by
+default**, no opt-in needed. `lib/runner.js`'s `withPage` loads a saved
+cookie jar before `fn` (navigation) runs and saves the (possibly updated)
+jar back afterward, keyed by `(hostname, sessionName)`. Concretely: log into
+a site once via a `handoff`-based action recipe, and every later call for
+that hostname — any recipe, any `page_type`, not just the one that logged in
+— starts already authenticated, no repeat handoff.
+
+- `params.session` (default `"default"`) names which session to use.
+  Multiple **parallel sessions** for the same hostname — e.g. two different
+  accounts — just use different names; they never share cookies. Cookies are
+  read via CDP's `Network.getAllCookies` (not `page.cookies()`, which only
+  sees the current page's URL) and filtered to ones actually belonging to
+  that hostname (exact match or a domain-scoped cookie like `.example.com`
+  that covers it) before being saved.
+- `params.noSession: true` skips persistence — load and save both — for one
+  call, e.g. to test a truly clean/logged-out run without deleting the saved
+  session.
+- `node query.js sessions [hostname]` lists what's saved: hostname,
+  sessionName, savedAt, cookie count — metadata only, never the cookie
+  values. `node query.js clear-session <hostname>[:sessionName]` deletes
+  one, forcing a fresh login (or a real `handoff`, if the recipe has one)
+  next time.
+- Files live at `data/.sessions/<hostname>__<sessionName>.json`, gitignored
+  and mode 600, same handling as `data/.captures/`.
+
+**This combines with `handoff` for free, no special-casing needed.** A
+`resume_selector`/`resume_url_includes` check runs immediately when the
+handoff step starts, not only on future page changes — so if a still-valid
+session is loaded before a login recipe navigates, the site's own redirect
+away from the login page (because you're already authenticated) typically
+satisfies the resume condition instantly, and the whole run finishes with no
+human involvement at all. A stale or expired session just falls through to
+a real handoff as normal, and the fresh cookies that produces get saved
+automatically for next time. Verified end-to-end (including parallel-session
+isolation and the `noSession` opt-out) against a local test server before
+relying on it against a real site.
+
 ## Workflow (for Claude to follow)
 
 1. **Before assuming a site needs interactive discovery**, run

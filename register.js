@@ -16,6 +16,21 @@
 // {"page_type":"action","recipe_name":"add_to_cart",...}. Look them up with
 // engine.js/query.js via "<hostname>#<page_type>:<recipe_name>".
 //
+// Session cookies persist across runs ON BY DEFAULT, per (hostname,
+// sessionName) — not something a recipe declares, purely a call-time
+// concern. Every engine.js run loads that session's saved cookies before
+// navigating and saves the (possibly updated) jar back afterward, so a
+// successful login survives to the next call without repeating a handoff —
+// see "Human handoff" in README.md for how that combines with a `handoff`
+// step. params.session (default "default") names which of possibly several
+// PARALLEL sessions to use for a hostname, e.g. two different accounts:
+// {"session": "work_account"} vs {"session": "personal_account"} never
+// share cookies. params.noSession: true skips persistence entirely for one
+// call. Inspect what's saved with `node query.js sessions [hostname]`
+// (metadata only — hostname/sessionName/savedAt/cookieCount, never cookie
+// values) and force a fresh login with `node query.js clear-session
+// <hostname>[:sessionName]`.
+//
 // JSON shape (page_type: "listing", repeated cards — the default):
 // {
 //   "hostname": "example.com",
@@ -106,6 +121,17 @@
 // in the background) and tell them up front that a browser window is about
 // to open and what to do in it:
 // {"action":"handoff","reason":"Enter the 2FA code sent to your phone, then submit.","resume_selector":".account-nav","timeout_ms":300000}
+//
+// A login action's handoff combines with session persistence for free: since
+// session cookies load before navigation and resume_selector/
+// resume_url_includes are checked immediately (not just on future changes),
+// a still-valid saved session typically means the resume condition is
+// already true the moment the handoff step starts -- e.g. navigating to a
+// login URL while already authenticated gets auto-redirected past it -- so
+// the run finishes with no human involvement at all. A stale/expired
+// session naturally falls through to a real handoff, and the fresh cookies
+// that produces get saved automatically for next time. Nothing about the
+// recipe needs to special-case this.
 //
 // Optional `capture` on a handoff step: a menu of what's available to read
 // back out of the page once the human is done (their typed value is the one

@@ -8,6 +8,8 @@
 //   node query.js site <hostname>[#page_type[:recipe_name]] # full recipe + fields for one site
 //   node query.js runs <hostname>[#page_type[:recipe_name]] [n] # recent run history (reliability)
 //   node query.js action-types                              # the action_type taxonomy for page_type "action"
+//   node query.js sessions [hostname]                        # saved session cookie jars (metadata only, never cookie values)
+//   node query.js clear-session <hostname>[:sessionName]      # delete one saved session, forcing a fresh login/handoff next run
 //
 // #page_type ('#listing' | '#article' | '#action') picks which recipe when a
 // hostname has more than one; omitting it defaults to 'listing'. A hostname
@@ -22,6 +24,7 @@
 // (e.g. "add_to_cart" vs "add-to-basket") — register.js enforces this.
 
 const { openDb, listSites, getSite, getFields, getRuns, parseSiteArg, listActionTypes } = require('./db');
+const { listSessions, clearSession } = require('./lib/sessions');
 
 function main() {
   const [, , cmd, arg, limitArg] = process.argv;
@@ -53,6 +56,22 @@ function main() {
     return;
   }
 
+  if (cmd === 'sessions') {
+    console.log(JSON.stringify(listSessions(arg), null, 2));
+    return;
+  }
+
+  if (cmd === 'clear-session') {
+    if (!arg) {
+      console.log(JSON.stringify({ error: 'Usage: node query.js clear-session <hostname>[:sessionName]' }));
+      process.exit(1);
+    }
+    const [hostname, sessionName] = arg.split(':');
+    const removed = clearSession(hostname, sessionName);
+    console.log(JSON.stringify({ removed, hostname, sessionName: sessionName || 'default' }));
+    return;
+  }
+
   if (cmd === 'runs') {
     if (!arg) {
       console.log(JSON.stringify({ error: 'Usage: node query.js runs <hostname>[#page_type[:recipe_name]] [limit]' }));
@@ -69,7 +88,9 @@ function main() {
     return;
   }
 
-  console.log(JSON.stringify({ error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types` }));
+  console.log(JSON.stringify({
+    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName]`,
+  }));
   process.exit(1);
 }
 

@@ -404,6 +404,11 @@ async function main() {
   const fields = getFields(db, site.id);
   const headed = site.nav_method === 'ui_steps' && stepsNeedHeaded(site.nav_template);
   const siteMeta = { hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name };
+  // Session persistence is ON BY DEFAULT (params.session picks which named,
+  // parallel session — e.g. a second account — default 'default'); a run
+  // opts out entirely with params.noSession: true.
+  const sessionName = params.session || 'default';
+  const sessionOpt = params.noSession ? undefined : { hostname: site.hostname, sessionName };
 
   if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
@@ -447,7 +452,7 @@ async function main() {
         });
 
         return { timedOut, record, blobLen, url: page.url(), captures };
-      }, { headed });
+      }, { headed, session: sessionOpt });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
       console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));
@@ -473,6 +478,7 @@ async function main() {
       article: articleOutcome.record,
       // file path + captured KEY NAMES only — never the captured values.
       handoffCaptures: articleOutcome.captures,
+      sessionUsed: sessionOpt ? sessionName : null,
     }));
     process.exit(success ? 0 : 1);
   }
@@ -518,7 +524,7 @@ async function main() {
       }
 
       return { timedOut, jobs, claimedCount, url: page.url(), captures };
-    }, { headed });
+    }, { headed, session: sessionOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
     console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));
@@ -557,6 +563,7 @@ async function main() {
     count: outcome.jobs.length,
     jobs: outcome.jobs,
     handoffCaptures: outcome.captures,
+    sessionUsed: sessionOpt ? sessionName : null,
   }));
   process.exit(success ? 0 : 1);
 }

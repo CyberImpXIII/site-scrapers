@@ -4,3 +4,7 @@ node_modules/
 # handoff capture files -- may contain secrets typed during a handoff step
 # (passwords, one-time codes). Temporary; never committed.
 data/.captures/
+
+# session cookie jars -- persisted login/session state per (hostname,
+# sessionName). Never committed.
+data/.sessions/

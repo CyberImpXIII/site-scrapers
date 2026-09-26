@@ -79,6 +79,21 @@ are never printed to stdout or logged to `scrape_runs` — the result JSON's
 `handoffCaptures` gives you the file path and which keys were captured, not
 the values, so don't ask for or repeat the values yourself either.
 
+**Session cookies persist across runs ON BY DEFAULT**, per `(hostname,
+sessionName)` — every call loads that session's saved cookies before
+navigating and saves the updated jar back afterward, so a successful login
+survives to the next call without repeating a handoff. `params.session`
+(default `"default"`) selects which of possibly several *parallel* sessions
+to use for a hostname — e.g. two different accounts never share cookies as
+long as each run passes a distinct `session` name. `params.noSession: true`
+skips persistence for one call. `node query.js sessions [hostname]` lists
+what's saved (metadata only, never cookie values); `node query.js
+clear-session <hostname>[:sessionName]` forces a fresh login next time. A
+login recipe's `handoff` combines with this for free — a still-valid session
+typically means the resume condition (e.g. redirected past `/login`) is
+already true the instant the handoff step starts, so no human is needed at
+all; a stale session just falls through to a real handoff as normal.
+
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 
 Full details: README.md.
