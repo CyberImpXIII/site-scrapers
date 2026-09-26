@@ -28,6 +28,14 @@
 //   ]
 // }
 //
+// anchor_attribute + regex_pattern (listing only): regex_pattern is repurposed
+// as an optional CSS selector, queried within the card, when the
+// card_anchor_text element isn't the link you want the attribute from (e.g.
+// card_anchor_text="View Company Profile" marks the card, but the real job
+// link is a different <a> inside it: {"field_name":"href","extract_kind":
+// "anchor_attribute","attribute_name":"href","regex_pattern":"a[href^='/remote-jobs/']"}).
+// Omit it to read the attribute off the matched anchor itself (default).
+//
 // JSON shape (page_type: "article", one record per page, e.g. a detail/post page):
 // {
 //   "hostname": "example.com",

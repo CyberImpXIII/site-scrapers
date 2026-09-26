@@ -95,7 +95,11 @@ async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, incl
       const seenBlobs = new Set();
 
       for (const anchor of anchors) {
-        let card = anchor.closest('div') || anchor.parentElement;
+        // closest() with a combined selector picks the nearest matching
+        // ancestor regardless of list order — tr/li cover table- and
+        // list-based card layouts (e.g. remoteok.com's <table><tr class="job">),
+        // div covers the more common case (e.g. hiring.cafe).
+        let card = anchor.closest('tr, li, div') || anchor.parentElement;
         for (let i = 0; i < 6 && card; i++) {
           if (card.innerText && card.innerText.length > cardMinTextLen) break;
           card = card.parentElement;
@@ -116,7 +120,11 @@ async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, incl
 
         for (const f of fields) {
           if (f.extract_kind === 'positional_segment') {
-            record[f.field_name] = segments[f.segment_index] ?? null;
+            // Negative segment_index counts from the end (Python-style) —
+            // useful when a variable number of tokens (e.g. a "Boosted" badge)
+            // can appear earlier in the blob but a field is reliably last.
+            const idx = f.segment_index < 0 ? segments.length + f.segment_index : f.segment_index;
+            record[f.field_name] = segments[idx] ?? null;
           } else if (f.extract_kind === 'regex_anywhere') {
             try {
               const re = new RegExp(f.regex_pattern);
@@ -126,7 +134,17 @@ async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, incl
               record[f.field_name] = null;
             }
           } else if (f.extract_kind === 'anchor_attribute') {
-            record[f.field_name] = anchor.getAttribute(f.attribute_name);
+            // regex_pattern is repurposed here as an optional CSS selector: some
+            // sites' card_anchor_text identifies the card via an element that
+            // isn't the link you actually want the attribute from (e.g. a "View
+            // Company Profile" link marks the card, but the job URL is a
+            // different <a> inside it). Defaults to the matched anchor itself.
+            let attrEl = anchor;
+            if (f.regex_pattern) {
+              const found = card.querySelector(f.regex_pattern);
+              if (found) attrEl = found;
+            }
+            record[f.field_name] = attrEl.getAttribute(f.attribute_name);
           }
         }
         if (includeRaw) record._raw = blob;
@@ -170,7 +188,8 @@ async function extractArticle(page, { contentSelector, contentStopText, minTextL
 
       for (const f of fields) {
         if (f.extract_kind === 'positional_segment') {
-          record[f.field_name] = segments[f.segment_index] ?? null;
+          const idx = f.segment_index < 0 ? segments.length + f.segment_index : f.segment_index;
+          record[f.field_name] = segments[idx] ?? null;
         } else if (f.extract_kind === 'regex_anywhere') {
           try {
             const re = new RegExp(f.regex_pattern);
