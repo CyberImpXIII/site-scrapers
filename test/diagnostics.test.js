@@ -105,6 +105,38 @@ test('a failing run with noDiagnostics:true captures nothing', async () => {
   assert.deepEqual(after, before, 'expected no new capture directory when diagnostics are disabled');
 });
 
+test('a failing run keeps a rolling window of frames leading up to it', async () => {
+  // Short interval against the ~2s ready timeout, and a window smaller than
+  // the number of captures taken, so this also proves the buffer actually
+  // ROLLS (keeps the most recent N) rather than accumulating everything.
+  const result = await runEngine(RECIPE_NAME, { rollingFrames: 3, rollingIntervalMs: 300 });
+  assert.equal(result.success, false);
+
+  const framesDir = path.join(result.debugDir, 'frames');
+  assert.ok(fs.existsSync(framesDir), 'expected a frames/ directory in the capture');
+
+  const frames = fs.readdirSync(framesDir).sort();
+  assert.ok(frames.length > 0, 'expected at least one rolling frame');
+  assert.ok(frames.length <= 3, `expected the window to cap at 3 frames, got ${frames.length}`);
+  assert.ok(frames.every(f => f.endsWith('.png')), 'expected every frame to be a png');
+
+  const meta = JSON.parse(fs.readFileSync(path.join(result.debugDir, 'meta.json'), 'utf8'));
+  assert.equal(meta.rollingIntervalMs, 300);
+  assert.equal(meta.rollingFrames.length, frames.length);
+  // Oldest first, and every frame predates the failure.
+  const offsets = meta.rollingFrames.map(f => f.msBeforeFailure);
+  assert.ok(offsets.every(ms => ms >= 0), 'frames should be at or before the failure moment');
+  assert.deepEqual([...offsets].sort((a, b) => b - a), offsets, 'frames should be ordered oldest first');
+});
+
+test('rollingFrames:0 disables the window but keeps the rest of the capture', async () => {
+  const result = await runEngine(RECIPE_NAME, { rollingFrames: 0 });
+  assert.equal(result.success, false);
+  assert.ok(result.debugDir, 'diagnostics should still be captured');
+  assert.ok(fs.existsSync(path.join(result.debugDir, 'screenshot.png')), 'the single failure screenshot should remain');
+  assert.ok(!fs.existsSync(path.join(result.debugDir, 'frames')), 'expected no frames/ directory');
+});
+
 test('listDebugCaptures reflects what was captured', async () => {
   await runEngine(RECIPE_NAME);
   const captures = listDebugCaptures();

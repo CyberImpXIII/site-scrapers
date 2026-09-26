@@ -587,6 +587,16 @@ async function main() {
   // Failure-diagnostics capture (screenshot/DOM/console/network) is ON BY
   // DEFAULT too; params.noDiagnostics: true skips it for one call.
   const debugOpt = params.noDiagnostics ? undefined : siteMeta;
+  // Rolling screenshot window, so a failure shows the run's last few
+  // seconds rather than only its final frame. Off by default on a HEADED
+  // run: those are handoffs, where a person is already watching the screen,
+  // the run can sit idle for ten minutes, and the frames would capture
+  // whatever they're doing in that window. params.rollingFrames overrides
+  // either way (0 disables).
+  const rollingOpt = {
+    frames: numericParam(params.rollingFrames, params, headed ? 0 : 6),
+    intervalMs: numericParam(params.rollingIntervalMs, params, 2000),
+  };
 
   if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
@@ -635,7 +645,7 @@ async function main() {
         }
 
         return { timedOut, record, blobLen, url: page.url(), captures, debugDir };
-      }, { headed, session: sessionOpt, debugMeta: debugOpt });
+      }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
       console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
@@ -759,7 +769,7 @@ async function main() {
       }
 
       return { timedOut, jobs, claimedCount, url: page.url(), captures, pagesVisited: pagesCollected + 1, debugDir };
-    }, { headed, session: sessionOpt, debugMeta: debugOpt });
+    }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
     console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));

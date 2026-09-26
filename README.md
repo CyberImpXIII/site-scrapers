@@ -313,13 +313,45 @@ string to guess from. Each failure writes a directory under the gitignored
 - `dom.html` — the page's HTML, for checking what selectors *are* present
 - `console.json` — browser console messages (capped ring buffer, timestamped)
 - `network_failures.json` — failed requests, same shape
-- `meta.json` — recipe identity, the error, the final URL, timestamp
+- `frames/` — the rolling window, see below
+- `meta.json` — recipe identity, the error, the final URL, timestamp, and an
+  index of the frames with their offsets
 
 On by default; `params.noDiagnostics: true` skips it. Only the last 20
 capture directories are kept — this is disposable debugging data, not an
 audit trail (`scrape_runs` is that). List them with `node query.js
 debug-captures`. Console/network listeners attach when the page is created,
 so they cover the whole run, not just the instant it broke.
+
+### The rolling window
+
+A single final screenshot often can't distinguish "the page never loaded"
+from "it loaded, then something navigated away" or "a modal appeared and ate
+the click" — they all end on the same blank-looking frame. So the engine
+also screenshots periodically into a bounded in-memory ring buffer and, on
+failure, writes out the last few frames:
+
+```
+frames/frame-01-t-minus-2036ms.png
+frames/frame-02-t-minus-72ms.png
+```
+
+Filenames carry how long before the failure each frame was taken, so the
+sequence reads in order without opening `meta.json`. Frames are held in
+memory and only written if the run actually fails, so a successful run costs
+nothing but the periodic screenshot itself. A frame is taken immediately at
+start as well as on the interval — otherwise a run that fails inside one
+interval would capture only a frame milliseconds before the failure, i.e. a
+duplicate of `screenshot.png`, which is the opposite of what the window is
+for.
+
+- `params.rollingFrames` — window size (default 6, `0` disables it while
+  leaving the rest of the diagnostics intact).
+- `params.rollingIntervalMs` — how often (default 2000).
+- **Defaults to off on a headed run.** Headed means a `handoff`: a person is
+  already watching the screen, the run can sit idle for ten minutes, and the
+  frames would capture whatever they're doing in that window. Pass
+  `rollingFrames` explicitly to override.
 
 ## Session persistence
 

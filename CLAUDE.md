@@ -153,7 +153,14 @@ the output JSON. Read those instead of re-deriving the recipe from scratch —
 `dom.html` shows which selectors actually exist, `screenshot.png` shows
 whether you got a CAPTCHA/login wall rather than the page you expected.
 `node query.js debug-captures` lists recent ones. `params.noDiagnostics: true`
-disables it.
+disables it. The capture also includes `frames/` — a rolling window of the
+last few screenshots *leading up to* the failure, named by how long before it
+they were taken (`frame-01-t-minus-2036ms.png`). Read them in order: that's
+what separates "never loaded" from "loaded, then navigated away" or "a modal
+appeared", which all look identical in the final frame alone. Window size is
+`params.rollingFrames` (default 6, 0 disables) at `params.rollingIntervalMs`
+(default 2000); it defaults to OFF on headed/handoff runs, where a person is
+already watching and the frames would capture their own interaction.
 
 **Don't trust a recipe's `status` alone** — it's set by hand and can go
 stale. `node query.js health` shows each recipe's actual success rate over
