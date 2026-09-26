@@ -207,27 +207,42 @@ async function runUiSteps(page, steps, params, siteMeta) {
   return { captures };
 }
 
-async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, includeRaw }) {
+async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen, fields, includeRaw }) {
   return page.evaluate(
-    (cardAnchorText, cardMinTextLen, fields, includeRaw) => {
-      const anchors = Array.from(document.querySelectorAll('a, button')).filter(
-        el => el.textContent.trim() === cardAnchorText
-      );
+    (cardAnchorText, cardSelector, cardMinTextLen, fields, includeRaw) => {
+      // Two ways to find cards. card_selector (when set) matches each card
+      // container directly — for sites with no literal text shared by every
+      // card (e.g. linkedin.com's public search, builtin.com, dice.com). The
+      // card's first <a> then stands in as "the anchor" for anchor_attribute
+      // fields. Otherwise, card_anchor_text finds a per-card element and
+      // walks up from it to the card.
+      const pairs = [];
+      if (cardSelector) {
+        for (const card of document.querySelectorAll(cardSelector)) {
+          pairs.push({ anchor: card.querySelector('a') || card, card });
+        }
+      } else {
+        const anchors = Array.from(document.querySelectorAll('a, button')).filter(
+          el => el.textContent.trim() === cardAnchorText
+        );
+        for (const anchor of anchors) {
+          // closest() with a combined selector picks the nearest matching
+          // ancestor regardless of list order — tr/li cover table- and
+          // list-based card layouts (e.g. remoteok.com's <table><tr class="job">),
+          // div covers the more common case (e.g. hiring.cafe).
+          let card = anchor.closest('tr, li, div') || anchor.parentElement;
+          for (let i = 0; i < 6 && card; i++) {
+            if (card.innerText && card.innerText.length > cardMinTextLen) break;
+            card = card.parentElement;
+          }
+          if (card) pairs.push({ anchor, card });
+        }
+      }
 
       const results = [];
       const seenBlobs = new Set();
 
-      for (const anchor of anchors) {
-        // closest() with a combined selector picks the nearest matching
-        // ancestor regardless of list order — tr/li cover table- and
-        // list-based card layouts (e.g. remoteok.com's <table><tr class="job">),
-        // div covers the more common case (e.g. hiring.cafe).
-        let card = anchor.closest('tr, li, div') || anchor.parentElement;
-        for (let i = 0; i < 6 && card; i++) {
-          if (card.innerText && card.innerText.length > cardMinTextLen) break;
-          card = card.parentElement;
-        }
-        if (!card) continue;
+      for (const { anchor, card } of pairs) {
 
         const blob = card.innerText
           .split('\n')
@@ -268,6 +283,14 @@ async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, incl
               if (found) attrEl = found;
             }
             record[f.field_name] = attrEl.getAttribute(f.attribute_name);
+          } else if (f.extract_kind === 'ancestor_first_line') {
+            // For sites that group several job cards under one header (e.g.
+            // wellfound.com lists each company once, with its jobs beneath):
+            // regex_pattern is a CSS selector for that group container, and
+            // the field is the first line of its text — the header.
+            const group = card.closest(f.regex_pattern);
+            const line = group && group.innerText.split('\n').map(t => t.trim()).find(Boolean);
+            record[f.field_name] = line || null;
           }
         }
         if (includeRaw) record._raw = blob;
@@ -276,6 +299,7 @@ async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, incl
       return results;
     },
     cardAnchorText,
+    cardSelector,
     cardMinTextLen,
     fields,
     includeRaw
@@ -509,9 +533,13 @@ async function main() {
       let timedOut = false;
       try {
         await page.waitForFunction(
-          anchorText => Array.from(document.querySelectorAll('a, button')).some(el => el.textContent.trim() === anchorText),
+          (anchorText, cardSelector) =>
+            cardSelector
+              ? !!document.querySelector(cardSelector)
+              : Array.from(document.querySelectorAll('a, button')).some(el => el.textContent.trim() === anchorText),
           { timeout: site.ready_timeout_ms },
-          site.card_anchor_text
+          site.card_anchor_text,
+          site.card_selector
         );
       } catch {
         timedOut = true;
@@ -519,6 +547,7 @@ async function main() {
 
       const jobs = await extractCards(page, {
         cardAnchorText: site.card_anchor_text,
+        cardSelector: site.card_selector,
         cardMinTextLen: site.card_min_text_len,
         fields,
         includeRaw,

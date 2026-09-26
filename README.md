@@ -25,7 +25,14 @@ remember or re-derive it.
     - `listing` (default, back-compat) — a results page with repeated
       cards. Uses `card_anchor_text` to find them, extracts one record per
       card, pagination config, `result_count_regex` for a self-consistency
-      check.
+      check. When no literal text appears once in every card (no shared
+      "Apply"/"View job" link — e.g. linkedin.com's guest search, builtin.com,
+      dice.com), set `card_selector` instead: a CSS selector matching each
+      card container directly. The card's first `<a>` then serves as the
+      anchor for `anchor_attribute` fields. Prefer a site's own data
+      attributes (`[data-testid='job-card']`) or structure
+      (`div:has(> div > div > a[href^='/jobs/'])`) over generated class
+      names.
     - `article` — a single-record page (e.g. a job/post detail page). Uses
       `content_selector` (defaults to `document.body`) and `nav_method:
       "direct_url"` (goto `params.url` as-is) or `"ui_steps"`.
@@ -69,6 +76,10 @@ remember or re-derive it.
     pull the attribute off a different element within the card than the one
     `card_anchor_text` matched — e.g. the anchor that identifies a listing
     card isn't always the anchor whose `href` you actually want.
+    `ancestor_first_line` (listing only) handles layouts that group several
+    cards under one header, like a company name with its jobs listed
+    beneath it (wellfound.com): `regex_pattern` holds a CSS selector for the
+    group container, and the value is the first line of its text.
   - `scrape_runs` — an audit log of every invocation (params, success,
     result count vs. the site's own claimed count, duration, error). This
     is the reliability history — not just a static status flag.

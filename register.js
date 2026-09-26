@@ -61,6 +61,18 @@
 // "anchor_attribute","attribute_name":"href","regex_pattern":"a[href^='/remote-jobs/']"}).
 // Omit it to read the attribute off the matched anchor itself (default).
 //
+// card_selector (listing only, instead of card_anchor_text): a CSS selector
+// matching each card container directly, for sites where no literal text
+// appears once in every card (no shared "Apply"/"View job" link). The card's
+// first <a> is then used as the anchor for anchor_attribute fields, e.g.
+// "card_selector": "[data-testid='job-card']".
+//
+// ancestor_first_line (listing only): for layouts that group several cards
+// under one header (e.g. a company name with its jobs listed beneath it).
+// regex_pattern is a CSS selector for the group container; the value is the
+// first line of that container's text:
+// {"field_name":"company_name","extract_kind":"ancestor_first_line","regex_pattern":"div.rounded.border"}
+//
 // JSON shape (page_type: "article", one record per page, e.g. a detail/post page):
 // {
 //   "hostname": "example.com",
@@ -338,10 +350,10 @@ function main() {
     process.exit(1);
   }
 
-  if (pageType === 'listing' && !def.card_anchor_text) {
+  if (pageType === 'listing' && !def.card_anchor_text && !def.card_selector) {
     console.log(JSON.stringify({
       success: false,
-      error: 'page_type "listing" also requires card_anchor_text',
+      error: 'page_type "listing" also requires card_anchor_text or card_selector',
     }));
     process.exit(1);
   }

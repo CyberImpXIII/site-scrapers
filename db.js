@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS sites (
   pagination_config TEXT,
   action_type TEXT,                                  -- action recipes only: which entry of action_types this is (e.g. 'login', 'add_to_cart') -- register.js validates this against action_types, preferring reuse over inventing near-duplicate names. NULL for listing/article.
   card_anchor_text TEXT,                             -- listing only: exact text of a reliably-present per-card element
+  card_selector TEXT,                                -- listing only, alternative to card_anchor_text: CSS selector matching each card container directly, for sites with no shared per-card literal text
   card_min_text_len INTEGER NOT NULL DEFAULT 80,      -- min text length before considering the target ready (card container for listing, content_selector element for article)
   content_selector TEXT,                              -- article only: CSS selector for the main content container (defaults to body)
   content_stop_text TEXT,                              -- article only: truncate extracted text at the first occurrence of this literal string (cuts off "related content" widgets etc.)
@@ -89,7 +90,7 @@ CREATE TABLE IF NOT EXISTS site_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL REFERENCES sites(id),
   field_name TEXT NOT NULL,
-  extract_kind TEXT NOT NULL,        -- 'positional_segment' | 'regex_anywhere' | 'anchor_attribute' | 'title_regex' | 'full_blob'
+  extract_kind TEXT NOT NULL,        -- 'positional_segment' | 'regex_anywhere' | 'anchor_attribute' | 'ancestor_first_line' (listing) | 'title_regex' | 'full_blob'
   segment_index INTEGER,             -- for positional_segment: index into blob.split(' | ')
   regex_pattern TEXT,                -- for regex_anywhere: JS regex source; capture group 1 used if present, else whole match
   attribute_name TEXT,               -- for anchor_attribute: e.g. 'href'
@@ -180,6 +181,13 @@ function migrateActionTypeColumn(db) {
   db.exec('ALTER TABLE sites ADD COLUMN action_type TEXT');
 }
 
+// Old DBs predate card_selector. Plain ADD COLUMN, same as action_type.
+function migrateCardSelectorColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(sites)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'card_selector')) return;
+  db.exec('ALTER TABLE sites ADD COLUMN card_selector TEXT');
+}
+
 function openDb() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
@@ -187,6 +195,7 @@ function openDb() {
   migrateSitesTable(db);
   migrateRecipeNameColumn(db);
   migrateActionTypeColumn(db);
+  migrateCardSelectorColumn(db);
   seedActionTypes(db);
   return db;
 }
@@ -234,7 +243,7 @@ function upsertSite(db, s) {
   if (existing) {
     db.prepare(
       `UPDATE sites SET display_name=?, status=?, nav_method=?, nav_template=?, nav_params_schema=?,
-         pagination_method=?, pagination_config=?, action_type=?, card_anchor_text=?, card_min_text_len=?,
+         pagination_method=?, pagination_config=?, action_type=?, card_anchor_text=?, card_selector=?, card_min_text_len=?,
          content_selector=?, content_stop_text=?, ready_timeout_ms=?, result_count_regex=?, notes=?, last_verified=?
        WHERE hostname=? AND page_type=? AND recipe_name=?`
     ).run(
@@ -247,6 +256,7 @@ function upsertSite(db, s) {
       s.pagination_config ?? null,
       s.action_type ?? null,
       s.card_anchor_text ?? null,
+      s.card_selector ?? null,
       s.card_min_text_len ?? 80,
       s.content_selector ?? null,
       s.content_stop_text ?? null,
@@ -263,9 +273,9 @@ function upsertSite(db, s) {
   } else {
     db.prepare(
       `INSERT INTO sites (hostname, page_type, recipe_name, display_name, status, nav_method, nav_template, nav_params_schema,
-         pagination_method, pagination_config, action_type, card_anchor_text, card_min_text_len, content_selector,
+         pagination_method, pagination_config, action_type, card_anchor_text, card_selector, card_min_text_len, content_selector,
          content_stop_text, ready_timeout_ms, result_count_regex, notes, first_seen, last_verified)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       s.hostname,
       pageType,
@@ -279,6 +289,7 @@ function upsertSite(db, s) {
       s.pagination_config ?? null,
       s.action_type ?? null,
       s.card_anchor_text ?? null,
+      s.card_selector ?? null,
       s.card_min_text_len ?? 80,
       s.content_selector ?? null,
       s.content_stop_text ?? null,
