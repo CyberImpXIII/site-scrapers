@@ -186,3 +186,68 @@ test('a failing run is diagnosed automatically, with no probe in the recipe', as
   assert.equal(probes.find(p => p.kind === 'blockers').blocked, false,
     'and should rule out a wall as the cause');
 });
+
+// --- Concurrency guard ----------------------------------------------------
+// The failedStep breadcrumb is a single module-level slot, correct only
+// while one sequence runs at a time. Nested `repeat` recursion is still
+// sequential and fine; two OVERLAPPING sequences would interleave writes and
+// the survivor would name a step that never failed. The guard makes that
+// admit itself rather than answer confidently and wrongly.
+
+test('overlapping sequences mark the failure position as untrustworthy', async () => {
+  const { runUiSteps, progress } = require('../engine.js');
+
+  // A fake page: each step type used below just resolves, except the one
+  // selector that never appears, which rejects after a beat. No browser
+  // needed -- this is about bookkeeping, not the DOM.
+  const fakePage = {
+    async waitForSelector(sel) {
+      await new Promise(r => setTimeout(r, sel === '#slow-fail' ? 40 : 10));
+      if (sel.includes('fail')) throw new Error(`Waiting for selector \`${sel}\` failed`);
+    },
+    url: () => 'about:blank',
+  };
+  const meta = { hostname: 'x', pageType: 'action', recipeName: 'guard' };
+  const seq = sel => [{ action: 'waitForSelector', selector: '#ok' }, { action: 'waitForSelector', selector: sel }];
+
+  progress.concurrentDetected = false;
+  const [a, b] = await Promise.allSettled([
+    runUiSteps(fakePage, seq('#slow-fail'), {}, meta),
+    runUiSteps(fakePage, seq('#quick-fail'), {}, meta),
+  ]);
+
+  assert.equal(a.status, 'rejected');
+  assert.equal(b.status, 'rejected');
+  // allSettled, not all: `all` would have surfaced whichever rejected first
+  // and discarded the other, which is the information this test is about.
+  for (const outcome of [a, b]) {
+    assert.ok(outcome.reason.failedStep, 'a position is still reported');
+    assert.equal(
+      outcome.reason.failedStep.breadcrumbUnreliable,
+      true,
+      'overlapping runs must admit the position may belong to another branch'
+    );
+    assert.match(outcome.reason.failedStep.note, /parallelise across processes/i);
+  }
+});
+
+test('a single sequence reports its position with no such caveat', async () => {
+  const { runUiSteps, progress } = require('../engine.js');
+  const fakePage = {
+    async waitForSelector(sel) {
+      if (sel.includes('fail')) throw new Error(`Waiting for selector \`${sel}\` failed`);
+    },
+    url: () => 'about:blank',
+  };
+  progress.concurrentDetected = false;
+
+  await assert.rejects(
+    runUiSteps(fakePage, [{ action: 'waitForSelector', selector: '#nope-fail' }], {}, { hostname: 'x' }),
+    err => {
+      assert.equal(err.failedStep.index, 0);
+      assert.equal(err.failedStep.selector, '#nope-fail');
+      assert.ok(!err.failedStep.breadcrumbUnreliable, 'a sequential run has a trustworthy position');
+      return true;
+    }
+  );
+});

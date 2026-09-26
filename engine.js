@@ -176,6 +176,15 @@ function numericParam(value, params, fallback) {
 async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) {
   const captures = [];
   const diagnostics = [];
+  // The breadcrumb is a single module-level slot, which is correct only
+  // while one sequence runs at a time. Nested `repeat` recursion is still
+  // sequential and fine; two OVERLAPPING sequences would interleave their
+  // writes and the survivor would name a step that didn't fail. Counted
+  // here at the entry point rather than in runStepList, which recurses.
+  // A wrong answer stated confidently is worse than an admitted unknown,
+  // so this reports the doubt instead of hiding it.
+  progress.activeRuns += 1;
+  if (progress.activeRuns > 1) progress.concurrentDetected = true;
   try {
     await runStepList(page, steps, params, siteMeta, hooks, depth, captures, diagnostics);
   } catch (e) {
@@ -183,9 +192,21 @@ async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) 
       // Attach where we got to, so the failure travels with its location
       // instead of arriving as a bare selector timeout. Read back by
       // lib/debug.js (into meta.json) and by the output JSON below.
-      if (progress.current && !e.failedStep) e.failedStep = progress.current;
+      if (progress.current && !e.failedStep) {
+        e.failedStep = progress.concurrentDetected
+          ? {
+              ...progress.current,
+              breadcrumbUnreliable: true,
+              note:
+                'Overlapping step sequences ran in this process, so this may name a step from another branch. ' +
+                'Run one sequence per process (parallelise across processes, not inside one) to get a trustworthy position.',
+            }
+          : progress.current;
+      }
       throw e;
     }
+  } finally {
+    progress.activeRuns -= 1;
   }
   return { captures, diagnostics };
 }
@@ -196,7 +217,7 @@ async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) 
 // Module-level because a step list is run from several places (main steps,
 // pagination steps, nested repeats) and the failure path needs the last
 // step attempted regardless of which one was running.
-const progress = { current: null };
+const progress = { current: null, activeRuns: 0, concurrentDetected: false };
 
 function describeStep(step, index, total, path) {
   return {
@@ -906,4 +927,10 @@ async function main() {
   process.exit(success ? 0 : 1);
 }
 
-main();
+// Only run when invoked as a CLI. Requiring this file used to execute the
+// whole thing, which meant the internals below could never be unit-tested —
+// including the concurrency guard, whose entire job is to fire in a
+// situation the CLI can't produce on its own.
+if (require.main === module) main();
+
+module.exports = { runUiSteps, progress, describeStep };

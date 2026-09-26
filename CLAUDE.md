@@ -178,6 +178,19 @@ read that before re-running anything. Use `diagnose_page` explicitly only
 when a run succeeds but returns the wrong thing. Probes never report a form
 field's value, only that one exists.
 
+**Running several scrapes at once**: parallelise across *processes* — one
+`engine.js` per recipe — never by overlapping sequences inside one process.
+Each process keeps its own `failedStep` breadcrumb, so N parallel runs give
+you N independent answers; two overlapping sequences in one process
+interleave their writes and the engine will tell you so
+(`failedStep.breadcrumbUnreliable`) rather than name the wrong step.
+Collect the results with `Promise.allSettled`, not `Promise.all` —
+`all` rejects on the first failure and discards the rest, which throws away
+the comparison you actually want ("3 of 12 failed, all on the same step" is
+the finding). Report which recipes succeeded and which failed, with each
+failure's step; don't surface one exception and drop the others. The DB is
+safe under concurrent writes (WAL + busy timeout).
+
 **A step failure says which step.** When a `ui_steps` sequence throws, the
 output JSON and the capture's `meta.json` both carry `failedStep`:
 `{index, of, path, action, selector, hasText, from}`. Read it before
