@@ -94,6 +94,23 @@ typically means the resume condition (e.g. redirected past `/login`) is
 already true the instant the handoff step starts, so no human is needed at
 all; a stale session just falls through to a real handoff as normal.
 
+**Compose actions instead of duplicating steps**: when a new `action`
+recipe needs something an existing one already does (most often `login`),
+add a `run_action` step — `{"action":"run_action","ref":"login"}` (same
+hostname, page_type `action`) or `{"action":"run_action","ref":"other.com#action:sso_login"}`
+(cross-hostname) — instead of copy-pasting that recipe's steps inline. It
+runs on the same page, not a separate session, so a nested `handoff`/
+`capture` inside the referenced action works exactly as it would standalone.
+Check what a composed recipe will actually run with `node query.js expand
+<hostname>#action:<recipe_name>` before relying on it. Composed recipes
+share one `params` object with whatever they reference — no per-reference
+renaming yet, so agree on param names (e.g. `{{email}}`/`{{password}}`)
+across a recipe and whatever it composes. `register.js` warns (non-fatally,
+via `unresolvedReferences`) on a `run_action` ref that doesn't currently
+resolve — building bottom-up or top-down are both fine — but `engine.js`
+fails fast, before launching a browser, on a dangling reference, a
+referenced recipe that isn't `status:"working"`, or a reference cycle.
+
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 
 Full details: README.md.

@@ -156,6 +156,37 @@
 //   "nav_template": "[{\"action\":\"goto\",\"url\":\"https://example.com/login\"},{\"action\":\"type\",\"selector\":\"#email\",\"text\":\"{{email}}\"},{\"action\":\"type\",\"selector\":\"#password\",\"text\":\"{{password}}\"},{\"action\":\"click\",\"selector\":\"#submit\"},{\"action\":\"handoff\",\"reason\":\"Enter the 2FA code sent to your phone, then submit.\",\"resume_selector\":\".account-nav\"}]",
 //   "...": "(the rest of the shape is the same as the plain example below)"
 // }
+//
+// ui_steps 'run_action' step: reuses ANOTHER action recipe as a substep,
+// instead of duplicating its steps inline -- e.g. a "purchase_item" action
+// composing the existing "login" action rather than copy-pasting its
+// goto/type/click/handoff sequence. {"action":"run_action","ref":"login"} —
+// bare ref means "same hostname, page_type 'action', that recipe_name";
+// "other.com#action:sso_login" is the fully-qualified form, for
+// cross-hostname composition (an SSO login on a different domain) or an
+// explicit non-'action' page_type. All run_action references are expanded
+// to a flat step list up front, before the browser launches, and run
+// inline on the SAME page (not a separate browser/session) — a
+// nested handoff or capture inside a referenced action works exactly as it
+// would standalone. engine.js fails fast, before launching anything, on a
+// dangling reference, a referenced recipe that isn't status:"working", or a
+// reference cycle. Composed recipes share ONE params object — there's no
+// per-reference renaming yet, so e.g. a composed "purchase_item" and the
+// "login" it calls must agree on using {{email}}/{{password}}, not
+// different names for the same value. register.js checks (non-fatally —
+// a referenced recipe may not exist yet if you're building bottom-up or
+// top-down) that each run_action ref resolves, and warns via
+// `unresolvedReferences` in its response if not. Inspect exactly what a
+// composed recipe will run with `node query.js expand
+// <hostname>#action:<recipe_name>`.
+// {
+//   "hostname": "example.com",
+//   "page_type": "action",
+//   "recipe_name": "purchase_item",
+//   "action_type": "checkout_to_review",
+//   "nav_template": "[{\"action\":\"run_action\",\"ref\":\"login\"},{\"action\":\"goto\",\"url\":\"{{product_url}}\"},{\"action\":\"click\",\"selector\":\"#add-to-cart\"},{\"action\":\"click\",\"selector\":\"#checkout\"}]",
+//   "...": "(the rest of the shape is the same as the plain example below)"
+// }
 // {
 //   "hostname": "example.com",
 //   "page_type": "action",
@@ -176,6 +207,7 @@
 
 const fs = require('fs');
 const { openDb, upsertSite, insertField, listActionTypes, getActionType, insertActionType } = require('./db');
+const { resolveOneLevel } = require('./lib/composeActions');
 
 function main() {
   const arg = process.argv[2];
@@ -243,6 +275,26 @@ function main() {
     }
   }
 
+  // Non-fatal: a run_action ref may point at a recipe that doesn't exist
+  // yet (building composed recipes bottom-up or top-down are both fine) —
+  // warn, don't block. engine.js does the real, fatal check at run time.
+  const unresolvedReferences = [];
+  if (def.nav_method === 'ui_steps') {
+    try {
+      const steps = JSON.parse(def.nav_template);
+      if (Array.isArray(steps)) {
+        for (const step of steps) {
+          if (step.action === 'run_action' && step.ref) {
+            const { error } = resolveOneLevel(db, step.ref, def.hostname);
+            if (error) unresolvedReferences.push({ ref: step.ref, error });
+          }
+        }
+      }
+    } catch {
+      /* malformed nav_template JSON isn't this check's job — ui_steps execution will surface it */
+    }
+  }
+
   const siteId = upsertSite(db, def);
 
   (def.fields || []).forEach((f, i) => insertField(db, siteId, f, i));
@@ -254,6 +306,7 @@ function main() {
     recipeName: def.recipe_name || 'default',
     siteId,
     fieldsRegistered: (def.fields || []).length,
+    unresolvedReferences,
   }));
 }
 

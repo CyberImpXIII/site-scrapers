@@ -41,11 +41,19 @@
 // via resume_selector/resume_url_includes) or its timeout_ms elapses. Run
 // such a call with a generous timeout (or in the background) — it isn't
 // hung, it's waiting on a person.
+//
+// A ui_steps sequence can also include a 'run_action' step to reuse another
+// action recipe as a substep (see register.js's header comment) — e.g. a
+// 'purchase_item' action composing an existing 'login' action rather than
+// duplicating its steps. All run_action references are expanded to a flat
+// step list up front, before the browser launches, so a dangling reference
+// or a reference cycle fails fast with a clear error.
 
 const fs = require('fs');
 const path = require('path');
 const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
 const { withPage } = require('./lib/runner');
+const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
 
@@ -71,19 +79,6 @@ function buildUrl(navTemplate, params) {
     const val = params[key];
     return val === undefined ? '' : encodeURIComponent(toStr(val));
   });
-}
-
-// True when a ui_steps sequence contains a 'handoff' step — such a sequence
-// must run in a real (headed) browser window, not headless, since a handoff
-// means a human completes something by looking at and interacting with that
-// window directly (there's no other channel back to them mid-run).
-function stepsNeedHeaded(stepsJson) {
-  try {
-    const steps = JSON.parse(stepsJson);
-    return Array.isArray(steps) && steps.some(s => s.action === 'handoff');
-  } catch {
-    return false;
-  }
 }
 
 // Reads values back out of the page right after a handoff resolves — the
@@ -145,8 +140,9 @@ function writeCaptureEnv(captured, { hostname, pageType, recipeName }) {
   return { file, keys: Object.keys(captured) };
 }
 
-async function runUiSteps(page, stepsJson, params, siteMeta) {
-  const steps = JSON.parse(stepsJson);
+// `steps` is already a flat, fully-expanded array — any run_action
+// references were resolved by expandSteps() before this runs.
+async function runUiSteps(page, steps, params, siteMeta) {
   const captures = [];
   for (const step of steps) {
     const sel = step.selector ? substitute(step.selector, params) : undefined;
@@ -402,8 +398,21 @@ async function main() {
   }
 
   const fields = getFields(db, site.id);
-  const headed = site.nav_method === 'ui_steps' && stepsNeedHeaded(site.nav_template);
   const siteMeta = { hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name };
+
+  // run_action references are expanded to a flat step list up front, before
+  // any browser launches, so a dangling reference or a reference cycle
+  // fails fast with a clear error instead of mid-run.
+  let expandedSteps = null;
+  if (site.nav_method === 'ui_steps') {
+    try {
+      expandedSteps = expandSteps(db, JSON.parse(site.nav_template), site.hostname, new Set([refKey(siteMeta)]));
+    } catch (e) {
+      console.log(JSON.stringify({ success: false, documented: true, error: e.message }));
+      process.exit(1);
+    }
+  }
+  const headed = expandedSteps ? stepsNeedHeaded(expandedSteps) : false;
   // Session persistence is ON BY DEFAULT (params.session picks which named,
   // parallel session — e.g. a second account — default 'default'); a run
   // opts out entirely with params.noSession: true.
@@ -420,7 +429,7 @@ async function main() {
           if (!url) throw new Error(`Missing param for nav_template "${site.nav_template}" (expected e.g. {"url": "..."})`);
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         } else if (site.nav_method === 'ui_steps') {
-          ({ captures } = await runUiSteps(page, site.nav_template, params, siteMeta));
+          ({ captures } = await runUiSteps(page, expandedSteps, params, siteMeta));
         } else {
           throw new Error(`Unsupported nav_method for page_type=${site.page_type}: ${site.nav_method}`);
         }
@@ -492,7 +501,7 @@ async function main() {
         const url = buildUrl(site.nav_template, params);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       } else if (site.nav_method === 'ui_steps') {
-        ({ captures } = await runUiSteps(page, site.nav_template, params, siteMeta));
+        ({ captures } = await runUiSteps(page, expandedSteps, params, siteMeta));
       } else {
         throw new Error(`Unknown nav_method: ${site.nav_method}`);
       }

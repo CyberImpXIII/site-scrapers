@@ -84,6 +84,7 @@ remember or re-derive it.
   node query.js site hiringcafe.com#article           # same, for the article recipe
   node query.js site example.com#action:login         # a specific named action recipe
   node query.js runs hiringcafe.com#article           # recent run history / reliability
+  node query.js expand example.com#action:purchase_item  # a composed recipe's run_action refs, fully flattened
   ```
 - **`scrape.sh`** — thin wrapper around `engine.js` using the right Node
   binary (see version note below).
@@ -137,6 +138,56 @@ under `data/.captures/<hostname>-<page_type>-<recipe_name>-<timestamp>.env`
 and never appear in `engine.js`'s stdout or the `scrape_runs` log — the
 result JSON's `handoffCaptures` field reports the file path and which keys
 were captured, not the values themselves.
+
+## Composing actions
+
+An `action` recipe's `ui_steps` can reuse another action recipe as a
+substep with `run_action`, instead of duplicating its steps inline. The
+motivating case: a `login` action already exists, and a new `purchase_item`
+action needs to start from an authenticated state — rather than
+copy-pasting `login`'s goto/type/click/handoff sequence into every recipe
+that needs it (and having to update every copy if the site's login form
+changes), `purchase_item` just references it:
+```json
+[
+  {"action":"run_action","ref":"login"},
+  {"action":"goto","url":"{{product_url}}"},
+  {"action":"click","selector":"#add-to-cart"},
+  {"action":"click","selector":"#checkout"}
+]
+```
+- `ref` is either a bare recipe name (`"login"`) — meaning "the same
+  hostname, `page_type: action`, that `recipe_name`" — or fully qualified
+  (`"other.com#action:sso_login"`) for cross-hostname composition (an SSO
+  login on a different domain) or an explicit non-`action` page_type.
+- Composition is **inline execution on the same page**, not a separate
+  browser or session — a `handoff` or `capture` inside the referenced
+  action works exactly as it would if that action ran standalone, and
+  cookies/state carry through naturally without any extra wiring.
+- All `run_action` references are expanded to one flat step list
+  *recursively, up front, before the browser launches* — `lib/composeActions.js`'s
+  `expandSteps` walks the tree and splices in each reference's own
+  (possibly further-composed) steps. This is also how headed-browser
+  detection sees a `handoff` nested three levels deep in a composed chain:
+  it's checking the fully expanded list, not just the top-level recipe.
+- Composed recipes share **one `params` object** with whatever they
+  reference — there's no per-reference renaming in this first version, so a
+  recipe and everything it composes need to agree on param names (e.g. both
+  use `{{email}}`/`{{password}}`, not different names for the same value).
+- Failure modes are caught **before anything runs**: a dangling reference,
+  a referenced recipe that isn't `status: "working"`, or a reference cycle
+  (direct or indirect — `A → B → A`) all raise a clear error immediately,
+  with no browser launched. Verified live: a self-reference, a two-recipe
+  mutual cycle, and a genuinely dangling reference each failed with a
+  distinct, correct message in well under a second.
+- `register.js` checks each `run_action` ref at registration time too, but
+  **non-fatally** — a referenced recipe may not exist yet if you're building
+  a composed recipe bottom-up (sub-actions first) or top-down (the
+  composition first, sub-actions later) — and reports anything unresolved
+  via `unresolvedReferences` in its response instead of blocking.
+- See exactly what a composed recipe will run, fully flattened, with `node
+  query.js expand <hostname>#page_type:recipe_name` — this is the fastest
+  way to sanity-check a composition without executing it.
 
 ## Session persistence
 
