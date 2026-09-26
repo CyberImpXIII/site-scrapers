@@ -180,6 +180,13 @@ appeared", which all look identical in the final frame alone. Window size is
 (default 2000); it defaults to OFF on headed/handoff runs, where a person is
 already watching and the frames would capture their own interaction.
 
+**Changing an existing recipe is not additive** — it bumps that recipe's
+version, so two agents doing it at once produces conflicting history. Check
+for a primary context first (see "Check for a primary context before
+changing anything that exists" in `../CLAUDE.md`) and queue the change with
+whoever owns it. Registering a *new* recipe or generic action needs no
+coordination.
+
 **Recipes are versioned — use that instead of guessing what changed.** Every
 `register.js` call that actually alters a recipe snapshots it as a new minor
 (`v1.3`); an unchanged re-register records nothing. When a working recipe
