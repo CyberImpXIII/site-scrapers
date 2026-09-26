@@ -24,6 +24,7 @@ const {
   getCurrentVersion,
   getLastStableVersion,
   listVersions,
+  getVersion,
   pruneVersions,
   recipeDefinition,
   restoreVersion,
@@ -162,6 +163,55 @@ test('a pruned version leaves run history readable', () => {
     .prepare("SELECT * FROM scrape_runs WHERE site_id = ? AND error = 'simulated failure' ORDER BY id DESC LIMIT 1")
     .get(siteId);
   assert.equal(run.version_label, 'v1.2', 'the label is denormalized precisely so pruning cannot erase it');
+});
+
+test('no amount of churn can drop a promoted version', () => {
+  // The whole bargain of the major/minor split: scaffolding is disposable
+  // precisely BECAUSE blessing a version makes it permanent. If pruning
+  // could ever reach a stable version, iterating freely would stop being
+  // safe. Several generations, heavy churn after the last promote.
+  const churnName = 'versioning_churn_test';
+  let churnId;
+  const reg = note => {
+    churnId = upsertSite(db, {
+      hostname: HOSTNAME,
+      page_type: 'listing',
+      recipe_name: churnName,
+      status: 'working',
+      nav_method: 'url_param',
+      nav_template: 'http://127.0.0.1:9/',
+      card_anchor_text: 'x',
+      notes: note,
+    });
+    insertField(db, churnId, { field_name: 'title', extract_kind: 'positional_segment', segment_index: 1 }, 0);
+    return snapshotVersionIfChanged(db, churnId, { note });
+  };
+
+  try {
+    const blessed = [];
+    for (let gen = 1; gen <= 3; gen++) {
+      for (let i = 0; i < 4; i++) reg(`gen${gen} iteration ${i}`);
+      const p = promoteVersion(db, churnId, { note: `gen ${gen} blessed` });
+      blessed.push({ major: p.major, minor: p.minor, definition: p.definition });
+    }
+    // Far more non-stable versions than the keep window, after the last promote.
+    for (let i = 0; i < 10; i++) reg(`heavy churn ${i}`);
+
+    const surviving = listVersions(db, churnId);
+    for (const b of blessed) {
+      const found = surviving.find(v => v.major === b.major && v.minor === b.minor);
+      assert.ok(found, `promoted v${b.major}.${b.minor} must survive arbitrary churn`);
+      assert.equal(found.stable, 1);
+      assert.equal(
+        getVersion(db, churnId, b.major, b.minor).definition,
+        b.definition,
+        'a promoted definition must be preserved byte-for-byte, not just its row'
+      );
+    }
+    assert.equal(surviving.filter(v => v.stable).length, 3, 'every generation keeps exactly its blessed version');
+  } finally {
+    deleteSite(db, churnId);
+  }
 });
 
 test('restore puts an older definition back without erasing what it replaced', () => {

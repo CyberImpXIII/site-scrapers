@@ -492,12 +492,25 @@ is tied to the exact definition that produced it, and
 `node query.js versions` shows each version's success record, so "which one
 was good" is evidence rather than memory.
 
-**Pruning** keeps every stable version plus the most recent 5 non-stable
-ones. This is the point of the major/minor split: iterating on a broken site
-is supposed to be cheap and throwaway, and only versions someone blessed are
-permanent. Pruning clears the pruned version's `version_id` from its runs
-but never the `version_label` — you lose the ability to diff that
-definition, never the ability to read what ran.
+**Pruning never touches a promoted version.** That is the bargain that makes
+iterating freely safe: scaffolding is disposable *because* blessing a
+version makes it permanent. The prune query only ever considers
+`stable = 0` rows, so no amount of churn can reach a stable one — three
+generations plus ten further edits still leaves v1.3, v2.4 and v3.4 intact
+(`test/versioning.test.js`, "no amount of churn can drop a promoted
+version"). What it does collect is the most recent 5 non-stable versions,
+dropping older scaffolding.
+
+Note this is a rolling window, *not* a consequence of promoting: the minors
+that led to v1.3 are still there right after you promote it, and age out
+later as new edits push them past the window. The one exception worth
+knowing is that the freshly opened v<N>.0 head is itself non-stable and so
+prunable — but it is always a byte-identical copy of the stable version it
+carried forward, so nothing is lost when it goes.
+
+Pruning clears the pruned version's `version_id` from its runs but never the
+`version_label` — you lose the ability to diff that definition, never the
+ability to read what ran.
 
 Recipes that predate versioning were backfilled with a `v1.0` baseline
 marked stable, since that *is* the version that has been in use. A recipe

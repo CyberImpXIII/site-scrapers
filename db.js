@@ -540,6 +540,11 @@ function getVersion(db, siteId, major, minor) {
 // Keeps every stable version plus the most recent `keep` non-stable ones.
 // Iterating on a broken site is supposed to be cheap and disposable; only
 // the versions someone deliberately blessed are permanent.
+//
+// `stable = 0` in the WHERE clause is the guarantee, not an optimization: a
+// promoted version must be unreachable by pruning no matter how much churn
+// follows, or iterating freely stops being safe. Nothing anywhere sets
+// stable back to 0, so once blessed a version stays blessed.
 function pruneVersions(db, siteId, keep = 5) {
   const doomed = db
     .prepare(
