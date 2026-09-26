@@ -394,6 +394,39 @@ with a `{{param}}` `ms` plus `default_ms`. `run_generic_action` also takes
 
 ## Failure diagnostics
 
+### Where it failed
+
+Building a recipe is iterative, and every iteration used to replay the whole
+sequence from a cold browser just to discover *where* it broke — the error
+was a bare `Waiting for selector \`.foo\` failed: timeout`, with no
+indication of which step that was or whether it even came from the recipe.
+
+A step failure now carries its position. Both the output JSON and the
+capture's `meta.json` include:
+
+```json
+"failedStep": {
+  "index": 4, "of": 5, "path": [4],
+  "action": "waitForSelector", "selector": "#never-appears",
+  "hasText": false, "from": null
+}
+```
+
+- `index` / `of` are positions in the **expanded** sequence. References are
+  inlined before the run, so a recipe's own third step is not at index 2
+  once a generic action's steps are spliced in ahead of it.
+- `path` locates a step inside nested `repeat` blocks, e.g.
+  `[3, "repeat#0", 1]`.
+- `from` names the reusable action a step came from —
+  `"generic:dismiss_overlay"`, or null when the step is written in the
+  recipe itself. Expansion used to erase this entirely.
+- `hasText` reports only *that* text was supplied. The value is never
+  included, because it may be a substituted password or token.
+
+`failedStep` is null when the failure wasn't a step failure — a zero-result
+run, or a timeout waiting for cards to appear.
+
+
 When a run fails — thrown error, timeout, or zero results — the engine
 captures what the page actually looked like instead of leaving only an error
 string to guess from. Each failure writes a directory under the gitignored

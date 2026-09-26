@@ -131,3 +131,58 @@ test('remove_element restores scrolling that an overlay locked', async () => {
   assert.equal(result.success, true);
   assert.match(result.article.body, /CONTENT_MARKER/);
 });
+
+// --- Failure localization -------------------------------------------------
+// Building a recipe is iterative, and every iteration used to replay the
+// whole sequence from a cold browser just to find out WHERE it broke. A
+// failure now carries its own position, so the next iteration can start
+// from the actual problem.
+
+test('a failing step reports its position in the sequence', async () => {
+  const result = await runSteps('fail_locate', [
+    { action: 'goto', url: `${baseUrl}?banner=none` },
+    { action: 'waitForSelector', selector: '#content' },
+    { action: 'waitForSelector', selector: '#never-appears', timeout: 800 },
+  ]);
+
+  assert.equal(result.success, false);
+  assert.ok(result.failedStep, 'a step failure must say which step');
+  assert.equal(result.failedStep.index, 2, 'the third step (0-based) is the one that fails');
+  assert.equal(result.failedStep.of, 3);
+  assert.equal(result.failedStep.action, 'waitForSelector');
+  assert.equal(result.failedStep.selector, '#never-appears');
+  assert.deepEqual(result.failedStep.path, [2]);
+});
+
+test('a step pulled in from a generic action says where it came from', async () => {
+  // Expansion inlines a referenced action's steps, which used to erase the
+  // fact that a failure happened inside dismiss_overlay rather than in the
+  // recipe. Positions shift too -- the recipe's own third step is no longer
+  // at index 2 once the generic action's steps are spliced in.
+  const result = await runSteps('fail_from_generic', [
+    { action: 'goto', url: `${baseUrl}?banner=none` },
+    { action: 'run_generic_action', ref: 'dismiss_overlay' },
+    { action: 'waitForSelector', selector: '#never-appears', timeout: 800 },
+  ]);
+
+  assert.equal(result.success, false);
+  assert.ok(result.failedStep.of > 3, 'the generic action contributes extra steps');
+  assert.equal(result.failedStep.index, result.failedStep.of - 1, 'the recipe step runs last');
+  assert.equal(result.failedStep.selector, '#never-appears');
+  assert.equal(result.failedStep.from, null, 'this step belongs to the recipe, not the generic action');
+});
+
+test('a credential-shaped step reports that text was supplied, never the text', async () => {
+  const result = await runSteps('fail_no_secret', [
+    { action: 'goto', url: `${baseUrl}?banner=none` },
+    { action: 'type', selector: '#nope', text: 'hunter2-should-never-appear', timeout: 800 },
+  ]);
+
+  assert.equal(result.success, false);
+  assert.equal(result.failedStep.action, 'type');
+  assert.equal(result.failedStep.hasText, true, 'the fact that text was supplied is useful');
+  assert.ok(
+    !JSON.stringify(result).includes('hunter2-should-never-appear'),
+    'a substituted value may be a password and must never reach the output'
+  );
+});

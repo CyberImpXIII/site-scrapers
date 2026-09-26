@@ -177,13 +177,47 @@ async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) 
   try {
     await runStepList(page, steps, params, siteMeta, hooks, depth, captures);
   } catch (e) {
-    if (!(e instanceof StopRepeat) || depth > 0) throw e;
+    if (!(e instanceof StopRepeat) || depth > 0) {
+      // Attach where we got to, so the failure travels with its location
+      // instead of arriving as a bare selector timeout. Read back by
+      // lib/debug.js (into meta.json) and by the output JSON below.
+      if (progress.current && !e.failedStep) e.failedStep = progress.current;
+      throw e;
+    }
   }
   return { captures };
 }
 
-async function runStepList(page, steps, params, siteMeta, hooks, depth, captures) {
-  for (const step of steps) {
+// Describes a step precisely enough to act on without dumping the whole
+// recipe: which position, what it was trying to do, and (for a step pulled
+// in from a reusable action) where it came from.
+// Module-level because a step list is run from several places (main steps,
+// pagination steps, nested repeats) and the failure path needs the last
+// step attempted regardless of which one was running.
+const progress = { current: null };
+
+function describeStep(step, index, total, path) {
+  return {
+    index,
+    of: total,
+    path,
+    action: step.action,
+    selector: step.selector ?? null,
+    // Text is part of "what it was doing" but may be a substituted
+    // credential, so only the fact that text was supplied is reported.
+    hasText: step.text !== undefined,
+    from: step._from ?? null,
+  };
+}
+
+async function runStepList(page, steps, params, siteMeta, hooks, depth, captures, trail = []) {
+  for (const [index, step] of steps.entries()) {
+    // Recorded BEFORE the step runs, so whatever throws leaves the position
+    // behind. Without this a failure is just "selector timeout" and the
+    // whole sequence has to be replayed to work out where it happened —
+    // which is the expensive part of building a recipe.
+    const path = [...trail, index];
+    progress.current = describeStep(step, index, steps.length, path);
     const sel = step.selector ? substitute(step.selector, params) : undefined;
     switch (step.action) {
       case 'goto': {
@@ -312,7 +346,7 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         const times = Math.min(Math.max(Math.floor(numericParam(step.times, params, 0)), 0), MAX_REPEAT);
         for (let i = 0; i < times; i++) {
           try {
-            await runStepList(page, step.steps || [], params, siteMeta, hooks, depth + 1, captures);
+            await runStepList(page, step.steps || [], params, siteMeta, hooks, depth + 1, captures, [...path, `repeat#${i}`]);
           } catch (e) {
             if (e instanceof StopRepeat) break;
             throw e;
@@ -682,7 +716,7 @@ async function main() {
       }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
-      console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
+      console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }));
       process.exit(1);
     }
 
@@ -808,7 +842,7 @@ async function main() {
     }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
-    console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
+    console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }));
     process.exit(1);
   }
 

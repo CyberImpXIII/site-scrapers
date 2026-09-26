@@ -164,6 +164,17 @@ instead of `card_anchor_text`; for cards grouped under a shared header (a
 company name above its jobs), the `ancestor_first_line` field kind reads that
 header. Details in README.md.
 
+**A step failure says which step.** When a `ui_steps` sequence throws, the
+output JSON and the capture's `meta.json` both carry `failedStep`:
+`{index, of, path, action, selector, hasText, from}`. Read it before
+re-running anything — it tells you the position in the *expanded* sequence
+(references are inlined, so indexes shift), and `from` names the reusable
+action a step came from (`generic:dismiss_overlay`) when it wasn't written
+in the recipe itself. `hasText` reports only that text was supplied, never
+the value, since it may be a substituted credential. `failedStep` is null
+for failures that aren't step failures — a zero-result run or a timeout
+waiting for cards.
+
 **When a run fails, look before guessing.** Any failure (thrown error,
 timeout, or zero results) writes a screenshot + DOM + console/network logs to
 a gitignored `data/.debug/` directory and reports the path as `debugDir` in
