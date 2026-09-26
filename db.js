@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS sites (
   nav_params_schema TEXT,                            -- JSON: documents accepted params, for callers
   pagination_method TEXT NOT NULL DEFAULT 'none',    -- 'none' | 'url_param' | 'click_next' (click_next not yet implemented)
   pagination_config TEXT,
+  action_type TEXT,                                  -- action recipes only: which entry of action_types this is (e.g. 'login', 'add_to_cart') -- register.js validates this against action_types, preferring reuse over inventing near-duplicate names. NULL for listing/article.
   card_anchor_text TEXT,                             -- listing only: exact text of a reliably-present per-card element
   card_min_text_len INTEGER NOT NULL DEFAULT 80,      -- min text length before considering the target ready (card container for listing, content_selector element for article)
   content_selector TEXT,                              -- article only: CSS selector for the main content container (defaults to body)
@@ -30,8 +31,40 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 `;
 
+const ACTION_TYPES_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS action_types (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  created_at TEXT NOT NULL
+);
+`;
+
+// Small, deliberately short starter taxonomy for action recipes' action_type
+// column. Grown only when register.js is told (via new_action_type_description)
+// that an existing entry genuinely doesn't fit — the point is to make
+// inventing a near-duplicate ('add-to-basket' next to 'add_to_cart') a
+// conscious choice, not an accident of free-typing a recipe_name.
+const ACTION_TYPES_SEED = [
+  ['login', 'Authenticate into an account, ending in an authenticated session.'],
+  ['logout', 'End an authenticated session.'],
+  ['add_to_cart', 'Add one item to a cart/basket, without completing a purchase.'],
+  ['checkout_to_review', 'Progress a cart through checkout up to a final review/confirm step, stopping short of submitting payment.'],
+  ['submit_form', 'Fill and submit a generic form -- contact, signup, application, etc.'],
+  ['search', 'Perform a search/filter action that requires UI interaction (not just a URL param -- that belongs in a listing recipe instead).'],
+];
+
+function seedActionTypes(db) {
+  const { count } = db.prepare('SELECT COUNT(*) AS count FROM action_types').get();
+  if (count > 0) return;
+  const now = new Date().toISOString();
+  const insert = db.prepare('INSERT INTO action_types (name, description, created_at) VALUES (?,?,?)');
+  for (const [name, description] of ACTION_TYPES_SEED) insert.run(name, description, now);
+}
+
 const SCHEMA = `
 ${SITES_TABLE_SQL}
+${ACTION_TYPES_TABLE_SQL}
 CREATE TABLE IF NOT EXISTS site_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL REFERENCES sites(id),
@@ -119,12 +152,22 @@ function migrateRecipeNameColumn(db) {
   db.exec('PRAGMA foreign_keys = ON');
 }
 
+// Old DBs predate action_type. Unlike page_type/recipe_name this needs no
+// UNIQUE-constraint change, so a plain ADD COLUMN suffices (no rebuild).
+function migrateActionTypeColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(sites)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'action_type')) return;
+  db.exec('ALTER TABLE sites ADD COLUMN action_type TEXT');
+}
+
 function openDb() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
   db.exec(SCHEMA);
   migrateSitesTable(db);
   migrateRecipeNameColumn(db);
+  migrateActionTypeColumn(db);
+  seedActionTypes(db);
   return db;
 }
 
@@ -159,7 +202,7 @@ function getFields(db, siteId) {
 
 function listSites(db) {
   return db
-    .prepare('SELECT hostname, page_type, recipe_name, display_name, status, nav_method, last_verified, notes FROM sites ORDER BY hostname, page_type, recipe_name')
+    .prepare('SELECT hostname, page_type, recipe_name, action_type, display_name, status, nav_method, last_verified, notes FROM sites ORDER BY hostname, page_type, recipe_name')
     .all();
 }
 
@@ -171,7 +214,7 @@ function upsertSite(db, s) {
   if (existing) {
     db.prepare(
       `UPDATE sites SET display_name=?, status=?, nav_method=?, nav_template=?, nav_params_schema=?,
-         pagination_method=?, pagination_config=?, card_anchor_text=?, card_min_text_len=?,
+         pagination_method=?, pagination_config=?, action_type=?, card_anchor_text=?, card_min_text_len=?,
          content_selector=?, content_stop_text=?, ready_timeout_ms=?, result_count_regex=?, notes=?, last_verified=?
        WHERE hostname=? AND page_type=? AND recipe_name=?`
     ).run(
@@ -182,6 +225,7 @@ function upsertSite(db, s) {
       s.nav_params_schema ?? null,
       s.pagination_method ?? 'none',
       s.pagination_config ?? null,
+      s.action_type ?? null,
       s.card_anchor_text ?? null,
       s.card_min_text_len ?? 80,
       s.content_selector ?? null,
@@ -199,9 +243,9 @@ function upsertSite(db, s) {
   } else {
     db.prepare(
       `INSERT INTO sites (hostname, page_type, recipe_name, display_name, status, nav_method, nav_template, nav_params_schema,
-         pagination_method, pagination_config, card_anchor_text, card_min_text_len, content_selector,
+         pagination_method, pagination_config, action_type, card_anchor_text, card_min_text_len, content_selector,
          content_stop_text, ready_timeout_ms, result_count_regex, notes, first_seen, last_verified)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       s.hostname,
       pageType,
@@ -213,6 +257,7 @@ function upsertSite(db, s) {
       s.nav_params_schema ?? null,
       s.pagination_method ?? 'none',
       s.pagination_config ?? null,
+      s.action_type ?? null,
       s.card_anchor_text ?? null,
       s.card_min_text_len ?? 80,
       s.content_selector ?? null,
@@ -225,6 +270,23 @@ function upsertSite(db, s) {
     );
     return getSite(db, s.hostname, pageType, recipeName).id;
   }
+}
+
+function listActionTypes(db) {
+  return db.prepare('SELECT * FROM action_types ORDER BY name').all();
+}
+
+function getActionType(db, name) {
+  return db.prepare('SELECT * FROM action_types WHERE name = ?').get(name);
+}
+
+function insertActionType(db, name, description) {
+  db.prepare('INSERT INTO action_types (name, description, created_at) VALUES (?,?,?)').run(
+    name,
+    description ?? null,
+    new Date().toISOString()
+  );
+  return getActionType(db, name);
 }
 
 function insertField(db, siteId, f, order) {
@@ -266,4 +328,18 @@ function getRuns(db, siteId, limit = 10) {
     .all(siteId, limit);
 }
 
-module.exports = { openDb, getSite, getFields, listSites, upsertSite, insertField, logRun, getRuns, parseSiteArg, DB_PATH };
+module.exports = {
+  openDb,
+  getSite,
+  getFields,
+  listSites,
+  upsertSite,
+  insertField,
+  logRun,
+  getRuns,
+  parseSiteArg,
+  listActionTypes,
+  getActionType,
+  insertActionType,
+  DB_PATH,
+};

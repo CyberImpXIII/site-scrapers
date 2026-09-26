@@ -7,6 +7,7 @@
 //   node query.js sites                                    # list every known recipe + status
 //   node query.js site <hostname>[#page_type[:recipe_name]] # full recipe + fields for one site
 //   node query.js runs <hostname>[#page_type[:recipe_name]] [n] # recent run history (reliability)
+//   node query.js action-types                              # the action_type taxonomy for page_type "action"
 //
 // #page_type ('#listing' | '#article' | '#action') picks which recipe when a
 // hostname has more than one; omitting it defaults to 'listing'. A hostname
@@ -15,8 +16,12 @@
 // "example.com#action:login". Omitting it defaults to 'default'. Run
 // `node query.js sites` to see every (hostname, page_type, recipe_name)
 // combination that's registered.
+//
+// Before registering a NEW 'action' recipe, run `node query.js action-types`
+// and prefer reusing an existing action_type over inventing a near-duplicate
+// (e.g. "add_to_cart" vs "add-to-basket") — register.js enforces this.
 
-const { openDb, listSites, getSite, getFields, getRuns, parseSiteArg } = require('./db');
+const { openDb, listSites, getSite, getFields, getRuns, parseSiteArg, listActionTypes } = require('./db');
 
 function main() {
   const [, , cmd, arg, limitArg] = process.argv;
@@ -43,6 +48,11 @@ function main() {
     return;
   }
 
+  if (cmd === 'action-types') {
+    console.log(JSON.stringify(listActionTypes(db), null, 2));
+    return;
+  }
+
   if (cmd === 'runs') {
     if (!arg) {
       console.log(JSON.stringify({ error: 'Usage: node query.js runs <hostname>[#page_type[:recipe_name]] [limit]' }));
@@ -59,7 +69,7 @@ function main() {
     return;
   }
 
-  console.log(JSON.stringify({ error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n]` }));
+  console.log(JSON.stringify({ error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types` }));
   process.exit(1);
 }
 

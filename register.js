@@ -77,10 +77,25 @@
 // caller-supplied params (substituted at run time via {{key}} in nav_template
 // ui_steps), never written into nav_template/notes/fields where they'd be
 // persisted in the DB.
+//
+// "action_type" is REQUIRED and must name an entry in the action_types
+// table (a small, deliberately-short taxonomy -- see `node query.js
+// action-types`). This is the guardrail against inventing near-duplicate
+// action kinds (e.g. "add_to_cart" on one site and "add-to-basket" on
+// another meaning the same thing): register.js rejects an unrecognized
+// action_type unless the JSON also includes
+// "new_action_type_description", which explicitly registers it as a new
+// taxonomy entry. Prefer reusing an existing action_type; only add a new
+// one when the existing list genuinely doesn't fit. "recipe_name" is
+// separate and still free-form/per-hostname -- it's fine (expected, even)
+// for recipe_name to be more specific than action_type, e.g. two recipes
+// both action_type:"login" -- recipe_name:"login_email" and
+// recipe_name:"login_google_oauth" -- for the same site.
 // {
 //   "hostname": "example.com",
 //   "page_type": "action",
 //   "recipe_name": "login",              // required in practice whenever a hostname has >1 action recipe
+//   "action_type": "login",              // required for page_type "action" -- must match action_types, or pair with new_action_type_description
 //   "status": "working",
 //   "nav_method": "ui_steps",
 //   "nav_template": "[{\"action\":\"goto\",\"url\":\"https://example.com/login\"},{\"action\":\"type\",\"selector\":\"#email\",\"text\":\"{{email}}\"},{\"action\":\"type\",\"selector\":\"#password\",\"text\":\"{{password}}\"},{\"action\":\"click\",\"selector\":\"#submit\"},{\"action\":\"waitForSelector\",\"selector\":\".account-nav\"}]",
@@ -95,7 +110,7 @@
 // }
 
 const fs = require('fs');
-const { openDb, upsertSite, insertField } = require('./db');
+const { openDb, upsertSite, insertField, listActionTypes, getActionType, insertActionType } = require('./db');
 
 function main() {
   const arg = process.argv[2];
@@ -138,6 +153,31 @@ function main() {
   }
 
   const db = openDb();
+
+  if (pageType === 'action') {
+    if (!def.action_type) {
+      console.log(JSON.stringify({
+        success: false,
+        error: 'page_type "action" also requires action_type (see `node query.js action-types` for the existing taxonomy).',
+        existingActionTypes: listActionTypes(db),
+      }));
+      process.exit(1);
+    }
+    const known = getActionType(db, def.action_type);
+    if (!known) {
+      if (!def.new_action_type_description) {
+        console.log(JSON.stringify({
+          success: false,
+          error: `action_type "${def.action_type}" isn't in the action_types taxonomy. Reuse an existing one if it fits, or add ` +
+            '"new_action_type_description" to the JSON to register it as a deliberate new type.',
+          existingActionTypes: listActionTypes(db),
+        }));
+        process.exit(1);
+      }
+      insertActionType(db, def.action_type, def.new_action_type_description);
+    }
+  }
+
   const siteId = upsertSite(db, def);
 
   (def.fields || []).forEach((f, i) => insertField(db, siteId, f, i));

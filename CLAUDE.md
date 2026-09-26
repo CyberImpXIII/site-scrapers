@@ -26,10 +26,24 @@ a page_type (implicit `recipe_name` = `default`).
    broken/needs-review, or this run failed — check `error`/`timedOut`/
    `consistencyWarning`.
 4. Unknown or broken → fall back to interactive browser tools.
-5. After a successful interactive session, document it:
-   `node register.js '<recipe json>'` (all three JSON shapes are in
-   register.js's header comment). Give it an explicit `recipe_name` if the
-   hostname already has a recipe of the same page_type.
+5. Whenever navigating to a page to *do* something for the user — not just
+   to scrape a listing/article — confirm with the user whether they'd like
+   that action stored as a reusable, adjustable recipe (`page_type: action`)
+   before moving on, rather than assuming a one-off interactive pass is
+   fine. Don't ask this for read-only listing/article lookups.
+6. After a successful interactive session (and the user said yes to step 5,
+   for actions), document it: `node register.js '<recipe json>'` (all three
+   JSON shapes are in register.js's header comment). Give it an explicit
+   `recipe_name` if the hostname already has a recipe of the same page_type.
+
+For `action` recipes specifically, prefer keeping them within the small
+`action_types` taxonomy (`node query.js action-types`) rather than inventing
+arbitrary, similar-but-not-quite-the-same types (e.g. `add_to_cart` on one
+site and `add-to-basket` on another for the same underlying action).
+`register.js` enforces this — it rejects an `action_type` that isn't already
+in the taxonomy unless you deliberately add `new_action_type_description` to
+register a genuinely new one. Reach for that escape hatch only when nothing
+existing actually fits, not as a default.
 
 Credential-shaped values (passwords, tokens) for an `action` recipe belong in
 caller-supplied params at run time, never written into the stored recipe
