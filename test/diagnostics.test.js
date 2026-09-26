@@ -11,7 +11,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const { startFixtureServer } = require('./fixtures/listing_server');
-const { openDb, upsertSite, insertField } = require('../db');
+const { openDb, upsertSite, insertField, deleteSite } = require('../db');
 const { DEBUG_DIR, listDebugCaptures } = require('../lib/debug');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -45,9 +45,7 @@ test.before(async () => {
 });
 
 test.after(() => {
-  db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(siteId);
-  db.prepare('DELETE FROM scrape_runs WHERE site_id = ?').run(siteId);
-  db.prepare('DELETE FROM sites WHERE id = ?').run(siteId);
+  deleteSite(db, siteId);
   fixture.server.close();
 });
 

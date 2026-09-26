@@ -16,7 +16,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const { startFixtureServer, makePage } = require('./fixtures/listing_server');
-const { openDb, upsertSite, insertField, getSite, getEfficiencyStats } = require('../db');
+const { openDb, upsertSite, insertField, getSite, getEfficiencyStats, deleteSite } = require('../db');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const RECIPE_NAME = 'efficiency_fixture_test';
@@ -48,9 +48,7 @@ test.before(async () => {
 });
 
 test.after(() => {
-  db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(siteId);
-  db.prepare('DELETE FROM scrape_runs WHERE site_id = ?').run(siteId);
-  db.prepare('DELETE FROM sites WHERE id = ?').run(siteId);
+  deleteSite(db, siteId);
   fixture.server.close();
 });
 

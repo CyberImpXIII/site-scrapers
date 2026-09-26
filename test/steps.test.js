@@ -12,7 +12,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
-const { openDb, upsertSite, insertField } = require('../db');
+const { openDb, upsertSite, insertField, deleteSite } = require('../db');
 
 const REPO_ROOT = path.join(__dirname, '..');
 
@@ -50,9 +50,7 @@ test.before(async () => {
 
 test.after(() => {
   for (const id of createdSiteIds) {
-    db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(id);
-    db.prepare('DELETE FROM scrape_runs WHERE site_id = ?').run(id);
-    db.prepare('DELETE FROM sites WHERE id = ?').run(id);
+    deleteSite(db, id);
   }
   server.close();
 });

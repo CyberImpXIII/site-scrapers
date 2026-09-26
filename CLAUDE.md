@@ -180,6 +180,22 @@ appeared", which all look identical in the final frame alone. Window size is
 (default 2000); it defaults to OFF on headed/handoff runs, where a person is
 already watching and the frames would capture their own interaction.
 
+**Recipes are versioned — use that instead of guessing what changed.** Every
+`register.js` call that actually alters a recipe snapshots it as a new minor
+(`v1.3`); an unchanged re-register records nothing. When a working recipe
+starts failing, run `node query.js diff <target>` *before* rewriting it —
+with no arguments it compares the last stable version against the current
+one, which is exactly "what changed since it worked". `node query.js
+versions <target>` lists the history with each version's real success rate,
+and runs are tagged with the version that produced them, so a `debugDir`
+capture is tied to a specific definition. Iterate freely: minors are
+auto-pruned (last 5 non-stable kept). When a fix is confirmed against the
+live site, `node query.js promote <target> '<what you verified>'` marks it
+stable and opens the next major — do this rather than leaving a good version
+indistinguishable from the scaffolding. `node query.js restore <target>
+v2.0` puts an old definition back if an edit made things worse. Details in
+README.md.
+
 **Don't trust a recipe's `status` alone** — it's set by hand and can go
 stale. `node query.js health` shows each recipe's actual success rate over
 its recent runs and flags `statusDisagrees` where a recipe claims `working`

@@ -443,6 +443,66 @@ for.
   frames would capture whatever they're doing in that window. Pass
   `rollingFrames` explicitly to override.
 
+## Recipe versions
+
+A recipe is a guess about someone else's HTML, so it rots. When a site
+changes, the useful question is never "what does this recipe say now" but
+**"what did it say when it last worked, and what did I change since?"**
+Every registration answers that by snapshotting the recipe into
+`recipe_versions`.
+
+Versions are `v<major>.<minor>`:
+
+- **Minor** — every `register.js` call whose definition actually differs
+  from the current version. These are the scaffolding of a troubleshooting
+  session: cheap, disposable, auto-pruned.
+- **Major** — a version you deliberately blessed with
+  `node query.js promote`. Promoting marks the current version `stable`
+  and opens the next major (carrying the same definition forward), so
+  stable generations read v1.0, v2.0, v3.0 and whatever minors it took to
+  get there sit between them.
+
+A re-register that changes nothing records nothing, so re-running
+`register.js` to confirm a recipe is safe and doesn't spam the history.
+What counts as "a change" is behavior only — `VERSIONED_SITE_COLUMNS` plus
+the recipe's fields. `id`, `first_seen` and `last_verified` are excluded on
+purpose, or every re-register would look like an edit.
+
+```
+node query.js versions hiringcafe.com          # history, which are stable, per-version run record
+node query.js diff hiringcafe.com              # last stable vs current -- what changed since it worked
+node query.js diff hiringcafe.com v2.0 v2.3    # any two versions
+node query.js restore hiringcafe.com v2.0      # put an old definition back
+node query.js promote hiringcafe.com 'verified against live site'
+```
+
+`diff` with no versions defaults to **last stable vs current**, which is the
+question you actually have when something breaks. Long text fields (`notes`
+runs to several hundred characters) are elided down to the differing span
+plus context — printing both copies in full buries a one-word edit.
+
+`restore` writes an old definition back over the live recipe and records
+that as a *new* minor rather than rewinding history, so the version that
+turned out to be wrong stays inspectable next to the one that replaced it.
+
+**Runs are attributed to versions.** `scrape_runs` carries both a
+`version_id` (FK to the definition) and a `version_label` (the text
+`"v2.3"`). That means a failure — with its `debugDir` screenshot and DOM —
+is tied to the exact definition that produced it, and
+`node query.js versions` shows each version's success record, so "which one
+was good" is evidence rather than memory.
+
+**Pruning** keeps every stable version plus the most recent 5 non-stable
+ones. This is the point of the major/minor split: iterating on a broken site
+is supposed to be cheap and throwaway, and only versions someone blessed are
+permanent. Pruning clears the pruned version's `version_id` from its runs
+but never the `version_label` — you lose the ability to diff that
+definition, never the ability to read what ran.
+
+Recipes that predate versioning were backfilled with a `v1.0` baseline
+marked stable, since that *is* the version that has been in use. A recipe
+promoted after that reads as v2.0, which is honest: generation two.
+
 ## Session persistence
 
 Every `engine.js` run persists cookies across invocations — **on by

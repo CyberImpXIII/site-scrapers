@@ -301,6 +301,17 @@
 //     {"field_name":"logged_in_as","extract_kind":"full_blob"}
 //   ]
 // }
+//
+// VERSIONING: every call that actually changes a recipe snapshots it as a
+// new MINOR version (v1.0 -> v1.1), reported back as `version`. Registering
+// an identical definition records nothing, so re-running this to confirm a
+// recipe is safe and won't spam the history. Add "stable": true to also
+// promote — marking the version known-good and opening the next MAJOR to
+// iterate on. Only set it for a definition you have actually verified
+// against the live site, since promoting is what makes a version permanent
+// (non-stable minors are pruned to the most recent 5). To compare or roll
+// back, use `node query.js diff|restore|versions`. See README.md
+// "Recipe versions".
 
 const fs = require('fs');
 const {
@@ -312,6 +323,8 @@ const {
   insertActionType,
   upsertGenericAction,
   getGenericAction,
+  snapshotVersionIfChanged,
+  promoteVersion,
 } = require('./db');
 const { checkUnresolvedRefs } = require('./lib/composeActions');
 
@@ -542,6 +555,15 @@ function main() {
 
   (def.fields || []).forEach((f, i) => insertField(db, siteId, f, i));
 
+  // Snapshot AFTER the fields are written — upsertSite clears and the
+  // caller re-inserts them, so versioning inside upsertSite would capture a
+  // recipe with no fields. Only records a version when the definition
+  // actually changed, so a no-op re-register doesn't spam the history.
+  const version = snapshotVersionIfChanged(db, siteId, { note: def.version_note });
+  // "stable": true says this definition is known-good: it pins the version
+  // against pruning and opens the next major for further iteration.
+  const promoted = def.stable ? promoteVersion(db, siteId, { note: def.version_note }) : null;
+
   console.log(JSON.stringify({
     success: true,
     hostname: def.hostname,
@@ -550,6 +572,8 @@ function main() {
     siteId,
     fieldsRegistered: (def.fields || []).length,
     unresolvedReferences,
+    version: version ? `v${version.major}.${version.minor}` : null,
+    promotedStable: promoted ? `v${promoted.major}.${promoted.minor}` : null,
   }));
 }
 

@@ -34,6 +34,35 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 `;
 
+// Point-in-time snapshots of a recipe's definition, so "it used to work"
+// is answerable instead of lost. upsertSite overwrites in place, so without
+// this the definition that was working before a site changed is simply gone,
+// and a scrape_runs failure row is unanchored — you know run 47 failed, not
+// what the recipe looked like when it did.
+//
+// Numbering follows how troubleshooting actually goes: each re-register is
+// a MINOR bump (v2.0 -> v2.1 -> v2.2), the disposable scaffolding of working
+// a problem. Promoting marks the current version `stable` and starts the
+// next MAJOR, so majors are the generations that were once known-good.
+// Pruning keeps every stable version forever and only the most recent few
+// non-stable ones, which is what stops iteration from becoming bloat.
+const RECIPE_VERSIONS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS recipe_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- CASCADE matters: node:sqlite enforces foreign keys by default, so without
+  -- it these rows make a recipe permanently undeletable. A recipe's version
+  -- history has no meaning once the recipe is gone.
+  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  major INTEGER NOT NULL,
+  minor INTEGER NOT NULL,
+  definition TEXT NOT NULL,      -- JSON snapshot of the recipe: the sites row (minus ids/timestamps) plus its site_fields
+  stable INTEGER NOT NULL DEFAULT 0,  -- 1 = promoted known-good; never auto-pruned
+  note TEXT,                     -- why this version exists / what changed
+  created_at TEXT NOT NULL,
+  UNIQUE(site_id, major, minor)
+);
+`;
+
 const ACTION_TYPES_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS action_types (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +118,7 @@ const SCHEMA = `
 ${SITES_TABLE_SQL}
 ${ACTION_TYPES_TABLE_SQL}
 ${GENERIC_ACTIONS_TABLE_SQL}
+${RECIPE_VERSIONS_TABLE_SQL}
 CREATE TABLE IF NOT EXISTS site_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL REFERENCES sites(id),
@@ -112,6 +142,8 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
   timed_out INTEGER NOT NULL DEFAULT 0,
   duration_ms INTEGER,
   error TEXT,
+  version_id INTEGER REFERENCES recipe_versions(id),  -- which recipe definition actually produced this run, so a failure can be tied to a definition and diffed against the last stable one
+  version_label TEXT,            -- denormalized "v1.3" for the same run. version_id points at a row that pruning may delete (scaffolding minors are meant to be disposable); this text survives, so run history always says WHICH version ran even once the definition itself is gone
   output_chars INTEGER,          -- length of the final JSON printed to stdout -- the real, ongoing "what does calling this recipe actually cost to read" metric, vs a one-time-measured claim
   ran_at TEXT NOT NULL
 );
@@ -257,6 +289,55 @@ function migrateSessionModeColumn(db) {
   db.exec('ALTER TABLE sites ADD COLUMN session_mode TEXT');
 }
 
+// Old DBs predate scrape_runs.version_id / version_label. Plain ADD COLUMNs.
+function migrateRunVersionColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(scrape_runs)').all();
+  if (cols.length === 0) return;
+  if (!cols.some(c => c.name === 'version_id')) {
+    db.exec('ALTER TABLE scrape_runs ADD COLUMN version_id INTEGER REFERENCES recipe_versions(id)');
+  }
+  if (!cols.some(c => c.name === 'version_label')) {
+    db.exec('ALTER TABLE scrape_runs ADD COLUMN version_label TEXT');
+  }
+}
+
+// Every recipe that predates versioning has no history, so `diff` and
+// "what did it look like when it worked" would be dead on arrival for the
+// entire existing library. Snapshot each one's current shape as its
+// baseline. Marked stable because it IS the version that has been in use —
+// promoting later then reads as v2.0, which is honest: generation two.
+//
+// Guarded by PRAGMA user_version so it runs exactly ONCE per database, not
+// "whenever some site lacks a version". That distinction is load-bearing:
+// openDb() runs in every engine.js subprocess, and a condition that stays
+// true turns every open into a writer. That is precisely how the earlier
+// "parallel scrapes return empty JSON" bug worked — concurrent writers on
+// one SQLite file — and an un-guarded version of this check reproduced it
+// (3 test failures, all `Unexpected end of JSON input`). After the
+// backfill, a site created without a version simply has none, which is
+// correct: creating versions is register.js's job, not a reader's.
+const SCHEMA_VERSION_BASELINE_BACKFILL = 1;
+function backfillBaselineVersions(db) {
+  const { user_version: current } = db.prepare('PRAGMA user_version').get();
+  if (current >= SCHEMA_VERSION_BASELINE_BACKFILL) return 0;
+
+  const missing = db
+    .prepare('SELECT id FROM sites WHERE id NOT IN (SELECT DISTINCT site_id FROM recipe_versions)')
+    .all();
+  // OR IGNORE so that two processes racing on a fresh DB can't collide on
+  // UNIQUE(site_id, major, minor); the loser's insert is simply a no-op.
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO recipe_versions (site_id, major, minor, definition, stable, note, created_at) VALUES (?,1,0,?,1,?,?)'
+  );
+  const now = new Date().toISOString();
+  for (const { id } of missing) {
+    const def = recipeDefinition(db, id);
+    if (def) insert.run(id, JSON.stringify(def), 'baseline captured when versioning was introduced', now);
+  }
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION_BASELINE_BACKFILL}`);
+  return missing.length;
+}
+
 // Old DBs predate output_chars on scrape_runs. Plain ADD COLUMN.
 function migrateOutputCharsColumn(db) {
   const cols = db.prepare('PRAGMA table_info(scrape_runs)').all();
@@ -299,6 +380,8 @@ function openDb() {
   migrateSessionModeColumn(db);
   migrateOutputCharsColumn(db);
   migrateGenericActionSourceColumn(db);
+  migrateRunVersionColumn(db);
+  backfillBaselineVersions(db);
   seedActionTypes(db);
   seedBuiltinActions(db);
   return db;
@@ -409,6 +492,153 @@ function upsertSite(db, s) {
   }
 }
 
+// The canonical, comparable form of a recipe: everything that defines
+// BEHAVIOR, and nothing that merely records bookkeeping. ids and
+// first_seen/last_verified are excluded on purpose — otherwise every
+// re-register would look like a change and spam the history.
+const VERSIONED_SITE_COLUMNS = [
+  'hostname', 'page_type', 'recipe_name', 'display_name', 'status', 'nav_method', 'nav_template',
+  'nav_params_schema', 'session_mode', 'pagination_method', 'pagination_config', 'action_type',
+  'card_anchor_text', 'card_selector', 'card_min_text_len', 'content_selector', 'content_stop_text',
+  'ready_timeout_ms', 'result_count_regex', 'notes',
+];
+const VERSIONED_FIELD_COLUMNS = [
+  'field_name', 'extract_kind', 'segment_index', 'regex_pattern', 'attribute_name', 'example_value', 'field_order',
+];
+
+function recipeDefinition(db, siteId) {
+  const site = db.prepare('SELECT * FROM sites WHERE id = ?').get(siteId);
+  if (!site) return null;
+  const def = {};
+  for (const c of VERSIONED_SITE_COLUMNS) def[c] = site[c] ?? null;
+  def.fields = getFields(db, siteId).map(f => {
+    const o = {};
+    for (const c of VERSIONED_FIELD_COLUMNS) o[c] = f[c] ?? null;
+    return o;
+  });
+  return def;
+}
+
+function getCurrentVersion(db, siteId) {
+  return db
+    .prepare('SELECT * FROM recipe_versions WHERE site_id = ? ORDER BY major DESC, minor DESC LIMIT 1')
+    .get(siteId);
+}
+
+function listVersions(db, siteId) {
+  return db
+    .prepare('SELECT id, major, minor, stable, note, created_at FROM recipe_versions WHERE site_id = ? ORDER BY major, minor')
+    .all(siteId);
+}
+
+function getVersion(db, siteId, major, minor) {
+  return db
+    .prepare('SELECT * FROM recipe_versions WHERE site_id = ? AND major = ? AND minor = ?')
+    .get(siteId, major, minor);
+}
+
+// Keeps every stable version plus the most recent `keep` non-stable ones.
+// Iterating on a broken site is supposed to be cheap and disposable; only
+// the versions someone deliberately blessed are permanent.
+function pruneVersions(db, siteId, keep = 5) {
+  const doomed = db
+    .prepare(
+      `SELECT id FROM recipe_versions
+        WHERE site_id = ? AND stable = 0
+          AND id NOT IN (SELECT id FROM recipe_versions WHERE site_id = ? AND stable = 0 ORDER BY major DESC, minor DESC LIMIT ?)`
+    )
+    .all(siteId, siteId, keep);
+  if (!doomed.length) return 0;
+  // Only the FK is cleared; scrape_runs.version_label keeps saying which
+  // version ran, so pruning scaffolding costs you the ability to diff that
+  // definition, never the ability to read the run history.
+  const clearRuns = db.prepare('UPDATE scrape_runs SET version_id = NULL WHERE version_id = ?');
+  const del = db.prepare('DELETE FROM recipe_versions WHERE id = ?');
+  for (const d of doomed) {
+    clearRuns.run(d.id);
+    del.run(d.id);
+  }
+  return doomed.length;
+}
+
+// Snapshots the recipe as a new MINOR, but only when it actually differs
+// from the current version — a no-op re-register shouldn't create history.
+// Returns the version row that is now current either way.
+function snapshotVersionIfChanged(db, siteId, { note } = {}) {
+  const def = recipeDefinition(db, siteId);
+  if (!def) return null;
+  const serialized = JSON.stringify(def);
+  const current = getCurrentVersion(db, siteId);
+  if (current && current.definition === serialized) return current;
+
+  const major = current ? current.major : 1;
+  const minor = current ? current.minor + 1 : 0;
+  db.prepare(
+    'INSERT INTO recipe_versions (site_id, major, minor, definition, stable, note, created_at) VALUES (?,?,?,?,0,?,?)'
+  ).run(siteId, major, minor, serialized, note ?? null, new Date().toISOString());
+  pruneVersions(db, siteId);
+  return getCurrentVersion(db, siteId);
+}
+
+// Marks the current version known-good and opens the next major for
+// further iteration, so stable generations read v1.0, v2.0, v3.0 and the
+// scaffolding between them is whatever minors were needed to get there.
+function promoteVersion(db, siteId, { note } = {}) {
+  const current = getCurrentVersion(db, siteId);
+  if (!current) return null;
+  db.prepare('UPDATE recipe_versions SET stable = 1, note = COALESCE(?, note) WHERE id = ?').run(note ?? null, current.id);
+  const promoted = db.prepare('SELECT * FROM recipe_versions WHERE id = ?').get(current.id);
+  // Re-open at the next major so later edits don't accumulate under a
+  // version number someone has already blessed.
+  db.prepare(
+    'INSERT INTO recipe_versions (site_id, major, minor, definition, stable, note, created_at) VALUES (?,?,?,?,0,?,?)'
+  ).run(siteId, current.major + 1, 0, current.definition, `carried forward from v${current.major}.${current.minor}`, new Date().toISOString());
+  pruneVersions(db, siteId);
+  return promoted;
+}
+
+// Writes a stored definition back over the live recipe. This is the other
+// half of "look back at how it was stable before" — without it you can see
+// the old version but not get it back, and the usual way you find out a
+// change was wrong is that the recipe is now broken. Recorded as a new
+// minor rather than by rewinding history, so the failed attempt stays
+// visible instead of being quietly erased.
+function restoreVersion(db, siteId, major, minor) {
+  const version = getVersion(db, siteId, major, minor);
+  if (!version) return null;
+  const def = JSON.parse(version.definition);
+
+  const assignable = VERSIONED_SITE_COLUMNS.filter(c => c !== 'hostname' && c !== 'page_type' && c !== 'recipe_name');
+  db.prepare(
+    `UPDATE sites SET ${assignable.map(c => `${c} = ?`).join(', ')}, last_verified = ? WHERE id = ?`
+  ).run(...assignable.map(c => def[c] ?? null), new Date().toISOString(), siteId);
+
+  db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(siteId);
+  for (const f of def.fields || []) {
+    insertField(db, siteId, f, f.field_order ?? 0);
+  }
+  return snapshotVersionIfChanged(db, siteId, { note: `restored from v${major}.${minor}` });
+}
+
+// Removes a recipe and everything hanging off it, in FK-safe order. The
+// order is not optional: runs reference versions, versions reference the
+// site, and foreign keys are enforced, so deleting the site first simply
+// fails. Fresh DBs also get ON DELETE CASCADE on recipe_versions, but this
+// works with or without it — DBs created before that was added keep the
+// plain reference, and SQLite cannot ALTER a constraint onto them.
+function deleteSite(db, siteId) {
+  db.prepare('DELETE FROM scrape_runs WHERE site_id = ?').run(siteId);
+  db.prepare('DELETE FROM recipe_versions WHERE site_id = ?').run(siteId);
+  db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(siteId);
+  db.prepare('DELETE FROM sites WHERE id = ?').run(siteId);
+}
+
+function getLastStableVersion(db, siteId) {
+  return db
+    .prepare('SELECT * FROM recipe_versions WHERE site_id = ? AND stable = 1 ORDER BY major DESC, minor DESC LIMIT 1')
+    .get(siteId);
+}
+
 function listActionTypes(db) {
   return db.prepare('SELECT * FROM action_types ORDER BY name').all();
 }
@@ -470,8 +700,8 @@ function insertField(db, siteId, f, order) {
 
 function logRun(db, run) {
   db.prepare(
-    `INSERT INTO scrape_runs (site_id, params_json, success, result_count, claimed_count, timed_out, duration_ms, error, output_chars, ran_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO scrape_runs (site_id, params_json, success, result_count, claimed_count, timed_out, duration_ms, error, version_id, version_label, output_chars, ran_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     run.siteId ?? null,
     JSON.stringify(run.params ?? {}),
@@ -481,6 +711,8 @@ function logRun(db, run) {
     run.timedOut ? 1 : 0,
     run.durationMs ?? null,
     run.error ?? null,
+    run.versionId ?? null,
+    run.versionLabel ?? null,
     run.outputChars ?? null,
     new Date().toISOString()
   );
@@ -581,6 +813,16 @@ module.exports = {
   logRun,
   getRuns,
   getRecipeHealth,
+  recipeDefinition,
+  snapshotVersionIfChanged,
+  promoteVersion,
+  restoreVersion,
+  deleteSite,
+  listVersions,
+  getVersion,
+  getCurrentVersion,
+  getLastStableVersion,
+  pruneVersions,
   getEfficiencyStats,
   parseSiteArg,
   listActionTypes,

@@ -56,7 +56,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
+const { openDb, getSite, getFields, logRun, parseSiteArg, getCurrentVersion } = require('./db');
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 
@@ -575,6 +575,11 @@ async function main() {
   }
 
   const fields = getFields(db, site.id);
+  // Tag every run with the recipe definition that produced it, so a failure
+  // can later be diffed against the last version that worked.
+  const currentVersion = getCurrentVersion(db, site.id);
+  const versionId = currentVersion ? currentVersion.id : null;
+  const versionLabel = currentVersion ? `v${currentVersion.major}.${currentVersion.minor}` : null;
   const siteMeta = { hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name };
 
   // run_action references are expanded to a flat step list up front, before
@@ -676,7 +681,7 @@ async function main() {
         return { timedOut, record, blobLen, url: page.url(), captures, debugDir };
       }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
     } catch (e) {
-      logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
+      logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
       console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
       process.exit(1);
     }
@@ -692,6 +697,7 @@ async function main() {
       // file path + captured KEY NAMES only — never the captured values.
       handoffCaptures: articleOutcome.captures,
       sessionUsed: sessionOpt ? sessionName : null,
+      recipeVersion: versionLabel,
       debugDir: articleOutcome.debugDir ?? null,
     };
     const outputJson = JSON.stringify(output);
@@ -703,6 +709,7 @@ async function main() {
       resultCount: success ? 1 : 0,
       timedOut: articleOutcome.timedOut,
       durationMs: Date.now() - startedAt,
+      versionId, versionLabel,
       outputChars: outputJson.length,
     });
 
@@ -800,7 +807,7 @@ async function main() {
       return { timedOut, jobs, claimedCount, url: page.url(), captures, pagesVisited: pagesCollected + 1, debugDir };
     }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
-    logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
+    logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
     console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, debugDir: e.debugDir ?? null }));
     process.exit(1);
   }
@@ -829,6 +836,7 @@ async function main() {
     jobs: outcome.jobs,
     handoffCaptures: outcome.captures,
     sessionUsed: sessionOpt ? sessionName : null,
+    recipeVersion: versionLabel,
     debugDir: outcome.debugDir ?? null,
   };
   const outputJson = JSON.stringify(output);
@@ -841,6 +849,7 @@ async function main() {
     claimedCount: outcome.claimedCount,
     timedOut: outcome.timedOut,
     durationMs: Date.now() - startedAt,
+    versionId, versionLabel,
     outputChars: outputJson.length,
   });
 
