@@ -140,10 +140,40 @@ function writeCaptureEnv(captured, { hostname, pageType, recipeName }) {
   return { file, keys: Object.keys(captured) };
 }
 
-// `steps` is already a flat, fully-expanded array — any run_action
-// references were resolved by expandSteps() before this runs.
-async function runUiSteps(page, steps, params, siteMeta) {
+// Hard ceiling on a `repeat` step's iteration count, whatever a caller's
+// params ask for, so a typo like extra_pages: 1000 can't run away.
+const MAX_REPEAT = 50;
+
+// Thrown by a `click` step marked stop_if_missing when its element is absent
+// or disabled (e.g. the "Next" button on the last page). Ends the innermost
+// enclosing `repeat` early; at the top level it just ends the step list.
+class StopRepeat extends Error {}
+
+// A step field that may be a number or a "{{param}}" template. Blank/invalid
+// resolves to `fallback`.
+function numericParam(value, params, fallback) {
+  if (value === undefined || value === null) return fallback;
+  const str = substitute(String(value), params).trim();
+  if (str === '') return fallback;
+  const n = Number(str);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// `steps` is already fully expanded — any run_action/run_generic_action
+// references were resolved by expandSteps() before this runs (including
+// inside `repeat` blocks). `hooks.collect`, when present (listing recipes),
+// extracts the current page's cards into the run's accumulator.
+async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) {
   const captures = [];
+  try {
+    await runStepList(page, steps, params, siteMeta, hooks, depth, captures);
+  } catch (e) {
+    if (!(e instanceof StopRepeat) || depth > 0) throw e;
+  }
+  return { captures };
+}
+
+async function runStepList(page, steps, params, siteMeta, hooks, depth, captures) {
   for (const step of steps) {
     const sel = step.selector ? substitute(step.selector, params) : undefined;
     switch (step.action) {
@@ -151,6 +181,41 @@ async function runUiSteps(page, steps, params, siteMeta) {
         await page.goto(substitute(step.url, params), { waitUntil: 'domcontentloaded', timeout: 30000 });
         break;
       case 'click': {
+        if (step.stop_if_missing) {
+          // Missing or disabled (last page) ends the enclosing repeat instead
+          // of failing the run.
+          let el;
+          try {
+            el = await page.waitForSelector(sel, { timeout: step.timeout ?? 5000 });
+          } catch {
+            throw new StopRepeat();
+          }
+          const disabled = await el.evaluate(
+            e => !!(e.disabled || e.getAttribute('aria-disabled') === 'true' || e.classList.contains('disabled'))
+          );
+          if (disabled) throw new StopRepeat();
+          // A real link means a full page load: wait for it, or the next
+          // step can run against the old page (or interrupt the load).
+          const isLink = await el.evaluate(e => e.tagName === 'A' && !!e.href && !/#$/.test(e.href));
+          const nav = isLink
+            ? page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null)
+            : null;
+          // Present but hidden (e.g. LinkedIn's "See more jobs" before it's
+          // revealed): click it directly. A mouse click would first scroll
+          // it into view, which can undo the scroll that loads more results.
+          const hidden = await el.evaluate(e => e.offsetParent === null && getComputedStyle(e).position !== 'fixed');
+          if (hidden) {
+            await el.evaluate(e => e.click());
+          } else {
+            try {
+              await el.click();
+            } catch {
+              await el.evaluate(e => e.click());
+            }
+          }
+          if (nav) await nav;
+          break;
+        }
         const el = await page.waitForSelector(sel, { timeout: step.timeout ?? 10000 });
         await el.click();
         break;
@@ -164,8 +229,30 @@ async function runUiSteps(page, steps, params, siteMeta) {
         await page.waitForSelector(sel, { timeout: step.timeout ?? 10000 });
         break;
       case 'wait':
-        await new Promise(r => setTimeout(r, step.ms ?? 1000));
+        await new Promise(r => setTimeout(r, numericParam(step.ms, params, step.default_ms ?? 1000)));
         break;
+      case 'scroll_bottom':
+        // Brings lazy-loaded content and below-the-fold "Next"/"Show more"
+        // buttons into existence/view.
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(r => setTimeout(r, step.ms ?? 500));
+        break;
+      case 'collect':
+        if (!hooks.collect) throw new Error('"collect" step only works in listing recipes');
+        await hooks.collect();
+        break;
+      case 'repeat': {
+        const times = Math.min(Math.max(Math.floor(numericParam(step.times, params, 0)), 0), MAX_REPEAT);
+        for (let i = 0; i < times; i++) {
+          try {
+            await runStepList(page, step.steps || [], params, siteMeta, hooks, depth + 1, captures);
+          } catch (e) {
+            if (e instanceof StopRepeat) break;
+            throw e;
+          }
+        }
+        break;
+      }
       case 'handoff': {
         // Pause the automated sequence here — the browser is real/visible
         // (see stepsNeedHeaded), so the person running this looks at that
@@ -204,7 +291,6 @@ async function runUiSteps(page, steps, params, siteMeta) {
         throw new Error(`Unknown ui_steps action: ${step.action}`);
     }
   }
-  return { captures };
 }
 
 async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen, fields, includeRaw }) {
@@ -436,7 +522,19 @@ async function main() {
       process.exit(1);
     }
   }
-  const headed = expandedSteps ? stepsNeedHeaded(expandedSteps) : false;
+  // pagination_method 'steps': pagination_config is a ui_steps array (usually
+  // just a run_generic_action of 'paginate') run after the first page's cards
+  // are ready, before the final extraction. Expanded up front like nav steps.
+  let paginationSteps = null;
+  if (site.page_type === 'listing' && site.pagination_method === 'steps' && site.pagination_config) {
+    try {
+      paginationSteps = expandSteps(db, JSON.parse(site.pagination_config), site.hostname, new Set([refKey(siteMeta)]));
+    } catch (e) {
+      console.log(JSON.stringify({ success: false, documented: true, error: `pagination_config: ${e.message}` }));
+      process.exit(1);
+    }
+  }
+  const headed = [expandedSteps, paginationSteps].some(st => st && stepsNeedHeaded(st));
   // Session persistence is ON BY DEFAULT (params.session picks which named,
   // parallel session — e.g. a second account — default 'default'); a run
   // opts out entirely with params.noSession: true.
@@ -520,38 +618,75 @@ async function main() {
 
   try {
     outcome = await withPage(async page => {
+      const extractOpts = {
+        cardAnchorText: site.card_anchor_text,
+        cardSelector: site.card_selector,
+        cardMinTextLen: site.card_min_text_len,
+        fields,
+        includeRaw,
+      };
+      const waitForCards = timeout =>
+        page.waitForFunction(
+          (anchorText, cardSelector) =>
+            cardSelector
+              ? !!document.querySelector(cardSelector)
+              : Array.from(document.querySelectorAll('a, button')).some(el => el.textContent.trim() === anchorText),
+          { timeout },
+          site.card_anchor_text,
+          site.card_selector
+        );
+
+      // Pages saved by `collect` steps (e.g. inside the 'paginate' generic
+      // action) before moving on; merged with the final page below.
+      const collected = [];
+      let pagesCollected = 0;
+      const hooks = {
+        collect: async () => {
+          try {
+            await waitForCards(site.ready_timeout_ms);
+          } catch {
+            /* extract whatever is there */
+          }
+          collected.push(...(await extractCards(page, extractOpts)));
+          pagesCollected += 1;
+        },
+      };
+
       let captures = [];
       if (site.nav_method === 'url_param') {
         const url = buildUrl(site.nav_template, params);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       } else if (site.nav_method === 'ui_steps') {
-        ({ captures } = await runUiSteps(page, expandedSteps, params, siteMeta));
+        ({ captures } = await runUiSteps(page, expandedSteps, params, siteMeta, hooks));
       } else {
         throw new Error(`Unknown nav_method: ${site.nav_method}`);
       }
 
       let timedOut = false;
       try {
-        await page.waitForFunction(
-          (anchorText, cardSelector) =>
-            cardSelector
-              ? !!document.querySelector(cardSelector)
-              : Array.from(document.querySelectorAll('a, button')).some(el => el.textContent.trim() === anchorText),
-          { timeout: site.ready_timeout_ms },
-          site.card_anchor_text,
-          site.card_selector
-        );
+        await waitForCards(site.ready_timeout_ms);
       } catch {
         timedOut = true;
       }
 
-      const jobs = await extractCards(page, {
-        cardAnchorText: site.card_anchor_text,
-        cardSelector: site.card_selector,
-        cardMinTextLen: site.card_min_text_len,
-        fields,
-        includeRaw,
-      });
+      if (paginationSteps && !timedOut) {
+        const more = await runUiSteps(page, paginationSteps, params, siteMeta, hooks);
+        captures = captures.concat(more.captures);
+      }
+
+      // Final page, then de-duplicate across pages (by href when the recipe
+      // has one, else the whole record) — "load more" pages keep earlier
+      // cards in the DOM, so the same card can be collected more than once.
+      const finalPage = await extractCards(page, extractOpts);
+      const seen = new Set();
+      const jobs = [];
+      for (const rec of collected.concat(finalPage)) {
+        const { _raw, ...rest } = rec;
+        const key = rec.href || JSON.stringify(rest);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        jobs.push(rec);
+      }
 
       let claimedCount = null;
       if (site.result_count_regex) {
@@ -561,7 +696,7 @@ async function main() {
         }, site.result_count_regex);
       }
 
-      return { timedOut, jobs, claimedCount, url: page.url(), captures };
+      return { timedOut, jobs, claimedCount, url: page.url(), captures, pagesVisited: pagesCollected + 1 };
     }, { headed, session: sessionOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
@@ -599,6 +734,7 @@ async function main() {
     claimedCount: outcome.claimedCount,
     consistencyWarning,
     count: outcome.jobs.length,
+    pagesVisited: outcome.pagesVisited,
     jobs: outcome.jobs,
     handoffCaptures: outcome.captures,
     sessionUsed: sessionOpt ? sessionName : null,

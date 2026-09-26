@@ -226,6 +226,31 @@
 // string, same flexibility as nav_template elsewhere. Manage the library
 // with `node query.js generic-actions` (list) and `node query.js
 // generic-action <name>` (one, full detail).
+// Paging through results (listing only): set "pagination_method": "steps"
+// and "pagination_config" to a ui_steps array, run after the first page's
+// cards are ready and before the final extraction. Normally that's just the
+// generic 'paginate' library action, told this site's "Next" button:
+//   "pagination_method": "steps",
+//   "pagination_config": [{"action":"run_generic_action","ref":"paginate","with":{"next_selector":"a[aria-label='Next']"}}]
+// Callers then opt in per call with {"extra_pages": 2} (3 pages total);
+// without it the repeat runs 0 times, so the recipe behaves exactly as a
+// one-page search. `with` fills the generic action's {{placeholders}} for
+// this one use; anything left unfilled comes from the caller's params.
+//
+// Step types used for this (usable in any ui_steps list):
+//   {"action":"repeat","times":"{{extra_pages}}","steps":[...]}   loops the
+//     inner steps; times may be a number or a {{param}}; capped at 50.
+//   {"action":"click","selector":"...","stop_if_missing":true}     if the
+//     element is absent or disabled (last page), ends the enclosing repeat
+//     instead of failing the run.
+//   {"action":"collect"}   listing only: saves the current page's cards;
+//     all collected pages plus the final page are merged, de-duplicated by
+//     href (or by whole record when there's no href field).
+//   {"action":"scroll_bottom"}   scrolls to the bottom (lazy-loaded content,
+//     below-the-fold "Show more" buttons).
+//   {"action":"wait","ms":"{{wait_ms}}","default_ms":2500}   ms may be a
+//     {{param}}; default_ms applies when it resolves blank.
+//
 // {
 //   "hostname": "example.com",
 //   "page_type": "action",
@@ -384,6 +409,22 @@ function main() {
     }
   }
 
+  if (def.pagination_method === 'steps') {
+    const cfg = typeof def.pagination_config === 'string' ? def.pagination_config : JSON.stringify(def.pagination_config);
+    let parsed;
+    try {
+      parsed = JSON.parse(cfg);
+    } catch (e) {
+      console.log(JSON.stringify({ success: false, error: `pagination_method "steps" needs pagination_config as a JSON ui_steps array: ${e.message}` }));
+      process.exit(1);
+    }
+    if (!Array.isArray(parsed)) {
+      console.log(JSON.stringify({ success: false, error: 'pagination_config must be a JSON array of ui_steps' }));
+      process.exit(1);
+    }
+    def.pagination_config = cfg;
+  }
+
   // Non-fatal: a run_action/run_generic_action ref may point at something
   // that doesn't exist yet (building composed recipes bottom-up or
   // top-down are both fine) — warn, don't block. engine.js does the real,
@@ -396,6 +437,11 @@ function main() {
     } catch {
       /* malformed nav_template JSON isn't this check's job — ui_steps execution will surface it */
     }
+  }
+  if (def.pagination_method === 'steps') {
+    unresolvedReferences = unresolvedReferences.concat(
+      checkUnresolvedRefs(db, JSON.parse(def.pagination_config), def.hostname)
+    );
   }
 
   const siteId = upsertSite(db, def);

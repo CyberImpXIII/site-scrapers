@@ -258,6 +258,44 @@ it. `action_type` is optional here (purely for discovery via `node query.js
 action-types`) since some macros — dismissing a cookie banner, say — aren't
 really a taxonomy "action_type" in the login/add_to_cart sense at all.
 
+## Pagination
+
+Listing recipes read the first page by default. To go further, a recipe
+sets `pagination_method: "steps"` and a `pagination_config` ui_steps array
+that runs after page 1's cards are ready and before the final extraction.
+Callers opt in per call with `{"extra_pages": N}`; without it nothing extra
+runs, so existing calls behave exactly as before. Two generic actions cover
+the two common patterns:
+
+- **`paginate`** — classic Next button (content is *replaced*). Each round:
+  `collect` the current page's cards, click `{{next_selector}}`, wait. Ends
+  early when Next is missing or disabled. Give it the site's selector with
+  `with`:
+  ```json
+  "pagination_method": "steps",
+  "pagination_config": [{"action":"run_generic_action","ref":"paginate","with":{"next_selector":"a[aria-label='Next page']"}}]
+  ```
+  Used by wellfound.com and builtin.com (verified: 3 pages each).
+- **`infinite_scroll`** — results are *appended* as you scroll. Each round:
+  scroll to the bottom, wait. No selector; the final extraction reads
+  everything that piled up. Attached to linkedin.com's guest search, but
+  as of 2026-09-26 LinkedIn loads no extra results inside the engine's
+  browser (a manual Puppeteer test did get +10 per scroll), so it still
+  returns the first 60 there. Unresolved.
+
+Both take `wait_ms` to override the pause per round (defaults 2500 / 3000).
+Collected pages and the final page are merged and de-duplicated by `href`
+(or by whole record when a recipe has no `href` field). Output includes
+`pagesVisited` (1 + number of `collect`s).
+
+The step types behind this work in any ui_steps list:
+`repeat` (`times` may be a number or `{{param}}`, capped at 50),
+`click` with `stop_if_missing: true` (absent/disabled element ends the
+enclosing repeat; real links wait for the page load; hidden elements are
+clicked by script), `collect` (listing only), `scroll_bottom`, and `wait`
+with a `{{param}}` `ms` plus `default_ms`. `run_generic_action` also takes
+`with`, which fills that library entry's `{{placeholders}}` for one use.
+
 ## Session persistence
 
 Every `engine.js` run persists cookies across invocations — **on by

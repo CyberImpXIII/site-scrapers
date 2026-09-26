@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS sites (
   nav_method TEXT NOT NULL,                          -- 'url_param' | 'ui_steps' | 'direct_url' (article: goto params.url as-is)
   nav_template TEXT NOT NULL,                        -- URL template (url_param/direct_url) OR JSON step array (ui_steps)
   nav_params_schema TEXT,                            -- JSON: documents accepted params, for callers
-  pagination_method TEXT NOT NULL DEFAULT 'none',    -- 'none' | 'url_param' | 'click_next' (click_next not yet implemented)
-  pagination_config TEXT,
+  pagination_method TEXT NOT NULL DEFAULT 'none',    -- 'none' | 'steps' (run pagination_config ui_steps after page 1, e.g. the generic 'paginate' action) | 'url_param' / 'click_next' (not implemented)
+  pagination_config TEXT,                            -- pagination_method 'steps': JSON ui_steps array
   action_type TEXT,                                  -- action recipes only: which entry of action_types this is (e.g. 'login', 'add_to_cart') -- register.js validates this against action_types, preferring reuse over inventing near-duplicate names. NULL for listing/article.
   card_anchor_text TEXT,                             -- listing only: exact text of a reliably-present per-card element
   card_selector TEXT,                                -- listing only, alternative to card_anchor_text: CSS selector matching each card container directly, for sites with no shared per-card literal text
