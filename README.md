@@ -86,8 +86,10 @@ remember or re-derive it.
   - `generic_actions` — a hostname-*independent* library of reusable
     puppeteer "macros": named `ui_steps` sequences any recipe can pull in
     with `run_generic_action`, for behavior that doesn't depend on the site
-    (a heuristic generic login, dismissing a cookie-consent banner). See
-    "Composing actions" below.
+    (pagination, dismissing a cookie-consent banner). See "Composing
+    actions" below. The built-in ones are **defined in code**
+    (`lib/builtinActions.js`) and seeded into this table on open — see
+    "Where the built-in library lives".
 - **`register.js`** — how a newly-learned site/page/action *or* a new
   `generic_actions` library entry gets documented: pass it a JSON recipe
   (inline or a file), it upserts the right table(s). This replaces "write a
@@ -293,6 +295,36 @@ Both take `wait_ms` to override the pause per round (defaults 2500 / 3000).
 Collected pages and the final page are merged and de-duplicated by `href`
 (or by whole record when a recipe has no `href` field). Output includes
 `pagesVisited` (1 + number of `collect`s).
+
+### Where the built-in library lives
+
+The built-in generic actions are defined in **`lib/builtinActions.js`** and
+seeded into the `generic_actions` table every time the DB opens. The split
+is deliberate, and it's the same one the `action_types` taxonomy already
+uses.
+
+The DB earns its keep for *site knowledge*: per-site recipes are numerous,
+discovered empirically, fixed by one-row updates, and carry job-search
+queries and URLs — which is exactly why `data/scrapers.db` is gitignored.
+Generic actions are the opposite: few, stable, hostname-independent, and
+containing nothing private. They're library behavior, much closer to
+`scroll_bottom` or `remove_element` (which are code) than to "how to scrape
+hiringcafe." Keeping them only in an untracked DB meant they were
+unversioned, unreviewable in a diff, absent from a fresh clone, and gone
+with the file.
+
+Seeding them *into* the DB keeps everything downstream unchanged:
+`run_generic_action` resolution, cycle detection, `with` substitution,
+`query.js generic-actions`, `query.js expand generic:<name>`.
+
+- Re-seeding upserts **only** rows marked `source: 'builtin'`, so anything
+  you register by hand is never touched.
+- The flip side: editing a builtin's row in the DB is pointless — the next
+  open overwrites it. `register.js` therefore **refuses** to register over a
+  builtin name rather than letting the change silently revert later. To
+  customize one, register it under a different name (that copy is
+  `source: 'user'`); to change the builtin itself, edit
+  `lib/builtinActions.js` — which is the point of it being code.
 
 ### Overlays and optional steps
 

@@ -80,9 +80,12 @@ test('a failing run captures diagnostics and reports the directory', async () =>
   assert.ok(result.debugDir, 'expected a debugDir to be reported for a failed run');
   assert.ok(fs.existsSync(result.debugDir), `expected ${result.debugDir} to actually exist`);
 
+  // Scoped to THIS recipe rather than "exactly one new directory anywhere":
+  // data/.debug/ is shared mutable state, and test files run in parallel, so
+  // a global count would break the moment any other test produced a capture.
   const after = captureDirsBefore();
-  const newDirs = [...after].filter(d => !before.has(d));
-  assert.equal(newDirs.length, 1, 'expected exactly one new capture directory');
+  const newDirs = [...after].filter(d => !before.has(d) && d.includes(RECIPE_NAME));
+  assert.equal(newDirs.length, 1, `expected exactly one new capture directory for ${RECIPE_NAME}`);
 
   const files = fs.readdirSync(result.debugDir);
   for (const expected of ['screenshot.png', 'dom.html', 'console.json', 'network_failures.json', 'meta.json']) {

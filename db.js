@@ -1,6 +1,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 const fs = require('fs');
+const { BUILTIN_ACTIONS } = require('./lib/builtinActions');
 
 const DB_PATH = path.join(__dirname, 'data', 'scrapers.db');
 
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS generic_actions (
   description TEXT,
   action_type TEXT,             -- optional categorization against action_types, for discovery -- not required, since some macros (e.g. "dismiss_cookie_banner") aren't really an action_type in the login/add_to_cart sense
   nav_params_schema TEXT,       -- JSON: documents accepted {{params}}, same convention as sites.nav_params_schema
+  source TEXT NOT NULL DEFAULT 'user',  -- 'builtin': owned by lib/builtinActions.js and re-upserted from there on every open, so edits to the row do not survive. 'user': registered by hand, never touched by seeding.
   steps TEXT NOT NULL,          -- JSON array of ui_steps (same vocabulary as a site recipe's nav_template: goto/click/type/waitForSelector/wait/handoff/run_action/run_generic_action)
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -190,6 +192,64 @@ function migrateCardSelectorColumn(db) {
   db.exec('ALTER TABLE sites ADD COLUMN card_selector TEXT');
 }
 
+// Old DBs predate generic_actions.source. Plain ADD COLUMN. Existing rows
+// default to 'user' so a pre-existing hand-registered action is never
+// silently adopted (and then overwritten) by the builtin seeder; the seeder
+// re-marks the ones it owns by name on the next open.
+function migrateGenericActionSourceColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(generic_actions)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'source')) return;
+  db.exec("ALTER TABLE generic_actions ADD COLUMN source TEXT NOT NULL DEFAULT 'user'");
+}
+
+// Upserts the code-owned library from lib/builtinActions.js. Only rows it
+// owns are touched, so a user-registered action of another name is safe.
+// Runs on every open, so a change in code propagates without anyone having
+// to re-register anything by hand.
+function seedBuiltinActions(db) {
+  // Compare first, write only what actually differs. openDb() runs in EVERY
+  // process — including every engine.js child — so unconditionally upserting
+  // all of these would put a write transaction on every single open, even
+  // for read-only commands. That is real lock pressure when several scrapes
+  // run at once (and it made the parallel test suite flaky). In the steady
+  // state this is one read and zero writes.
+  const existing = new Map(
+    db
+      .prepare('SELECT name, description, action_type, nav_params_schema, source, steps FROM generic_actions')
+      .all()
+      .map(r => [r.name, r])
+  );
+
+  const stale = BUILTIN_ACTIONS.filter(a => {
+    const cur = existing.get(a.name);
+    if (!cur) return true;
+    return (
+      cur.source !== 'builtin' ||
+      cur.description !== (a.description ?? null) ||
+      cur.action_type !== (a.action_type ?? null) ||
+      cur.nav_params_schema !== (a.nav_params_schema ?? null) ||
+      cur.steps !== JSON.stringify(a.steps)
+    );
+  });
+  if (stale.length === 0) return;
+
+  const now = new Date().toISOString();
+  const upsert = db.prepare(
+    `INSERT INTO generic_actions (name, description, action_type, nav_params_schema, source, steps, created_at, updated_at)
+     VALUES (?,?,?,?,'builtin',?,?,?)
+     ON CONFLICT(name) DO UPDATE SET
+       description=excluded.description,
+       action_type=excluded.action_type,
+       nav_params_schema=excluded.nav_params_schema,
+       source='builtin',
+       steps=excluded.steps,
+       updated_at=excluded.updated_at`
+  );
+  for (const a of stale) {
+    upsert.run(a.name, a.description ?? null, a.action_type ?? null, a.nav_params_schema ?? null, JSON.stringify(a.steps), now, now);
+  }
+}
+
 // Old DBs predate session_mode. Plain ADD COLUMN.
 function migrateSessionModeColumn(db) {
   const cols = db.prepare('PRAGMA table_info(sites)').all();
@@ -238,7 +298,9 @@ function openDb() {
   migrateCardSelectorColumn(db);
   migrateSessionModeColumn(db);
   migrateOutputCharsColumn(db);
+  migrateGenericActionSourceColumn(db);
   seedActionTypes(db);
+  seedBuiltinActions(db);
   return db;
 }
 
@@ -366,7 +428,7 @@ function insertActionType(db, name, description) {
 
 function listGenericActions(db) {
   return db
-    .prepare('SELECT id, name, description, action_type, nav_params_schema, created_at, updated_at FROM generic_actions ORDER BY name')
+    .prepare('SELECT id, name, description, action_type, nav_params_schema, source, created_at, updated_at FROM generic_actions ORDER BY name')
     .all();
 }
 

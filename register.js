@@ -311,12 +311,30 @@ const {
   getActionType,
   insertActionType,
   upsertGenericAction,
+  getGenericAction,
 } = require('./db');
 const { checkUnresolvedRefs } = require('./lib/composeActions');
 
 function registerGenericAction(db, def) {
   if (!def.name || !def.steps) {
     console.log(JSON.stringify({ success: false, error: 'kind "generic_action" requires name and steps' }));
+    process.exit(1);
+  }
+
+  // Refuse to write over a builtin. The row would update and appear to
+  // work, then be silently reverted by the next openDb() re-seed from
+  // lib/builtinActions.js — a change that vanishes later is worse than one
+  // rejected now. Customizing a builtin means forking it under a new name;
+  // changing the builtin itself means editing lib/builtinActions.js, which
+  // is the point of it living in code.
+  const existing = getGenericAction(db, def.name);
+  if (existing && existing.source === 'builtin') {
+    console.log(JSON.stringify({
+      success: false,
+      error: `"${def.name}" is a builtin generic action, owned by lib/builtinActions.js and re-seeded on every DB open — ` +
+        'registering over it would be silently reverted. Either register your version under a different name, or edit ' +
+        'lib/builtinActions.js if the builtin itself should change.',
+    }));
     process.exit(1);
   }
 
