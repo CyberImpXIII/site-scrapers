@@ -132,13 +132,42 @@ specific `run_action` when the steps genuinely don't depend on the site
 to a specific site's recipe is still the right call when you're reusing
 something that recipe already figured out for that one site.
 
+**Listing recipes read page 1 only unless asked.** A recipe with
+`pagination_method: "steps"` takes `{"extra_pages": N}` to go further; without
+it nothing extra runs. Two generic actions cover the usual patterns:
+`paginate` (Next button replaces content — needs the site's selector via
+`with: {"next_selector": "..."}`) and `infinite_scroll` (results append as you
+scroll). Pages are merged and de-duplicated by `href`; output includes
+`pagesVisited`. The underlying step types work in any ui_steps list:
+`repeat` (`times`, capped at 50), `click` with `stop_if_missing`, `collect`
+(listing only), `scroll_bottom`, and `wait`. For cards with no shared literal
+text, use `card_selector` (a CSS selector matching each card container)
+instead of `card_anchor_text`; for cards grouped under a shared header (a
+company name above its jobs), the `ancestor_first_line` field kind reads that
+header. Details in README.md.
+
+**When a run fails, look before guessing.** Any failure (thrown error,
+timeout, or zero results) writes a screenshot + DOM + console/network logs to
+a gitignored `data/.debug/` directory and reports the path as `debugDir` in
+the output JSON. Read those instead of re-deriving the recipe from scratch —
+`dom.html` shows which selectors actually exist, `screenshot.png` shows
+whether you got a CAPTCHA/login wall rather than the page you expected.
+`node query.js debug-captures` lists recent ones. `params.noDiagnostics: true`
+disables it.
+
+**Don't trust a recipe's `status` alone** — it's set by hand and can go
+stale. `node query.js health` shows each recipe's actual success rate over
+its recent runs and flags `statusDisagrees` where a recipe claims `working`
+but has been failing. Check it before concluding a site broke, and prefer
+fixing/re-marking a recipe over working around it silently.
+
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 
 **Token-efficiency claims are backed by real, ongoing data, not just prose**:
 every run logs its output size (`scrape_runs.output_chars`) — check
 `node query.js efficiency` before repeating a "this saves tokens" claim from
-memory. `test/efficiency.test.js` (`node --test test/efficiency.test.js`,
-same Node as `scrape.sh`) is a real regression suite guarding that output
-stays small/structured rather than silently regressing toward a raw dump.
+memory. `npm test` (or `./test.sh` — a bare `node --test` picks up the v16 in
+PATH and fails) runs the regression suite: output stays small/structured, and
+failures actually leave diagnostics behind.
 
 Full details: README.md.

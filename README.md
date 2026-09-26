@@ -15,7 +15,7 @@ remember or re-derive it.
   executes it, extracts fields (if any), logs the run, prints one JSON
   object. Nothing site-specific is hardcoded here.
 - **`data/scrapers.db`** (SQLite, via Node's built-in `node:sqlite`) — the
-  knowledge base. Three tables:
+  knowledge base. Five tables:
   - `sites` — one row per `(hostname, page_type, recipe_name)` triple: how
     to navigate/act (`nav_method` + `nav_template`), a `status`
     (`working`/`broken`/`needs-review`), and free-text `notes`.
@@ -105,6 +105,12 @@ remember or re-derive it.
   node query.js expand generic:generic_login          # same, for a generic_actions library entry
   node query.js generic-actions                       # the library: name/description/action_type (no steps)
   node query.js generic-action generic_login           # one library entry, full detail including steps
+  node query.js action-types                          # the action_type taxonomy
+  node query.js health [recentN]                      # observed reliability per recipe vs its declared status
+  node query.js efficiency                            # real output-size history per recipe
+  node query.js sessions [hostname]                   # saved session jars (metadata only, never cookie values)
+  node query.js clear-session <hostname>[:sessionName] # force a fresh login next run
+  node query.js debug-captures                        # failed-run diagnostics dirs (screenshot/DOM/console/network)
   ```
 - **`scrape.sh`** — thin wrapper around `engine.js` using the right Node
   binary (see version note below).
@@ -296,6 +302,25 @@ clicked by script), `collect` (listing only), `scroll_bottom`, and `wait`
 with a `{{param}}` `ms` plus `default_ms`. `run_generic_action` also takes
 `with`, which fills that library entry's `{{placeholders}}` for one use.
 
+## Failure diagnostics
+
+When a run fails — thrown error, timeout, or zero results — the engine
+captures what the page actually looked like instead of leaving only an error
+string to guess from. Each failure writes a directory under the gitignored
+`data/.debug/`, reported back as `debugDir` in the output JSON:
+
+- `screenshot.png` — full-page, at the moment of failure
+- `dom.html` — the page's HTML, for checking what selectors *are* present
+- `console.json` — browser console messages (capped ring buffer, timestamped)
+- `network_failures.json` — failed requests, same shape
+- `meta.json` — recipe identity, the error, the final URL, timestamp
+
+On by default; `params.noDiagnostics: true` skips it. Only the last 20
+capture directories are kept — this is disposable debugging data, not an
+audit trail (`scrape_runs` is that). List them with `node query.js
+debug-captures`. Console/network listeners attach when the page is created,
+so they cover the whole run, not just the instant it broke.
+
 ## Session persistence
 
 Every `engine.js` run persists cookies across invocations — **on by
@@ -311,11 +336,25 @@ that hostname — any recipe, any `page_type`, not just the one that logged in
   accounts — just use different names; they never share cookies. Cookies are
   read via CDP's `Network.getAllCookies` (not `page.cookies()`, which only
   sees the current page's URL) and filtered to ones actually belonging to
-  that hostname (exact match or a domain-scoped cookie like `.example.com`
-  that covers it) before being saved.
+  that hostname before being saved. That match is **bidirectional**: a
+  cookie scoped to a wildcard parent (`.example.com` covering
+  `example.com`), *and* one scoped more specifically than the hostname (a
+  host-only cookie on `www.example.com` when sessions are keyed by the bare
+  `example.com`). The second direction was missing originally, which
+  silently dropped LinkedIn's actual auth cookie — `li_at` is host-only on
+  `.www.linkedin.com` while the recipe's hostname normalizes to
+  `linkedin.com`, so only 5 irrelevant cookies were saved and every "reuse
+  the session" run still demanded a fresh login.
 - `params.noSession: true` skips persistence — load and save both — for one
   call, e.g. to test a truly clean/logged-out run without deleting the saved
   session.
+- `session_mode: "none"` on the **recipe** does the same thing permanently,
+  for a page that only works logged out (its signed-in DOM differs). Prefer
+  this over telling callers to remember `noSession`: that failure mode is
+  silent (0 cards, looks like the site changed) and depends on everyone
+  reading the note first. `linkedin.com#listing` is the guest job search
+  while the saved `linkedin.com` session is logged in — it returned 0 cards
+  until the recipe declared `session_mode: "none"`.
 - `node query.js sessions [hostname]` lists what's saved: hostname,
   sessionName, savedAt, cookie count — metadata only, never the cookie
   values. `node query.js clear-session <hostname>[:sessionName]` deletes
@@ -460,8 +499,23 @@ at exactly Puppeteer's 30s navigation timeout; switched to async `execFile`.
 
 ## Determinism notes
 
-- `scrape_runs` gives real reliability data over time (e.g. "3/3 recent runs
-  succeeded, avg 34s") instead of a status flag someone set once and forgot.
+- `scrape_runs` gives real reliability data over time instead of a status
+  flag someone set once and forgot — surfaced by **`node query.js health`**,
+  which reports each recipe's success rate over its most recent runs next to
+  its declared `status`, and sets `statusDisagrees` when a recipe claims
+  `working` but recent runs say otherwise. (The data was always collected;
+  for a long time nothing computed it, so `sites` could show a confident
+  `working` on a recipe that had been failing for weeks.) The window is
+  recent-N rather than lifetime, so an old rough patch doesn't permanently
+  condemn a recipe that works now.
+- Concurrency: the DB opens in WAL mode with a busy timeout, because every
+  run is a separate process opening the same file. Without both, two scrapes
+  started at once were competing writers that failed *instantly* with
+  `SQLITE_BUSY` — and since `openDb()` writes on every open (schema creation,
+  migration checks, seed check) even for read-only commands, the losing
+  process died before printing any JSON at all. That was the real cause of
+  "N parallel scrapes all returned empty/truncated output", which had been
+  written off as browser memory pressure.
 - Each run logs `claimedCount` (the site's own stated result count, when
   `result_count_regex` is configured) alongside what was actually extracted,
   and flags a `consistencyWarning` if they disagree — this is the check that
@@ -470,10 +524,15 @@ at exactly Puppeteer's 30s navigation timeout; switched to async `execFile`.
 - A page-load timeout is reported explicitly (`timedOut: true`), separate
   from "genuinely zero results for a valid query" — these used to look
   identical.
-- Not yet implemented: a fixture/self-test mode (replay a saved HTML
-  snapshot instead of hitting the live site, to separate "my extraction
-  logic broke" from "the site is down") and a caching layer keyed on
-  params. Worth adding if a site's recipe needs iterating on frequently.
+- When a run fails, it leaves evidence rather than just an error string —
+  see "Failure diagnostics" below.
+- Partially implemented: a fixture/self-test mode. `test/fixtures/listing_server.js`
+  serves a deterministic local page that the test suite extracts against, so
+  the engine's own extraction can be exercised without any live site. What's
+  still missing is replaying a saved snapshot *of a real site's page* through
+  that site's real recipe — the thing that would separate "my extraction
+  logic broke" from "the site changed". Also still missing: a caching layer
+  keyed on params, worth adding if a recipe needs frequent iteration.
 
 ## Node version note
 
@@ -485,5 +544,17 @@ removed: `nvm install 22` and update the path in `scrape.sh`.
 
 There's also a one-time "Degraded performance" warning from Puppeteer about
 Rosetta translation on this machine — noisy but harmless; doesn't affect the
-JSON output. `node:sqlite` itself prints an `ExperimentalWarning` on every
-run for the same reason — also harmless.
+JSON output. `node:sqlite` separately prints an `ExperimentalWarning` on
+every run — unrelated to Rosetta; it's just flagged experimental in Node —
+also harmless. Both go to stderr, so `2>/dev/null` leaves clean JSON on
+stdout.
+
+## Running the tests
+
+`npm test` (or `./test.sh`) runs the suite with the same Node as
+`scrape.sh`. A bare `node --test` would use the v16 in `$PATH` and fail on
+`node:sqlite`, which is why the wrapper exists. The suite is
+`test/*.test.js`: `efficiency.test.js` (output stays small/structured) and
+`diagnostics.test.js` (a failed run leaves diagnostics; a disabled one
+doesn't). Both run against the local fixture server, so they need no network
+and no live site.
