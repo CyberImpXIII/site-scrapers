@@ -177,9 +177,38 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
   for (const step of steps) {
     const sel = step.selector ? substitute(step.selector, params) : undefined;
     switch (step.action) {
-      case 'goto':
-        await page.goto(substitute(step.url, params), { waitUntil: 'domcontentloaded', timeout: 30000 });
+      case 'goto': {
+        const targetUrl = substitute(step.url, params);
+        try {
+          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        } catch (e) {
+          // A server-side redirect (e.g. an already-authenticated session
+          // redirecting straight past a login page) can race Puppeteer's
+          // navigation-lifecycle detection and throw even though the
+          // browser actually lands somewhere real — observed live on
+          // facebook.com#action:login: a valid saved session skipped the
+          // login prompt (confirmed by the person running it), but goto()
+          // still reported "Navigation timeout of 30000 ms exceeded".
+          // Only swallow the error if we verifiably ended up on the same
+          // hostname we were headed to — a strong signal this is that
+          // lifecycle-event race, not a genuine failure (network down,
+          // wrong URL, actually stuck).
+          let landedHostname = null;
+          let targetHostname = null;
+          try {
+            landedHostname = new URL(page.url()).hostname;
+          } catch {
+            /* page.url() unavailable/invalid — landedHostname stays null, falls through to rethrow below */
+          }
+          try {
+            targetHostname = new URL(targetUrl).hostname;
+          } catch {
+            /* malformed targetUrl — falls through to rethrow below */
+          }
+          if (!landedHostname || !targetHostname || landedHostname !== targetHostname) throw e;
+        }
         break;
+      }
       case 'click': {
         if (step.stop_if_missing) {
           // Missing or disabled (last page) ends the enclosing repeat instead
