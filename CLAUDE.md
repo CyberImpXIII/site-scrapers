@@ -130,4 +130,11 @@ something that recipe already figured out for that one site.
 
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 
+**Token-efficiency claims are backed by real, ongoing data, not just prose**:
+every run logs its output size (`scrape_runs.output_chars`) — check
+`node query.js efficiency` before repeating a "this saves tokens" claim from
+memory. `test/efficiency.test.js` (`node --test test/efficiency.test.js`,
+same Node as `scrape.sh`) is a real regression suite guarding that output
+stays small/structured rather than silently regressing toward a raw dump.
+
 Full details: README.md.

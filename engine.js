@@ -621,16 +621,7 @@ async function main() {
 
     const success = !articleOutcome.timedOut && articleOutcome.blobLen > 0;
 
-    logRun(db, {
-      siteId: site.id,
-      params,
-      success,
-      resultCount: success ? 1 : 0,
-      timedOut: articleOutcome.timedOut,
-      durationMs: Date.now() - startedAt,
-    });
-
-    console.log(JSON.stringify({
+    const output = {
       success,
       documented: true,
       timedOut: articleOutcome.timedOut,
@@ -639,7 +630,20 @@ async function main() {
       // file path + captured KEY NAMES only — never the captured values.
       handoffCaptures: articleOutcome.captures,
       sessionUsed: sessionOpt ? sessionName : null,
-    }));
+    };
+    const outputJson = JSON.stringify(output);
+
+    logRun(db, {
+      siteId: site.id,
+      params,
+      success,
+      resultCount: success ? 1 : 0,
+      timedOut: articleOutcome.timedOut,
+      durationMs: Date.now() - startedAt,
+      outputChars: outputJson.length,
+    });
+
+    console.log(outputJson);
     process.exit(success ? 0 : 1);
   }
 
@@ -745,17 +749,7 @@ async function main() {
     }
   }
 
-  logRun(db, {
-    siteId: site.id,
-    params,
-    success,
-    resultCount: outcome.jobs.length,
-    claimedCount: outcome.claimedCount,
-    timedOut: outcome.timedOut,
-    durationMs: Date.now() - startedAt,
-  });
-
-  console.log(JSON.stringify({
+  const output = {
     success,
     documented: true,
     timedOut: outcome.timedOut,
@@ -767,7 +761,21 @@ async function main() {
     jobs: outcome.jobs,
     handoffCaptures: outcome.captures,
     sessionUsed: sessionOpt ? sessionName : null,
-  }));
+  };
+  const outputJson = JSON.stringify(output);
+
+  logRun(db, {
+    siteId: site.id,
+    params,
+    success,
+    resultCount: outcome.jobs.length,
+    claimedCount: outcome.claimedCount,
+    timedOut: outcome.timedOut,
+    durationMs: Date.now() - startedAt,
+    outputChars: outputJson.length,
+  });
+
+  console.log(outputJson);
   process.exit(success ? 0 : 1);
 }
 

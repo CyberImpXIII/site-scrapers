@@ -14,6 +14,7 @@
 //   node query.js expand generic:<name>                       # same, for a generic_actions library entry
 //   node query.js generic-actions                             # list the generic_actions library (name/description/action_type, no steps)
 //   node query.js generic-action <name>                       # one generic action, full detail including steps
+//   node query.js efficiency                                  # real output-size history per recipe (avg/min/max chars + rough est. tokens)
 //
 // #page_type ('#listing' | '#article' | '#action') picks which recipe when a
 // hostname has more than one; omitting it defaults to 'listing'. A hostname
@@ -33,6 +34,7 @@ const {
   getSite,
   getFields,
   getRuns,
+  getEfficiencyStats,
   parseSiteArg,
   listActionTypes,
   listGenericActions,
@@ -152,6 +154,11 @@ function main() {
     return;
   }
 
+  if (cmd === 'efficiency') {
+    console.log(JSON.stringify(getEfficiencyStats(db), null, 2));
+    return;
+  }
+
   if (cmd === 'runs') {
     if (!arg) {
       console.log(JSON.stringify({ error: 'Usage: node query.js runs <hostname>[#page_type[:recipe_name]] [limit]' }));
@@ -169,7 +176,7 @@ function main() {
   }
 
   console.log(JSON.stringify({
-    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name>`,
+    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name> | efficiency`,
   }));
   process.exit(1);
 }

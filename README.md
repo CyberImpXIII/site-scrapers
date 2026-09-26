@@ -418,6 +418,46 @@ jobs) can add 20K+ chars if it finishes loading before extraction runs,
 which is why the recipe uses `content_stop_text` to truncate before it
 rather than relying on a fixed wait time.
 
+**Handoff-based actions (login, etc.) save tokens for a third, different
+reason again — and it isn't "avoid screenshots," since a human still has to
+click and type either way.** The win is that *waiting is free*:
+`resume_selector`/`resume_url_includes` block inside the detached Puppeteer
+process, not inside the calling agent's own tool-call loop, so however long
+the human takes costs the agent nothing beyond the flat cost of kicking the
+run off and reading back a small JSON result. Measured on the actual
+`linkedin.com#action:login` handoff run in this project's own development
+history: the calling agent's tool-call cost was one `AskUserQuestion`, two
+short text messages, one call to start the run in the background, and one
+call to read back a ~200-byte result — zero screenshots, zero DOM reads,
+regardless of the 85 seconds the person spent actually logging in. The
+interactive-browser-tools equivalent — even never touching the password
+itself — would need repeated `screenshot`/`read_page` calls just to notice
+when the person had finished, and screenshots are (per the numbers above)
+the single most expensive line item; that gap holds whether the human takes
+10 seconds or 10 minutes. This is a structural claim about tool-call shape,
+not a benchmarked one — there's no automated way to test "how many tool
+calls would the interactive equivalent have taken," since that's a fact
+about the calling agent's own behavior, not something engine.js can observe.
+
+**What *is* automatically testable: that output actually stays small and
+structured, rather than silently regressing toward a raw dump.**
+`scrape_runs.output_chars` logs the real, final stdout size of every run —
+turning "what does calling this recipe cost to read" into an ongoing,
+queryable number instead of a one-time claim frozen in this file. Query it
+with `node query.js efficiency` (avg/min/max chars + a rough chars÷4 token
+estimate, per recipe, from real run history). `test/efficiency.test.js` (run
+with `node --test test/efficiency.test.js`, same Node as `scrape.sh`) is a
+real regression suite against a local fixture server (deterministic, no live
+site dependency): it asserts a listing recipe's output stays well under the
+raw page's own size, that `--raw` actually produces more output than the
+default (catching it silently becoming a no-op), that the `--raw` size
+ratio stays in a sane range echoing the "roughly doubles" claim above rather
+than drifting wildly, and that `output_chars` actually gets logged. One real
+bug surfaced writing these: `execFileSync` (synchronous) blocks the whole
+process it runs in — including a same-process fixture HTTP server's ability
+to ever respond — so the first version of this suite deadlocked every test
+at exactly Puppeteer's 30s navigation timeout; switched to async `execFile`.
+
 ## Determinism notes
 
 - `scrape_runs` gives real reliability data over time (e.g. "3/3 recent runs

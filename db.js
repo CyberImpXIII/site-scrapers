@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
   timed_out INTEGER NOT NULL DEFAULT 0,
   duration_ms INTEGER,
   error TEXT,
+  output_chars INTEGER,          -- length of the final JSON printed to stdout -- the real, ongoing "what does calling this recipe actually cost to read" metric, vs a one-time-measured claim
   ran_at TEXT NOT NULL
 );
 `;
@@ -188,6 +189,13 @@ function migrateCardSelectorColumn(db) {
   db.exec('ALTER TABLE sites ADD COLUMN card_selector TEXT');
 }
 
+// Old DBs predate output_chars on scrape_runs. Plain ADD COLUMN.
+function migrateOutputCharsColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(scrape_runs)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'output_chars')) return;
+  db.exec('ALTER TABLE scrape_runs ADD COLUMN output_chars INTEGER');
+}
+
 function openDb() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
@@ -196,6 +204,7 @@ function openDb() {
   migrateRecipeNameColumn(db);
   migrateActionTypeColumn(db);
   migrateCardSelectorColumn(db);
+  migrateOutputCharsColumn(db);
   seedActionTypes(db);
   return db;
 }
@@ -364,8 +373,8 @@ function insertField(db, siteId, f, order) {
 
 function logRun(db, run) {
   db.prepare(
-    `INSERT INTO scrape_runs (site_id, params_json, success, result_count, claimed_count, timed_out, duration_ms, error, ran_at)
-     VALUES (?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO scrape_runs (site_id, params_json, success, result_count, claimed_count, timed_out, duration_ms, error, output_chars, ran_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
   ).run(
     run.siteId ?? null,
     JSON.stringify(run.params ?? {}),
@@ -375,6 +384,7 @@ function logRun(db, run) {
     run.timedOut ? 1 : 0,
     run.durationMs ?? null,
     run.error ?? null,
+    run.outputChars ?? null,
     new Date().toISOString()
   );
 }
@@ -383,6 +393,32 @@ function getRuns(db, siteId, limit = 10) {
   return db
     .prepare('SELECT * FROM scrape_runs WHERE site_id = ? ORDER BY id DESC LIMIT ?')
     .all(siteId, limit);
+}
+
+// Per-recipe output-size summary from real run history — chars/4 is a
+// standard rough token-estimate heuristic (not exact; genuinely varies by
+// content), good enough to turn "how much does calling this recipe cost"
+// into an ongoing, queryable number instead of a one-time claim.
+function getEfficiencyStats(db) {
+  return db
+    .prepare(
+      `SELECT s.hostname, s.page_type, s.recipe_name,
+         COUNT(*) AS runCount,
+         AVG(r.output_chars) AS avgOutputChars,
+         MIN(r.output_chars) AS minOutputChars,
+         MAX(r.output_chars) AS maxOutputChars
+       FROM scrape_runs r
+       JOIN sites s ON s.id = r.site_id
+       WHERE r.output_chars IS NOT NULL
+       GROUP BY s.id
+       ORDER BY s.hostname, s.page_type, s.recipe_name`
+    )
+    .all()
+    .map(row => ({
+      ...row,
+      avgOutputChars: Math.round(row.avgOutputChars),
+      avgEstTokens: Math.round(row.avgOutputChars / 4),
+    }));
 }
 
 module.exports = {
@@ -394,6 +430,7 @@ module.exports = {
   insertField,
   logRun,
   getRuns,
+  getEfficiencyStats,
   parseSiteArg,
   listActionTypes,
   getActionType,
