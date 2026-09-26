@@ -180,13 +180,6 @@ appeared", which all look identical in the final frame alone. Window size is
 (default 2000); it defaults to OFF on headed/handoff runs, where a person is
 already watching and the frames would capture their own interaction.
 
-**Changing an existing recipe is not additive** — it bumps that recipe's
-version, so two agents doing it at once produces conflicting history. Check
-for a primary context first (see "Check for a primary context before
-changing anything that exists" in `../CLAUDE.md`) and queue the change with
-whoever owns it. Registering a *new* recipe or generic action needs no
-coordination.
-
 **Recipes are versioned — use that instead of guessing what changed.** Every
 `register.js` call that actually alters a recipe snapshots it as a new minor
 (`v1.3`); an unchanged re-register records nothing. When a working recipe
@@ -218,5 +211,56 @@ every run logs its output size (`scrape_runs.output_chars`) — check
 memory. `npm test` (or `./test.sh` — a bare `node --test` picks up the v16 in
 PATH and fails) runs the regression suite: output stays small/structured, and
 failures actually leave diagnostics behind.
+
+## Check for a primary context before changing anything that exists
+
+More than one agent may be working here at once. Two agents editing the same
+file or the same recipe will clobber each other, and each separately running
+`git status`, diffing and committing burns tokens re-deriving what another
+already knows.
+
+**Before modifying existing code or an existing recipe — anything already
+committed or already registered —** work out whether another session owns
+that work:
+
+- Run `ListAgents` to see other Claude sessions on this machine. One whose
+  name points at what you're about to touch is a candidate owner.
+- Check `git status` and `git log -1`. Uncommitted changes you didn't make,
+  or a recent commit you didn't write, mean someone else is mid-task.
+
+If a primary context exists, **do not edit in parallel — queue the change
+with it.** Use `SendMessage` to describe the change (file and function, or
+which recipe and what should differ, and why) and let the primary apply it.
+Wait for its reply rather than editing anyway. If it's unresponsive and the
+change is urgent, say so to Jacob and ask before proceeding.
+
+If no other session is working the same area, you are the primary. Proceed
+normally.
+
+**Additive work needs none of this.** New files, new recipes and new generic
+actions overwrite nothing and can proceed concurrently. The DB handles
+concurrent writes safely (WAL + busy timeout), so registering a recipe while
+another agent runs a scrape is fine. Editing an *existing* recipe is not
+additive — it bumps that recipe's version, and two agents doing it at once
+produces conflicting version history.
+
+## Push code changes to git
+
+Whenever you change code here, commit and push it to `origin` right away
+(branch `master`). Don't wait to be asked.
+
+**Only the primary context commits.** If another session owns the work, hand
+it your changes instead of running your own commit/push cycle — one agent
+staging, diffing, writing a message and pushing is enough, and duplicating
+that is wasted tokens and a likely conflict.
+
+- Check `git status` before committing, and stage only what you actually
+  changed. If the working tree holds someone else's in-progress work, commit
+  your own paths explicitly rather than `git add -A`.
+- Never commit secrets or captured data: `data/.captures/`, `data/.sessions/`,
+  `data/scrapers.db`, `data/.debug/`. All gitignored; keep it that way.
+- One commit per logical change, with a message saying what changed and why.
+- If a push fails (auth, conflict, diverged branch), stop and tell Jacob.
+  Don't force-push or rewrite history.
 
 Full details: README.md.
