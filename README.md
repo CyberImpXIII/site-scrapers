@@ -392,6 +392,64 @@ clicked by script), `collect` (listing only), `scroll_bottom`, and `wait`
 with a `{{param}}` `ms` plus `default_ms`. `run_generic_action` also takes
 `with`, which fills that library entry's `{{placeholders}}` for one use.
 
+## Diagnosing a recipe
+
+Every other step type exists to *change* the page. That left no way to ask
+"what is actually here?" — the question you have while building a recipe —
+so the only answer was to re-run the whole sequence and squint at a
+screenshot.
+
+**Probes report and never act.** A `probe` step evaluates the page, appends
+a result to the output JSON's `diagnostics` array, and cannot fail the run:
+`runProbe` swallows its own errors into an `error` field, because
+diagnostics run when things are already broken, often against a half-dead
+page. Four kinds:
+
+| kind | answers |
+|---|---|
+| `blockers` | CAPTCHA, bot-check, login wall, consent overlay, scroll lock, near-empty body |
+| `repeated_structure` | which containers hold repeated cards, with counts, link counts and the repeated line that makes a good `card_anchor_text` |
+| `forms` | field selectors, types, labels, required — for action recipes |
+| `selectors` | for each candidate selector: match count, visible count, text sample |
+
+Four generic actions wrap them: **`diagnose_page`** (all three page
+sweeps), **`probe_card_candidates`**, **`diagnose_blockers`**, and
+**`probe_selectors`** (takes `with: {"selectors": "a, b, c"}`).
+
+```json
+{"action":"run_generic_action","ref":"probe_card_candidates"}
+```
+
+`repeated_structure` is the one that earns its keep: getting
+`card_selector` / `card_anchor_text` wrong is the most common reason a new
+listing recipe returns zero results. Against a page of six job cards it
+reports `childSelector: "div.job-card"`, `childrenWithLinks: 6` and
+`sharedLine: "View job"` — that last being exactly the `card_anchor_text`
+you want, and it ignores a two-link `<nav>` because the average text length
+is below threshold. Prefer `sharedLine` over `childSelector`: auto-generated
+class names (Tailwind JIT and similar) make selectors brittle.
+
+**Probes never report a form field's value.** A page mid-login can hold a
+typed password, and diagnostics are written to disk and read back into a
+transcript. `hasValue: true` is reported; the value never is.
+
+### Failures diagnose themselves
+
+The sweep (`blockers`, `repeated_structure`, `forms`) runs **automatically
+on any failed run**, before teardown, and is written to the capture's
+`diagnostics.json`. No probe needs to be in the recipe.
+
+That is the whole point: a failure that explains itself costs one run, where
+re-running with probes added costs two — and the second run may not
+reproduce it at all (a transient block, a page that loads fine next time).
+In practice a run that dies on `waitForSelector #does-not-exist` now leaves
+behind "not blocked, and here are 6 `div.job-card` elements whose shared
+line is `View job`" — the failing run tells you what the selector should
+have been.
+
+Reach for `diagnose_page` explicitly only when the run *isn't* failing — a
+recipe that "works" but returns the wrong thing.
+
 ## Failure diagnostics
 
 ### Where it failed

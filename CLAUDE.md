@@ -164,6 +164,20 @@ instead of `card_anchor_text`; for cards grouped under a shared header (a
 company name above its jobs), the `ancestor_first_line` field kind reads that
 header. Details in README.md.
 
+**Don't guess a selector — probe for it.** `probe` steps report what's on
+the page and never change it or fail the run; results land in the output
+JSON's `diagnostics`. Four generic actions wrap them: `diagnose_page` (all
+sweeps), `probe_card_candidates` (proposes `card_selector` /
+`card_anchor_text`, including the repeated line across cards — the most
+common thing to get wrong), `diagnose_blockers` (CAPTCHA / bot-check /
+login wall / consent overlay / empty body, which all look identical in a
+bare timeout), and `probe_selectors` (test candidates in one run via
+`with: {"selectors": "a, b, c"}`). **This sweep already runs automatically
+on every failed run** and is written to the capture's `diagnostics.json` —
+read that before re-running anything. Use `diagnose_page` explicitly only
+when a run succeeds but returns the wrong thing. Probes never report a form
+field's value, only that one exists.
+
 **A step failure says which step.** When a `ui_steps` sequence throws, the
 output JSON and the capture's `meta.json` both carry `failedStep`:
 `{index, of, path, action, selector, hasText, from}`. Read it before

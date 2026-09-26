@@ -58,6 +58,7 @@ const fs = require('fs');
 const path = require('path');
 const { openDb, getSite, getFields, logRun, parseSiteArg, getCurrentVersion } = require('./db');
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
+const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
@@ -174,8 +175,9 @@ function numericParam(value, params, fallback) {
 // extracts the current page's cards into the run's accumulator.
 async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) {
   const captures = [];
+  const diagnostics = [];
   try {
-    await runStepList(page, steps, params, siteMeta, hooks, depth, captures);
+    await runStepList(page, steps, params, siteMeta, hooks, depth, captures, diagnostics);
   } catch (e) {
     if (!(e instanceof StopRepeat) || depth > 0) {
       // Attach where we got to, so the failure travels with its location
@@ -185,7 +187,7 @@ async function runUiSteps(page, steps, params, siteMeta, hooks = {}, depth = 0) 
       throw e;
     }
   }
-  return { captures };
+  return { captures, diagnostics };
 }
 
 // Describes a step precisely enough to act on without dumping the whole
@@ -210,7 +212,7 @@ function describeStep(step, index, total, path) {
   };
 }
 
-async function runStepList(page, steps, params, siteMeta, hooks, depth, captures, trail = []) {
+async function runStepList(page, steps, params, siteMeta, hooks, depth, captures, diagnostics, trail = []) {
   for (const [index, step] of steps.entries()) {
     // Recorded BEFORE the step runs, so whatever throws leaves the position
     // behind. Without this a failure is just "selector timeout" and the
@@ -342,11 +344,18 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         }
         break;
       }
+      case 'probe': {
+        // Reports, never acts. runProbe never throws, so a probe can't be
+        // the reason a run fails -- diagnostics exist for when things are
+        // already broken.
+        diagnostics.push(await runProbe(page, step));
+        break;
+      }
       case 'repeat': {
         const times = Math.min(Math.max(Math.floor(numericParam(step.times, params, 0)), 0), MAX_REPEAT);
         for (let i = 0; i < times; i++) {
           try {
-            await runStepList(page, step.steps || [], params, siteMeta, hooks, depth + 1, captures, [...path, `repeat#${i}`]);
+            await runStepList(page, step.steps || [], params, siteMeta, hooks, depth + 1, captures, diagnostics, [...path, `repeat#${i}`]);
           } catch (e) {
             if (e instanceof StopRepeat) break;
             throw e;
@@ -671,12 +680,13 @@ async function main() {
     try {
       articleOutcome = await withPage(async (page, diagnostics) => {
         let captures = [];
+        let probeResults = [];
         if (site.nav_method === 'direct_url') {
           const url = substitute(site.nav_template, params);
           if (!url) throw new Error(`Missing param for nav_template "${site.nav_template}" (expected e.g. {"url": "..."})`);
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         } else if (site.nav_method === 'ui_steps') {
-          ({ captures } = await runUiSteps(page, expandedSteps, params, siteMeta));
+          ({ captures, diagnostics: probeResults } = await runUiSteps(page, expandedSteps, params, siteMeta));
         } else {
           throw new Error(`Unsupported nav_method for page_type=${site.page_type}: ${site.nav_method}`);
         }
@@ -712,7 +722,7 @@ async function main() {
           debugDir = await captureFailureDiagnostics(page, siteMeta, { error: null, ...diagnostics });
         }
 
-        return { timedOut, record, blobLen, url: page.url(), captures, debugDir };
+        return { timedOut, record, blobLen, url: page.url(), captures, probeResults, debugDir };
       }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
@@ -730,6 +740,8 @@ async function main() {
       article: articleOutcome.record,
       // file path + captured KEY NAMES only — never the captured values.
       handoffCaptures: articleOutcome.captures,
+      // Only present when the recipe actually ran probe steps.
+      diagnostics: articleOutcome.probeResults?.length ? articleOutcome.probeResults : undefined,
       sessionUsed: sessionOpt ? sessionName : null,
       recipeVersion: versionLabel,
       debugDir: articleOutcome.debugDir ?? null,
@@ -790,11 +802,12 @@ async function main() {
       };
 
       let captures = [];
+      let probeResults = [];
       if (site.nav_method === 'url_param') {
         const url = buildUrl(site.nav_template, params);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       } else if (site.nav_method === 'ui_steps') {
-        ({ captures } = await runUiSteps(page, expandedSteps, params, siteMeta, hooks));
+        ({ captures, diagnostics: probeResults } = await runUiSteps(page, expandedSteps, params, siteMeta, hooks));
       } else {
         throw new Error(`Unknown nav_method: ${site.nav_method}`);
       }
@@ -809,6 +822,7 @@ async function main() {
       if (paginationSteps && !timedOut) {
         const more = await runUiSteps(page, paginationSteps, params, siteMeta, hooks);
         captures = captures.concat(more.captures);
+        probeResults = probeResults.concat(more.diagnostics);
       }
 
       // Final page, then de-duplicate across pages (by href when the recipe
@@ -838,7 +852,7 @@ async function main() {
         debugDir = await captureFailureDiagnostics(page, siteMeta, { error: null, ...diagnostics });
       }
 
-      return { timedOut, jobs, claimedCount, url: page.url(), captures, pagesVisited: pagesCollected + 1, debugDir };
+      return { timedOut, jobs, claimedCount, url: page.url(), captures, probeResults, pagesVisited: pagesCollected + 1, debugDir };
     }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
@@ -869,6 +883,7 @@ async function main() {
     pagesVisited: outcome.pagesVisited,
     jobs: outcome.jobs,
     handoffCaptures: outcome.captures,
+    diagnostics: outcome.probeResults?.length ? outcome.probeResults : undefined,
     sessionUsed: sessionOpt ? sessionName : null,
     recipeVersion: versionLabel,
     debugDir: outcome.debugDir ?? null,
