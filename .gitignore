@@ -8,3 +8,10 @@ data/.captures/
 # session cookie jars -- persisted login/session state per (hostname,
 # sessionName). Never committed.
 data/.sessions/
+
+# the recipe DB itself -- was tracked in earlier commits (still present in
+# git history), untracked going forward so job-search queries/URLs and
+# recipe content stop accumulating in a public commit history. Each
+# environment keeps/builds its own local copy; openDb() creates it fresh if
+# missing.
+data/scrapers.db
