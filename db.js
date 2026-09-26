@@ -537,20 +537,30 @@ function getVersion(db, siteId, major, minor) {
     .get(siteId, major, minor);
 }
 
-// Keeps every stable version plus the most recent `keep` non-stable ones.
-// Iterating on a broken site is supposed to be cheap and disposable; only
-// the versions someone deliberately blessed are permanent.
+// Collects old scaffolding: keeps the most recent `keep` of it and drops
+// the rest. Iterating on a broken site is supposed to be cheap and
+// disposable.
 //
-// `stable = 0` in the WHERE clause is the guarantee, not an optimization: a
-// promoted version must be unreachable by pruning no matter how much churn
-// follows, or iterating freely stops being safe. Nothing anywhere sets
-// stable back to 0, so once blessed a version stays blessed.
+// MAJOR VERSIONS ARE NEVER PRUNED. Both exclusions in the WHERE clause are
+// guarantees rather than optimizations:
+//   stable = 0  — a promoted version is untouchable no matter how much
+//                 churn follows, and nothing anywhere sets stable back to
+//                 0, so once blessed a version stays blessed.
+//   minor != 0  — every vN.0 survives too, including a first version that
+//                 has never been promoted. Without this, "major versions
+//                 are permanent" would hold only for promoted ones, which
+//                 is not what the phrase means to a reader.
+// Only vN.<non-zero> is ever collected.
 function pruneVersions(db, siteId, keep = 5) {
   const doomed = db
     .prepare(
       `SELECT id FROM recipe_versions
-        WHERE site_id = ? AND stable = 0
-          AND id NOT IN (SELECT id FROM recipe_versions WHERE site_id = ? AND stable = 0 ORDER BY major DESC, minor DESC LIMIT ?)`
+        WHERE site_id = ? AND stable = 0 AND minor != 0
+          AND id NOT IN (
+            SELECT id FROM recipe_versions
+             WHERE site_id = ? AND stable = 0 AND minor != 0
+             ORDER BY major DESC, minor DESC LIMIT ?
+          )`
     )
     .all(siteId, siteId, keep);
   if (!doomed.length) return 0;
@@ -585,21 +595,35 @@ function snapshotVersionIfChanged(db, siteId, { note } = {}) {
   return getCurrentVersion(db, siteId);
 }
 
-// Marks the current version known-good and opens the next major for
-// further iteration, so stable generations read v1.0, v2.0, v3.0 and the
-// scaffolding between them is whatever minors were needed to get there.
+// Publishes the current definition AS the next major: promoting v1.2 writes
+// its definition to v2.0 and marks THAT stable. Iteration then continues at
+// v2.1, v2.2 ... until the next promote closes the generation at v3.0.
+//
+// The major number is therefore the checkpoint itself, which is the only
+// arrangement where "vN.0" means what a reader expects. An earlier version
+// of this instead marked the CURRENT version stable and opened vN+1.0 as a
+// disposable copy — so the permanent definition sat on an arbitrary minor
+// (v1.2) while the thing that looked like a major version was scaffolding.
+// Exactly backwards, and it made "never drop a major version" false.
 function promoteVersion(db, siteId, { note } = {}) {
   const current = getCurrentVersion(db, siteId);
   if (!current) return null;
-  db.prepare('UPDATE recipe_versions SET stable = 1, note = COALESCE(?, note) WHERE id = ?').run(note ?? null, current.id);
-  const promoted = db.prepare('SELECT * FROM recipe_versions WHERE id = ?').get(current.id);
-  // Re-open at the next major so later edits don't accumulate under a
-  // version number someone has already blessed.
+  // Already blessed and unedited since; promoting again would just
+  // duplicate it under a higher number.
+  if (current.stable) return current;
+
+  const major = current.major + 1;
   db.prepare(
-    'INSERT INTO recipe_versions (site_id, major, minor, definition, stable, note, created_at) VALUES (?,?,?,?,0,?,?)'
-  ).run(siteId, current.major + 1, 0, current.definition, `carried forward from v${current.major}.${current.minor}`, new Date().toISOString());
+    'INSERT INTO recipe_versions (site_id, major, minor, definition, stable, note, created_at) VALUES (?,?,0,?,1,?,?)'
+  ).run(
+    siteId,
+    major,
+    current.definition,
+    note ?? `promoted from v${current.major}.${current.minor}`,
+    new Date().toISOString()
+  );
   pruneVersions(db, siteId);
-  return promoted;
+  return getVersion(db, siteId, major, 0);
 }
 
 // Writes a stored definition back over the live recipe. This is the other

@@ -16,7 +16,7 @@
 //   node query.js generic-action <name>                       # one generic action, full detail including steps
 //   node query.js versions <hostname>[#page_type[:recipe_name]] # recipe version history (v<major>.<minor>, which are stable, per-version run record)
 //   node query.js diff <hostname>[#...] [vA] [vB]             # what changed between two versions (defaults: last stable vs current)
-//   node query.js promote <hostname>[#...] [note]             # mark the current version stable and open the next major to iterate on
+//   node query.js promote <hostname>[#...] [note]             # publish the current definition as the next major (a permanent, never-pruned vN.0)
 //   node query.js health [recentN]                            # observed reliability per recipe vs its declared status (default last 10 runs)
 //   node query.js efficiency                                  # real output-size history per recipe (avg/min/max chars + rough est. tokens)
 //   node query.js debug-captures                              # failed-run diagnostics (screenshot/DOM/console/network dirs), newest last
@@ -328,7 +328,8 @@ function main() {
       promoted: `v${promoted.major}.${promoted.minor}`,
       stable: true,
       note: promoted.note,
-      nowIteratingOn: `v${promoted.major + 1}.0`,
+      permanent: 'a vN.0 is never pruned; further edits continue at ' +
+        `v${promoted.major}.1`,
     }, null, 2));
     return;
   }

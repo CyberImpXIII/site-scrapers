@@ -188,11 +188,12 @@ with no arguments it compares the last stable version against the current
 one, which is exactly "what changed since it worked". `node query.js
 versions <target>` lists the history with each version's real success rate,
 and runs are tagged with the version that produced them, so a `debugDir`
-capture is tied to a specific definition. Iterate freely: minors are
-auto-pruned (last 5 non-stable kept). When a fix is confirmed against the
-live site, `node query.js promote <target> '<what you verified>'` marks it
-stable and opens the next major — do this rather than leaving a good version
-indistinguishable from the scaffolding. `node query.js restore <target>
+capture is tied to a specific definition. Iterate freely: scaffolding minors
+are auto-pruned to the last 5, and a `vN.0` is never pruned. When a fix is
+confirmed against the live site, `node query.js promote <target> '<what you
+verified>'` publishes it AS the next major — promoting v1.2 gives you a
+stable v2.0, and iteration continues at v2.1. Do this rather than leaving a
+good version indistinguishable from the scaffolding around it. `node query.js restore <target>
 v2.0` puts an old definition back if an edit made things worse. Details in
 README.md.
 

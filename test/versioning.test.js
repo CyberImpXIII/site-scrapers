@@ -115,43 +115,57 @@ test('a run is attributed to the version that produced it', () => {
   assert.equal(run.version_label, 'v1.2');
 });
 
-test('promote marks the current version stable and opens the next major', () => {
+test('promote publishes the blessed definition AS the next major', () => {
+  const before = getCurrentVersion(db, siteId);
+  assert.equal(`${before.major}.${before.minor}`, '1.2');
+
   const promoted = promoteVersion(db, siteId, { note: 'verified against the live site' });
-  assert.equal(`${promoted.major}.${promoted.minor}`, '1.2');
+  // The checkpoint lands ON the major, not on whatever minor happened to be
+  // current. "vN.0" has to mean the blessed version or the number is a lie.
+  assert.equal(`${promoted.major}.${promoted.minor}`, '2.0');
   assert.equal(promoted.stable, 1);
   assert.equal(promoted.note, 'verified against the live site');
-
-  const current = getCurrentVersion(db, siteId);
-  assert.equal(`${current.major}.${current.minor}`, '2.0', 'iteration continues on a fresh major');
-  assert.equal(current.stable, 0);
   assert.equal(
-    current.definition,
     promoted.definition,
-    'the new major starts as a copy of what was blessed, so promoting is not an edit'
+    before.definition,
+    'promoting publishes what you had, so it is a checkpoint and not an edit'
   );
 
-  const stable = getLastStableVersion(db, siteId);
-  assert.equal(stable.id, promoted.id);
+  // It is also now the head, so further edits continue at v2.1.
+  const current = getCurrentVersion(db, siteId);
+  assert.equal(current.id, promoted.id);
+  assert.equal(getLastStableVersion(db, siteId).id, promoted.id);
 });
 
-test('pruning discards scaffolding minors but never a stable version', () => {
+test('promoting again with nothing changed is a no-op', () => {
+  const stable = getLastStableVersion(db, siteId);
+  const again = promoteVersion(db, siteId);
+  assert.equal(again.id, stable.id, 'a second promote must not duplicate the checkpoint under a higher number');
+  assert.equal(listVersions(db, siteId).filter(v => v.stable).length, 1);
+});
+
+test('pruning collects scaffolding but never a major version', () => {
   // Churn out more non-stable minors than the keep window.
   for (let i = 0; i < 8; i++) register({ notes: `scaffolding iteration ${i}` });
 
   const keep = 3;
   pruneVersions(db, siteId, keep);
   const versions = listVersions(db, siteId);
-  const stable = versions.filter(v => v.stable);
-  const scaffolding = versions.filter(v => !v.stable);
+  const label = v => `v${v.major}.${v.minor}`;
 
-  assert.equal(stable.length, 1, 'the promoted version must survive pruning');
-  assert.equal(`${stable[0].major}.${stable[0].minor}`, '1.2');
+  // Every vN.0 survives -- the promoted v2.0 because it is stable, and v1.0
+  // because it is a major version even though it was never promoted.
+  const majors = versions.filter(v => v.minor === 0).map(label);
+  assert.deepEqual(majors, ['v1.0', 'v2.0'], 'no vN.0 may ever be collected');
+  assert.equal(versions.find(v => label(v) === 'v2.0').stable, 1);
+
+  const scaffolding = versions.filter(v => v.minor !== 0);
   assert.equal(scaffolding.length, keep, `expected the keep window to cap scaffolding at ${keep}`);
 
   // What survives is the most RECENT scaffolding, not an arbitrary subset.
   const newest = getCurrentVersion(db, siteId);
   assert.ok(
-    scaffolding.some(v => v.major === newest.major && v.minor === newest.minor),
+    versions.some(v => v.major === newest.major && v.minor === newest.minor),
     'the current version must always survive pruning'
   );
 });
@@ -192,6 +206,7 @@ test('no amount of churn can drop a promoted version', () => {
     for (let gen = 1; gen <= 3; gen++) {
       for (let i = 0; i < 4; i++) reg(`gen${gen} iteration ${i}`);
       const p = promoteVersion(db, churnId, { note: `gen ${gen} blessed` });
+      assert.equal(p.minor, 0, 'a promoted version is always a vN.0');
       blessed.push({ major: p.major, minor: p.minor, definition: p.definition });
     }
     // Far more non-stable versions than the keep window, after the last promote.

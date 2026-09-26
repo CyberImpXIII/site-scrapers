@@ -306,10 +306,10 @@
 // new MINOR version (v1.0 -> v1.1), reported back as `version`. Registering
 // an identical definition records nothing, so re-running this to confirm a
 // recipe is safe and won't spam the history. Add "stable": true to also
-// promote — marking the version known-good and opening the next MAJOR to
-// iterate on. Only set it for a definition you have actually verified
-// against the live site, since promoting is what makes a version permanent
-// (non-stable minors are pruned to the most recent 5). To compare or roll
+// promote — publishing this definition AS the next MAJOR (v1.2 -> a stable
+// v2.0), reported back as `promotedStable`. Only set it for a definition
+// you have actually verified against the live site, since a vN.0 is
+// permanent while scaffolding minors are pruned to the most recent 5. To compare or roll
 // back, use `node query.js diff|restore|versions`. See README.md
 // "Recipe versions".
 
@@ -560,8 +560,8 @@ function main() {
   // recipe with no fields. Only records a version when the definition
   // actually changed, so a no-op re-register doesn't spam the history.
   const version = snapshotVersionIfChanged(db, siteId, { note: def.version_note });
-  // "stable": true says this definition is known-good: it pins the version
-  // against pruning and opens the next major for further iteration.
+  // "stable": true says this definition is known-good, so publish it as the
+  // next major -- a permanent vN.0 checkpoint, never reachable by pruning.
   const promoted = def.stable ? promoteVersion(db, siteId, { note: def.version_note }) : null;
 
   console.log(JSON.stringify({

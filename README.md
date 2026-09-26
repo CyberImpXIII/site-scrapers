@@ -453,14 +453,26 @@ Every registration answers that by snapshotting the recipe into
 
 Versions are `v<major>.<minor>`:
 
-- **Minor** — every `register.js` call whose definition actually differs
-  from the current version. These are the scaffolding of a troubleshooting
-  session: cheap, disposable, auto-pruned.
-- **Major** — a version you deliberately blessed with
-  `node query.js promote`. Promoting marks the current version `stable`
-  and opens the next major (carrying the same definition forward), so
-  stable generations read v1.0, v2.0, v3.0 and whatever minors it took to
-  get there sit between them.
+- **Major (`vN.0`)** — a checkpoint. `node query.js promote` publishes
+  whatever you currently have *as* the next major and marks it `stable`.
+  Promoting v1.2 produces **v2.0**, and iteration then continues at v2.1,
+  v2.2 … until the next promote closes the generation at v3.0.
+- **Minor (`vN.1`, `vN.2`, …)** — every `register.js` call whose definition
+  actually differs from the current version. These are the scaffolding of a
+  troubleshooting session: cheap, disposable, auto-pruned.
+
+**Major versions are never pruned** — that is the whole bargain. It holds
+for `vN.0` unconditionally, including a first version you never got around
+to promoting, not merely for blessed ones. Only `vN.<non-zero>` is ever
+collected.
+
+```
+v1.0  STABLE   baseline
+v1.1           iterate
+v1.2           iterate
+v2.0  STABLE   promote -- the checkpoint lands ON the major
+v2.1           iterate
+```
 
 A re-register that changes nothing records nothing, so re-running
 `register.js` to confirm a recipe is safe and doesn't spam the history.
@@ -492,21 +504,17 @@ is tied to the exact definition that produced it, and
 `node query.js versions` shows each version's success record, so "which one
 was good" is evidence rather than memory.
 
-**Pruning never touches a promoted version.** That is the bargain that makes
-iterating freely safe: scaffolding is disposable *because* blessing a
-version makes it permanent. The prune query only ever considers
-`stable = 0` rows, so no amount of churn can reach a stable one — three
-generations plus ten further edits still leaves v1.3, v2.4 and v3.4 intact
+**Pruning** keeps the most recent 5 scaffolding minors and drops older ones.
+It can never reach a `vN.0` or a stable version — three generations plus ten
+further edits still leaves v2.0, v3.0 and v4.0 intact
 (`test/versioning.test.js`, "no amount of churn can drop a promoted
-version"). What it does collect is the most recent 5 non-stable versions,
-dropping older scaffolding.
+version").
 
-Note this is a rolling window, *not* a consequence of promoting: the minors
-that led to v1.3 are still there right after you promote it, and age out
-later as new edits push them past the window. The one exception worth
-knowing is that the freshly opened v<N>.0 head is itself non-stable and so
-prunable — but it is always a byte-identical copy of the stable version it
-carried forward, so nothing is lost when it goes.
+Note it's a rolling window, *not* a consequence of promoting: the minors
+that led to v2.0 are still there immediately after you promote, and age out
+later as new edits push them past the window. So right after a promote you
+can still diff the path that got you there; a few sessions later you can't.
+If you want a specific intermediate step kept permanently, promote it.
 
 Pruning clears the pruned version's `version_id` from its runs but never the
 `version_label` — you lose the ability to diff that definition, never the
