@@ -297,24 +297,44 @@ Collected pages and the final page are merged and de-duplicated by `href`
 ### Overlays and optional steps
 
 A cookie/consent banner or interstitial modal covering the page will break
-whatever step comes next. Three generic actions handle it, and which one a
-recipe references *is* the choice of what consent signal to send:
+whatever step comes next. Handling escalates through a **ladder**, cheapest
+and least-signalling rung first:
 
-- **`dismiss_overlay`** (default) — clicks Reject / Decline / Necessary-only
-  / No-thanks / Dismiss / Got-it / aria Close. Deliberately does **not**
-  match Accept or Agree: auto-accepting across every site is the least
-  privacy-preserving option and fills the saved session jar with that site's
-  tracking cookies. A banner offering *only* Accept is left alone.
-- **`dismiss_overlay_accept`** — opt-in; will click Accept as a last resort.
-  It runs a full decline pass first, as a separate earlier step, so
-  preferring to decline is guaranteed rather than depending on which button
-  happens to come first in the DOM (a selector list matches in DOM order,
-  not in the order the selectors are written). Verified: with Accept placed
-  *before* Reject in the markup, it still clicks Reject.
-- **`remove_overlay`** — deletes the overlay from the DOM instead of
-  answering it. No Accept, no Reject, no consent signal of either kind, which
-  is the most privacy-preserving of the three and the right call when the
-  banner is merely in the way rather than gating content.
+1. **Skip it** — remove the overlay container from the DOM. No consent
+   signal of any kind, no click, no waiting on a selector timeout.
+2. **Deny it** — if a banner is still there (its container wasn't one the
+   removal list recognizes), click Reject / Decline / Necessary-only /
+   No-thanks / Dismiss / Got-it / aria Close.
+3. **Accept it** — opt-in only, and only if it still won't go.
+
+The rungs compose with no conditional logic, because each is already a
+no-op when nothing matches: if the removal clears the banner, the later
+click finds nothing to click. Three generic actions expose this, and which
+one a recipe references *is* the choice of what consent signal to send:
+
+- **`dismiss_overlay`** (default) — rungs 1→2. Never clicks Accept/Agree:
+  auto-accepting across every site is the least privacy-preserving option
+  and fills the saved session jar with that site's tracking cookies. A
+  banner offering *only* Accept is left alone.
+- **`dismiss_overlay_accept`** — rungs 1→2→3. The decline pass is a separate
+  earlier step rather than one combined selector list, because a selector
+  list matches in DOM order, not in the order the selectors are written — a
+  combined list would accept or reject depending on the site's markup order.
+  Verified with Accept placed *before* Reject: it still clicks Reject.
+- **`remove_overlay`** — rung 1 only, guaranteed never to click anything,
+  for when a stray click might navigate or submit. `dismiss_overlay` already
+  tries this same removal first, so prefer that unless you need the no-click
+  guarantee.
+
+Verified across all nine combinations of {recognized container, unknown
+container with a Reject, unknown container with only Accept} × the three
+actions.
+
+One tradeoff worth knowing about skip-first: clicking Decline often writes
+the site's "rejected" cookie, which — with session persistence on — can stop
+the banner reappearing on later runs, whereas removing the node writes
+nothing and pays the cost every run. Removal is still the default because it
+sends no consent signal either way and is faster when it works.
 
 All three are safely optional — nothing fails when there's no overlay. That
 relies on a pattern worth knowing: a bare `click` with `stop_if_missing`

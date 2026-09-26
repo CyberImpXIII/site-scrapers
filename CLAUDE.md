@@ -132,17 +132,18 @@ specific `run_action` when the steps genuinely don't depend on the site
 to a specific site's recipe is still the right call when you're reusing
 something that recipe already figured out for that one site.
 
-**Cookie/consent overlays**: three generic actions, and which one a recipe
-references *is* the consent decision — pick deliberately, don't default to
-whatever clears the banner fastest. `dismiss_overlay` (start here) clicks only
-Reject/Decline/Close and never Accept; `remove_overlay` deletes the overlay
-from the DOM and sends no signal either way (most privacy-preserving — good
-when the banner is merely in the way); `dismiss_overlay_accept` is opt-in and
-will click Accept as a last resort, which sets that site's tracking cookies
-into the saved session jar, so reach for it only when a site genuinely gates
-content behind accepting. To make any step optional (act if present, carry on
-if not), wrap it in `repeat` with `times: 1` — a bare `stop_if_missing` click
-ends the whole remaining step list at top level.
+**Cookie/consent overlays** escalate through a ladder — **skip, then deny,
+then (opt-in) accept**: first remove the overlay from the DOM (no consent
+signal at all, no click), then if a banner survives because its container
+wasn't recognized, click Reject/Decline/Close, and only as a last resort
+Accept. `dismiss_overlay` (start here) does skip→deny and never accepts;
+`dismiss_overlay_accept` adds the accept rung, which sets that site's
+tracking cookies into the saved session jar, so use it only when a site
+genuinely gates content behind accepting; `remove_overlay` is skip-only,
+guaranteed never to click anything. Which one a recipe references *is* the
+consent decision — pick deliberately. To make any step optional (act if
+present, carry on if not), wrap it in `repeat` with `times: 1` — a bare
+`stop_if_missing` click ends the whole remaining step list at top level.
 
 **Listing recipes read page 1 only unless asked.** A recipe with
 `pagination_method: "steps"` takes `{"extra_pages": N}` to go further; without
