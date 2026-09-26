@@ -29,6 +29,7 @@ const {
   recipeDefinition,
   restoreVersion,
   deleteSite,
+  definitionHasPassingRun,
 } = require('../db');
 
 const HOSTNAME = '127.0.0.1';
@@ -302,4 +303,45 @@ test('recipeDefinition excludes bookkeeping columns', () => {
   for (const f of def.fields) {
     assert.ok(!('id' in f) && !('site_id' in f), 'field rows are compared by shape, not identity');
   }
+});
+
+// --- Verification-gated status --------------------------------------------
+// `status: "working"` used to be whatever the author typed. A parallel run
+// registered 16 recipes as working; four returned nothing at all. It is now
+// a fact that has to be earned by a run which extracted records.
+
+test('status is not part of the definition, so recording a verdict cannot invalidate it', () => {
+  // This ordering bug was real: verify.js ran a recipe, recorded the passing
+  // run, then set the status -- and if status were versioned, that write
+  // created a new definition whose track record was empty, so
+  // definitionHasPassingRun went false immediately after a successful verify.
+  const before = getCurrentVersion(db, siteId);
+  db.prepare('UPDATE sites SET status = ? WHERE id = ?').run('broken', siteId);
+  const after = snapshotVersionIfChanged(db, siteId);
+  assert.equal(after.id, before.id, 'a status change must not create a new version');
+  assert.ok(!('status' in recipeDefinition(db, siteId)), 'status is bookkeeping, not behaviour');
+  db.prepare('UPDATE sites SET status = ? WHERE id = ?').run('working', siteId);
+});
+
+test('definitionHasPassingRun tracks the definition, not the label', () => {
+  const v = getCurrentVersion(db, siteId);
+  db.prepare('DELETE FROM scrape_runs WHERE site_id = ?').run(siteId);
+  assert.equal(definitionHasPassingRun(db, siteId), false, 'no runs yet');
+
+  // A run that extracted nothing is not evidence of anything.
+  logRun(db, { siteId, params: {}, success: false, resultCount: 0, versionId: v.id, versionLabel: `v${v.major}.${v.minor}` });
+  assert.equal(definitionHasPassingRun(db, siteId), false, 'a zero-record run must not count');
+
+  logRun(db, { siteId, params: {}, success: true, resultCount: 12, versionId: v.id, versionLabel: `v${v.major}.${v.minor}` });
+  assert.equal(definitionHasPassingRun(db, siteId), true);
+
+  // Promotion copies the definition unchanged, so the blessed version
+  // inherits the run that earned it rather than starting over.
+  const promoted = promoteVersion(db, siteId, { note: 'verified' });
+  assert.equal(promoted.minor, 0);
+  assert.equal(definitionHasPassingRun(db, siteId), true, 'promoting must not discard the evidence');
+
+  // A real edit does invalidate it — that is the point.
+  register({ notes: 'a genuine behavioural edit after verification' });
+  assert.equal(definitionHasPassingRun(db, siteId), false, 'an edited recipe needs re-verifying');
 });

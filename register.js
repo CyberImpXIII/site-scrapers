@@ -325,6 +325,8 @@ const {
   getGenericAction,
   snapshotVersionIfChanged,
   promoteVersion,
+  definitionHasPassingRun,
+  getSite,
 } = require('./db');
 const { checkUnresolvedRefs } = require('./lib/composeActions');
 
@@ -491,6 +493,31 @@ function main() {
   }
 
   const db = openDb();
+
+  // "working" is a claim about reality, so it has to come from reality. An
+  // earlier parallel run registered 16 recipes as working; four returned
+  // nothing at all, one of them annotated "SCAFFOLD v0: exploratory first
+  // guess". Nothing checked, so nothing stopped it.
+  //
+  // It is now only accepted when the recipe's CURRENT definition already has
+  // a run that extracted records, which only verify.js can produce. A first
+  // registration therefore cannot be "working" — there is nothing to have
+  // passed yet. Marking a recipe broken or needs-review stays free: those
+  // claims are safe to be wrong in the cautious direction.
+  if (def.status === 'working') {
+    const existing = getSite(db, def.hostname, pageType, def.recipe_name || 'default');
+    if (!existing || !definitionHasPassingRun(db, existing.id)) {
+      console.log(JSON.stringify({
+        success: false,
+        error:
+          '"status": "working" cannot be set by hand — it has to be earned by a run that actually extracted records. ' +
+          `Register this as "needs-review", then run: node verify.js ${def.hostname}#${pageType}:${def.recipe_name || 'default'} '<params>'. ` +
+          'A passing run sets the status itself. (If the definition changed since it last passed, it needs re-verifying — that is the point.)',
+        hint: 'node lab.js new <hostname> prints the whole build-and-verify sequence.',
+      }));
+      process.exit(1);
+    }
+  }
 
   if (pageType === 'action') {
     if (!def.action_type) {

@@ -496,8 +496,15 @@ function upsertSite(db, s) {
 // BEHAVIOR, and nothing that merely records bookkeeping. ids and
 // first_seen/last_verified are excluded on purpose — otherwise every
 // re-register would look like a change and spam the history.
+// `status` is deliberately NOT here. It is bookkeeping — our assessment of
+// the recipe — not behaviour: two recipes with identical selectors and
+// different statuses are the same recipe, one of them marked suspect.
+// Including it was actively harmful. Recording a verification result changed
+// the definition, which invalidated the very run that had just proved it
+// (definitionHasPassingRun went false immediately after a successful
+// verify), and every status correction spawned a version nobody asked for.
 const VERSIONED_SITE_COLUMNS = [
-  'hostname', 'page_type', 'recipe_name', 'display_name', 'status', 'nav_method', 'nav_template',
+  'hostname', 'page_type', 'recipe_name', 'display_name', 'nav_method', 'nav_template',
   'nav_params_schema', 'session_mode', 'pagination_method', 'pagination_config', 'action_type',
   'card_anchor_text', 'card_selector', 'card_min_text_len', 'content_selector', 'content_stop_text',
   'ready_timeout_ms', 'result_count_regex', 'notes',
@@ -660,6 +667,41 @@ function deleteSite(db, siteId) {
   db.prepare('DELETE FROM recipe_versions WHERE site_id = ?').run(siteId);
   db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(siteId);
   db.prepare('DELETE FROM sites WHERE id = ?').run(siteId);
+}
+
+// Has the recipe's CURRENT definition ever actually produced records?
+// This is what makes `working` a fact instead of a claim: register.js
+// refuses to set it unless this is already true, and verify.js is the only
+// thing that makes it true.
+//
+// Matched by definition rather than by version label, for the same reason
+// getRecipeHealth is: promoting copies the definition to a new vN.0, and a
+// blessed version should inherit the passing run that earned it rather than
+// starting again from unverified.
+//
+// A run counts when it extracted something (result_count > 0), not merely
+// when success was 1 — a timed-out run that still returned a full result set
+// is real evidence the recipe works, which is what partialResults reports.
+function definitionHasPassingRun(db, siteId) {
+  const row = db
+    .prepare(
+      `WITH current_def AS (
+         SELECT rv.definition FROM recipe_versions rv
+          WHERE rv.site_id = ?
+          ORDER BY rv.major DESC, rv.minor DESC LIMIT 1
+       ),
+       equivalent_labels AS (
+         SELECT 'v' || rv.major || '.' || rv.minor AS label
+           FROM recipe_versions rv, current_def cd
+          WHERE rv.site_id = ? AND rv.definition = cd.definition
+       )
+       SELECT COUNT(*) AS n FROM scrape_runs
+        WHERE site_id = ?
+          AND IFNULL(result_count, 0) > 0
+          AND (version_label IS NULL OR version_label IN (SELECT label FROM equivalent_labels))`
+    )
+    .get(siteId, siteId, siteId);
+  return (row?.n ?? 0) > 0;
 }
 
 function getLastStableVersion(db, siteId) {
@@ -892,6 +934,7 @@ module.exports = {
   getVersion,
   getCurrentVersion,
   getLastStableVersion,
+  definitionHasPassingRun,
   pruneVersions,
   getEfficiencyStats,
   parseSiteArg,

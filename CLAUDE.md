@@ -34,7 +34,26 @@ a page_type (implicit `recipe_name` = `default`).
    that action stored as a reusable, adjustable recipe (`page_type: action`)
    before moving on, rather than assuming a one-off interactive pass is
    fine. Don't ask this for read-only listing/article lookups.
-6. After a successful interactive session (and the user said yes to step 5,
+6. **`status: "working"` cannot be set by hand.** `register.js` refuses it.
+   Register as `needs-review`, then `node verify.js <target> '<params>'` — a
+   run that actually extracts records is what sets the status. Editing a
+   verified recipe invalidates it (the thing that passed no longer exists);
+   promoting does not, since promotion copies the definition unchanged. Use
+   `{"allowUnverified": true}` to run an unblessed recipe while iterating.
+7. **Prove a parameter does something**: `node lab.js params <target>
+   '{"q":"sales"}' '{"q":"engineer"}'`. A recipe that accepts a param and
+   ignores it is worse than a broken one — it answers the wrong question
+   silently. nodesk.co shipped exactly that: `?s=` never filtered, and both
+   keywords returned byte-identical results. If a site filters client-side,
+   type into its search box with `ui_steps` instead of faking a URL param;
+   if it cannot filter at all, drop the param from `nav_params_schema`
+   rather than promising something it does not do.
+8. **`node lab.js` is the workbench** for building recipes — `probe <url>`
+   (card/form/blocker sweep), `sel <url> '<css>'` (match counts), `raw`
+   /`peek <target>` (samples plus per-field null counts), `set <target>`
+   (selectors and fields in one call), `params`, and `new` (prints the whole
+   build-and-verify sequence). Prefer it over ad-hoc `node -e` one-liners.
+9. After a successful interactive session (and the user said yes to step 5,
    for actions), document it: `node register.js '<recipe json>'` (all three
    JSON shapes are in register.js's header comment). Give it an explicit
    `recipe_name` if the hostname already has a recipe of the same page_type.

@@ -404,7 +404,17 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         // Reports, never acts. runProbe never throws, so a probe can't be
         // the reason a run fails -- diagnostics exist for when things are
         // already broken.
-        diagnostics.push(await runProbe(page, step));
+        // Substitute params like every other step type does. Without this a
+        // probe could not be parameterised at all -- `with: {selectors:
+        // "{{sel}}"}` arrived at the probe as the literal string "{{sel}}"
+        // and came back as "invalid selector".
+        diagnostics.push(
+          await runProbe(page, {
+            ...step,
+            selectors: step.selectors === undefined ? undefined : substitute(String(step.selectors), params),
+            label: step.label === undefined ? undefined : substitute(String(step.label), params),
+          })
+        );
         break;
       }
       case 'repeat': {
@@ -662,13 +672,21 @@ async function main() {
     process.exit(1);
   }
 
-  if (site.status !== 'working') {
+  // Refusing to run a recipe that isn't blessed is the useful default: it
+  // stops a caller silently depending on something known broken. But it
+  // cannot be absolute, or a recipe could never be verified in the first
+  // place — the status gate would reject every run that might earn the
+  // status. `allowUnverified` is that escape hatch, and it is how verify.js
+  // exercises a candidate. Deliberate per call, never a recipe setting.
+  if (site.status !== 'working' && !params.allowUnverified) {
     console.log(JSON.stringify({
       success: false,
       documented: true,
       status: site.status,
       notes: site.notes,
-      error: `Site is documented but status="${site.status}". Fall back to interactive tools.`,
+      error:
+        `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
+        'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
     }));
     process.exit(1);
   }
