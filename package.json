@@ -6,7 +6,8 @@
   "type": "commonjs",
   "main": "run.js",
   "scripts": {
-    "scrape": "node run.js"
+    "scrape": "node run.js",
+    "test": "./test.sh"
   },
   "dependencies": {
     "puppeteer": "^23.0.0"
