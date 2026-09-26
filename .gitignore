@@ -1,2 +1,6 @@
 node_modules/
 *.log
+
+# handoff capture files -- may contain secrets typed during a handoff step
+# (passwords, one-time codes). Temporary; never committed.
+data/.captures/

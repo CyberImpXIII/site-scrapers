@@ -112,6 +112,32 @@ what to do in it — it isn't hung, it's waiting. Shape:
 {"action":"handoff","reason":"Enter the 2FA code sent to your phone, then submit.","resume_selector":".account-nav","timeout_ms":300000}
 ```
 
+**Capturing what the human types.** A handoff step can optionally declare
+`capture` — a menu of CSS selectors mapped to variable names, e.g.
+`{"fields":{"ACCOUNT_EMAIL":"#confirmed-email"}}` — naming what's available
+to read back out of the page once the human is done (their typed value is
+the one thing the recipe params didn't already supply). This is safe to
+store in the recipe itself: it's only selectors and made-up names, never
+values.
+
+Whether anything is actually captured for a given *run* is a separate
+decision, made at call time via `params.captureMode`, never baked into the
+recipe:
+- `"none"` (default/absent) — capture nothing.
+- `"flagged"` — capture only what `capture.fields` names.
+- `"all"` — capture every `input`/`textarea`/`select` on the page once the
+  handoff resolves, *including* a password or 2FA code if one is still
+  sitting in a field.
+
+Per CLAUDE.md, Claude asks the user which mode to use for that specific run
+**before** telling them about the upcoming handoff — this is a conscious,
+per-run choice by the person running it, not a default this project picks
+for them. Captured values are written to a gitignored, mode-600 temp file
+under `data/.captures/<hostname>-<page_type>-<recipe_name>-<timestamp>.env`
+and never appear in `engine.js`'s stdout or the `scrape_runs` log — the
+result JSON's `handoffCaptures` field reports the file path and which keys
+were captured, not the values themselves.
+
 ## Workflow (for Claude to follow)
 
 1. **Before assuming a site needs interactive discovery**, run

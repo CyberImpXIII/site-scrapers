@@ -57,11 +57,27 @@ runs the whole thing in a real, visible browser window instead of headless,
 since that window is the only way control actually reaches a person mid-run
 — there's no other channel back to them. It resumes automatically once
 `resume_selector` (preferred) or `resume_url_includes` appears on the page,
-or after `timeout_ms` (default 5 min) if neither is given. Tell the user
-*before* kicking this off that a browser window is about to open and what to
-do in it, and run the call with a generous timeout or in the background — it
-isn't hung, it's waiting on them. See register.js's header comment for the
-step shape.
+or after `timeout_ms` (default 5 min) if neither is given. Run the call with
+a generous timeout or in the background — it isn't hung, it's waiting on
+them. See register.js's header comment for the step shape.
+
+**Before** telling the user about that upcoming handoff, ask them which
+capture mode to use for this specific run (this is a per-run choice, never
+something to assume or bake into the recipe):
+- **none** (default/safest) — capture nothing.
+- **flagged** — capture only the selectors the step's `capture.fields`
+  names (values the recipe author marked as reusable/non-secret — an email,
+  a reference number).
+- **all** — capture every form field on the page once the handoff resolves,
+  *including* a password or 2FA code if one is still sitting in a field.
+  Only pick this because the user explicitly chose it, never by default.
+
+Only after they answer do you tell them a browser window is about to open
+and what to do in it, then pass their choice as `captureMode` in params.
+Captured values land in a gitignored temp file under `data/.captures/` and
+are never printed to stdout or logged to `scrape_runs` — the result JSON's
+`handoffCaptures` gives you the file path and which keys were captured, not
+the values, so don't ask for or repeat the values yourself either.
 
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 

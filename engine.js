@@ -42,8 +42,12 @@
 // such a call with a generous timeout (or in the background) — it isn't
 // hung, it's waiting on a person.
 
+const fs = require('fs');
+const path = require('path');
 const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
 const { withPage } = require('./lib/runner');
+
+const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
 
 function toStr(val) {
   return typeof val === 'object' ? JSON.stringify(val) : String(val);
@@ -82,8 +86,68 @@ function stepsNeedHeaded(stepsJson) {
   }
 }
 
-async function runUiSteps(page, stepsJson, params) {
+// Reads values back out of the page right after a handoff resolves — the
+// only point where the human may have typed something the recipe params
+// didn't already know. mode 'flagged' reads only the selectors step.capture
+// declares (named, presumed non-secret, reusable values — an email, a
+// reference/confirmation number). mode 'all' reads every input/textarea/
+// select on the page, which WILL include passwords and one-time codes if
+// any are still in a field — the caller (see CLAUDE.md: ask the user which
+// mode, before telling them about the handoff) is choosing that
+// deliberately, not this code.
+async function capturePageInput(page, captureConfig, mode) {
+  if (mode === 'flagged') {
+    const fields = (captureConfig && captureConfig.fields) || {};
+    if (Object.keys(fields).length === 0) return null;
+    return page.evaluate(fields => {
+      const out = {};
+      for (const [varName, selector] of Object.entries(fields)) {
+        const el = document.querySelector(selector);
+        if (el && 'value' in el && el.value !== '') out[varName] = el.value;
+      }
+      return out;
+    }, fields);
+  }
+  if (mode === 'all') {
+    return page.evaluate(() => {
+      const out = {};
+      let i = 0;
+      for (const el of document.querySelectorAll('input, textarea, select')) {
+        if (!('value' in el) || el.value === '') continue;
+        const key = (el.id || el.name || `field_${i}`).toString();
+        out[key] = el.value;
+        i += 1;
+      }
+      return out;
+    });
+  }
+  return null;
+}
+
+// Writes captured values to a gitignored, mode-600 temp .env file — never to
+// stdout/scrape_runs, since those may end up in a chat transcript or DB.
+// Returns { file, keys } (keys only, not values) so the caller can report
+// what was captured without echoing the values themselves anywhere.
+function writeCaptureEnv(captured, { hostname, pageType, recipeName }) {
+  if (!captured || Object.keys(captured).length === 0) return null;
+  fs.mkdirSync(CAPTURE_DIR, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const file = path.join(CAPTURE_DIR, `${hostname}-${pageType}-${recipeName}-${stamp}.env`);
+  const lines = [
+    `# Captured from a handoff step on ${hostname}#${pageType}:${recipeName} at ${new Date().toISOString()}`,
+    '# TEMPORARY — may contain secrets (passwords, one-time codes). Never committed to git.',
+    '# Delete once you have consumed what you need from it.',
+    ...Object.entries(captured).map(
+      ([k, v]) => `${k.toUpperCase().replace(/[^A-Z0-9_]/g, '_')}=${JSON.stringify(v)}`
+    ),
+  ];
+  fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
+  return { file, keys: Object.keys(captured) };
+}
+
+async function runUiSteps(page, stepsJson, params, siteMeta) {
   const steps = JSON.parse(stepsJson);
+  const captures = [];
   for (const step of steps) {
     const sel = step.selector ? substitute(step.selector, params) : undefined;
     switch (step.action) {
@@ -130,12 +194,21 @@ async function runUiSteps(page, stepsJson, params) {
         } else {
           await new Promise(r => setTimeout(r, timeout));
         }
+        // captureMode is a per-run param (never stored in the recipe) — see
+        // CLAUDE.md: ask the user which mode to use for THIS run before
+        // telling them about the handoff. 'none'/absent captures nothing.
+        if (step.capture && params.captureMode && params.captureMode !== 'none') {
+          const captured = await capturePageInput(page, step.capture, params.captureMode);
+          const written = writeCaptureEnv(captured, siteMeta);
+          if (written) captures.push(written);
+        }
         break;
       }
       default:
         throw new Error(`Unknown ui_steps action: ${step.action}`);
     }
   }
+  return { captures };
 }
 
 async function extractCards(page, { cardAnchorText, cardMinTextLen, fields, includeRaw }) {
@@ -330,17 +403,19 @@ async function main() {
 
   const fields = getFields(db, site.id);
   const headed = site.nav_method === 'ui_steps' && stepsNeedHeaded(site.nav_template);
+  const siteMeta = { hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name };
 
   if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
     try {
       articleOutcome = await withPage(async page => {
+        let captures = [];
         if (site.nav_method === 'direct_url') {
           const url = substitute(site.nav_template, params);
           if (!url) throw new Error(`Missing param for nav_template "${site.nav_template}" (expected e.g. {"url": "..."})`);
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         } else if (site.nav_method === 'ui_steps') {
-          await runUiSteps(page, site.nav_template, params);
+          ({ captures } = await runUiSteps(page, site.nav_template, params, siteMeta));
         } else {
           throw new Error(`Unsupported nav_method for page_type=${site.page_type}: ${site.nav_method}`);
         }
@@ -371,7 +446,7 @@ async function main() {
           includeRaw,
         });
 
-        return { timedOut, record, blobLen, url: page.url() };
+        return { timedOut, record, blobLen, url: page.url(), captures };
       }, { headed });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
@@ -396,6 +471,8 @@ async function main() {
       timedOut: articleOutcome.timedOut,
       url: articleOutcome.url,
       article: articleOutcome.record,
+      // file path + captured KEY NAMES only — never the captured values.
+      handoffCaptures: articleOutcome.captures,
     }));
     process.exit(success ? 0 : 1);
   }
@@ -404,11 +481,12 @@ async function main() {
 
   try {
     outcome = await withPage(async page => {
+      let captures = [];
       if (site.nav_method === 'url_param') {
         const url = buildUrl(site.nav_template, params);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       } else if (site.nav_method === 'ui_steps') {
-        await runUiSteps(page, site.nav_template, params);
+        ({ captures } = await runUiSteps(page, site.nav_template, params, siteMeta));
       } else {
         throw new Error(`Unknown nav_method: ${site.nav_method}`);
       }
@@ -439,7 +517,7 @@ async function main() {
         }, site.result_count_regex);
       }
 
-      return { timedOut, jobs, claimedCount, url: page.url() };
+      return { timedOut, jobs, claimedCount, url: page.url(), captures };
     }, { headed });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
@@ -478,6 +556,7 @@ async function main() {
     consistencyWarning,
     count: outcome.jobs.length,
     jobs: outcome.jobs,
+    handoffCaptures: outcome.captures,
   }));
   process.exit(success ? 0 : 1);
 }

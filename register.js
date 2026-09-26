@@ -106,6 +106,22 @@
 // in the background) and tell them up front that a browser window is about
 // to open and what to do in it:
 // {"action":"handoff","reason":"Enter the 2FA code sent to your phone, then submit.","resume_selector":".account-nav","timeout_ms":300000}
+//
+// Optional `capture` on a handoff step: a menu of what's available to read
+// back out of the page once the human is done (their typed value is the one
+// thing the recipe params don't already know) -- e.g.
+// {"fields":{"ACCOUNT_EMAIL":"#confirmed-email","REFERENCE_NUMBER":"#ref"}}.
+// This is safe to store: it's only CSS selectors and made-up variable names,
+// never values. Whether anything actually gets captured for a given run is a
+// SEPARATE, per-call decision via params.captureMode ("none" [default] |
+// "flagged" [only the selectors in `capture.fields`] | "all" [every input/
+// textarea/select on the page, INCLUDING password/2FA fields if still
+// filled in]) -- never bake captureMode into the stored recipe. Per
+// CLAUDE.md, ask the user which mode to use for that specific run before
+// telling them about the upcoming handoff. Captured values are written to a
+// gitignored, mode-600 temp file under data/.captures/ and never appear in
+// engine.js's stdout or scrape_runs -- the result JSON's `handoffCaptures`
+// reports the file path and which keys were captured, not the values.
 // {
 //   "hostname": "example.com",
 //   "page_type": "action",
