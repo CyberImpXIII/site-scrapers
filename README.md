@@ -43,7 +43,22 @@ remember or re-derive it.
       (e.g. `login`, `add_to_cart`, `checkout_to_review`), which is exactly
       what `recipe_name` disambiguates. Credential-shaped values belong in
       caller-supplied params substituted into `ui_steps` at call time (like
-      any other param), never written into the stored recipe itself.
+      any other param), never written into the stored recipe itself. An
+      action recipe's `action_type` must reference the `action_types` table
+      (see below) — a small taxonomy so recipes converge on shared action
+      kinds instead of accumulating near-duplicates. A `ui_steps` sequence
+      can also include a `handoff` step for anything that needs a human mid-
+      run (2FA, a CAPTCHA, a final purchase confirmation) — see "Human
+      handoff" below.
+  - `action_types` — the small, deliberately short taxonomy `action_type`
+    values are validated against: seeded with `login`, `logout`,
+    `add_to_cart`, `checkout_to_review`, `submit_form`, `search`.
+    `register.js` rejects an unrecognized `action_type` for a new `action`
+    recipe unless the call also includes `new_action_type_description`,
+    which registers it as a deliberate new entry — the point is to make
+    inventing a near-duplicate type (`add_to_cart` vs `add-to-basket`) a
+    conscious choice, not an accident of free-typing a `recipe_name`. List
+    it with `node query.js action-types`.
   - `site_fields` — named, enumerable fields per site, each with an
     extraction rule: `positional_segment` / `regex_anywhere` /
     `anchor_attribute` (all recipes), plus `title_regex` (matches against
@@ -72,6 +87,30 @@ remember or re-derive it.
   ```
 - **`scrape.sh`** — thin wrapper around `engine.js` using the right Node
   binary (see version note below).
+
+## Human handoff
+
+An `action` recipe's `ui_steps` can include a `handoff` step for anything the
+automation shouldn't do unattended — entering a 2FA/OTP code, solving a
+CAPTCHA, clicking a final "place order" button. There's no channel from a
+headless run back to a person mid-script, so `engine.js` inspects
+`nav_template` up front and, if it contains a `handoff` step, launches a
+real, visible Chrome window for that whole run instead of headless — the
+window itself is the handoff. The person looks at it, does whatever
+`reason` describes, and the script detects that on its own from the page:
+give `resume_selector` (a CSS selector that only appears once the manual
+step is done) and/or `resume_url_includes` (a URL substring reached after
+it); tested live, both resolve as soon as the condition is met rather than
+blocking for the full timeout. With neither, it just waits out `timeout_ms`
+(default 300000ms / 5 min) blind, which is the least reliable option since
+nothing confirms the step actually happened.
+
+Because this blocks on a person, run it with a generous timeout (or in the
+background) and say up front that a browser window is about to open and
+what to do in it — it isn't hung, it's waiting. Shape:
+```json
+{"action":"handoff","reason":"Enter the 2FA code sent to your phone, then submit.","resume_selector":".account-nav","timeout_ms":300000}
+```
 
 ## Workflow (for Claude to follow)
 

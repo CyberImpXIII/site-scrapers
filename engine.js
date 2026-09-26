@@ -34,6 +34,13 @@
 //                                       `notes`/`error`/`timedOut` fields.
 // success:true (listing)            -> trust `jobs` and `count`.
 // success:true (article/action)     -> trust `article` (single object).
+//
+// A ui_steps sequence containing a 'handoff' step (see register.js's header
+// comment) makes this run in a real, visible browser window instead of
+// headless, and blocks until either a human completes that step (detected
+// via resume_selector/resume_url_includes) or its timeout_ms elapses. Run
+// such a call with a generous timeout (or in the background) — it isn't
+// hung, it's waiting on a person.
 
 const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
 const { withPage } = require('./lib/runner');
@@ -62,6 +69,19 @@ function buildUrl(navTemplate, params) {
   });
 }
 
+// True when a ui_steps sequence contains a 'handoff' step — such a sequence
+// must run in a real (headed) browser window, not headless, since a handoff
+// means a human completes something by looking at and interacting with that
+// window directly (there's no other channel back to them mid-run).
+function stepsNeedHeaded(stepsJson) {
+  try {
+    const steps = JSON.parse(stepsJson);
+    return Array.isArray(steps) && steps.some(s => s.action === 'handoff');
+  } catch {
+    return false;
+  }
+}
+
 async function runUiSteps(page, stepsJson, params) {
   const steps = JSON.parse(stepsJson);
   for (const step of steps) {
@@ -86,6 +106,32 @@ async function runUiSteps(page, stepsJson, params) {
       case 'wait':
         await new Promise(r => setTimeout(r, step.ms ?? 1000));
         break;
+      case 'handoff': {
+        // Pause the automated sequence here — the browser is real/visible
+        // (see stepsNeedHeaded), so the person running this looks at that
+        // window and does whatever step.reason describes by hand (entering
+        // a 2FA/OTP code, solving a CAPTCHA, clicking a final "place order"
+        // button — anything the recipe shouldn't do unattended). Resumption
+        // is detected automatically from the page itself, never a signal
+        // back through this process: give resume_selector (an element that
+        // only appears once the manual step is done) and/or
+        // resume_url_includes (a URL substring reached after it). With
+        // neither, this just waits out timeout_ms and then continues blind
+        // — only use that as a last resort.
+        const timeout = step.timeout_ms ?? 300000;
+        if (step.resume_selector) {
+          await page.waitForSelector(substitute(step.resume_selector, params), { timeout });
+        } else if (step.resume_url_includes) {
+          await page.waitForFunction(
+            frag => location.href.includes(frag),
+            { timeout },
+            substitute(step.resume_url_includes, params)
+          );
+        } else {
+          await new Promise(r => setTimeout(r, timeout));
+        }
+        break;
+      }
       default:
         throw new Error(`Unknown ui_steps action: ${step.action}`);
     }
@@ -283,6 +329,7 @@ async function main() {
   }
 
   const fields = getFields(db, site.id);
+  const headed = site.nav_method === 'ui_steps' && stepsNeedHeaded(site.nav_template);
 
   if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
@@ -303,7 +350,10 @@ async function main() {
           await page.waitForFunction(
             (sel, minLen) => {
               const el = (sel && document.querySelector(sel)) || document.body;
-              return !!(el && el.innerText && el.innerText.trim().length >= minLen);
+              // `el.innerText &&` alone would short-circuit on a legitimately
+              // empty string and never resolve when minLen is 0 — compare
+              // length directly instead.
+              return !!(el && el.innerText != null && el.innerText.trim().length >= minLen);
             },
             { timeout: site.ready_timeout_ms },
             site.content_selector,
@@ -322,7 +372,7 @@ async function main() {
         });
 
         return { timedOut, record, blobLen, url: page.url() };
-      });
+      }, { headed });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
       console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));
@@ -390,7 +440,7 @@ async function main() {
       }
 
       return { timedOut, jobs, claimedCount, url: page.url() };
-    });
+    }, { headed });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt });
     console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}` }));

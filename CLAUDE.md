@@ -50,6 +50,19 @@ caller-supplied params at run time, never written into the stored recipe
 (`nav_template`/`notes`/`fields`) — same as any other param, just don't let
 it end up in the DB.
 
+**Steps that need a human mid-run**: give a `ui_steps` sequence a `handoff`
+step (2FA/OTP entry, a CAPTCHA, a final "place order" confirmation — anything
+the automation shouldn't do unattended). `engine.js` detects it up front and
+runs the whole thing in a real, visible browser window instead of headless,
+since that window is the only way control actually reaches a person mid-run
+— there's no other channel back to them. It resumes automatically once
+`resume_selector` (preferred) or `resume_url_includes` appears on the page,
+or after `timeout_ms` (default 5 min) if neither is given. Tell the user
+*before* kicking this off that a browser window is about to open and what to
+do in it, and run the call with a generous timeout or in the background — it
+isn't hung, it's waiting on them. See register.js's header comment for the
+step shape.
+
 No auto-detector yet for which page_type a URL is — you have to know/guess.
 
 Full details: README.md.

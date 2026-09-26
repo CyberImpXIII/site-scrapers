@@ -91,6 +91,29 @@
 // for recipe_name to be more specific than action_type, e.g. two recipes
 // both action_type:"login" -- recipe_name:"login_email" and
 // recipe_name:"login_google_oauth" -- for the same site.
+//
+// ui_steps 'handoff' step: pauses the sequence for a human to complete a step
+// the automation shouldn't do unattended -- a 2FA/OTP code, a CAPTCHA, a
+// final "place order" confirmation, anything like that. engine.js detects a
+// handoff step in nav_template up front and launches a real, visible browser
+// window for the whole run instead of headless (there's no other channel
+// back to a person mid-run). Resumption is read off the page itself, never
+// signaled through the process: give `resume_selector` (a CSS selector that
+// only appears once the manual step is done) and/or `resume_url_includes` (a
+// URL substring reached after it); with neither, it just waits out
+// `timeout_ms` (default 300000 = 5 min) blind, which is the least reliable
+// option. Because this blocks on a human, run it with a generous timeout (or
+// in the background) and tell them up front that a browser window is about
+// to open and what to do in it:
+// {"action":"handoff","reason":"Enter the 2FA code sent to your phone, then submit.","resume_selector":".account-nav","timeout_ms":300000}
+// {
+//   "hostname": "example.com",
+//   "page_type": "action",
+//   "recipe_name": "login",
+//   "action_type": "login",
+//   "nav_template": "[{\"action\":\"goto\",\"url\":\"https://example.com/login\"},{\"action\":\"type\",\"selector\":\"#email\",\"text\":\"{{email}}\"},{\"action\":\"type\",\"selector\":\"#password\",\"text\":\"{{password}}\"},{\"action\":\"click\",\"selector\":\"#submit\"},{\"action\":\"handoff\",\"reason\":\"Enter the 2FA code sent to your phone, then submit.\",\"resume_selector\":\".account-nav\"}]",
+//   "...": "(the rest of the shape is the same as the plain example below)"
+// }
 // {
 //   "hostname": "example.com",
 //   "page_type": "action",
