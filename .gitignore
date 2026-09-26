@@ -24,3 +24,10 @@ data/scrapers.db-shm
 # contain page content from whatever a recipe was looking at when it
 # failed. Disposable debugging data, not an audit trail; never committed.
 data/.debug/
+
+# troubleshooting knowledge base -- accumulates hostnames, selectors and
+# error text from real runs. Same reasoning as scrapers.db: the TAXONOMY
+# lives in lib/failureTypes.js (version-controlled), the observations do not.
+data/failures.db
+data/failures.db-wal
+data/failures.db-shm

@@ -164,6 +164,26 @@ instead of `card_anchor_text`; for cards grouped under a shared header (a
 company name above its jobs), the `ancestor_first_line` field kind reads that
 header. Details in README.md.
 
+**Check what has broken before, first.** A second database
+(`data/failures.db`, separate from `scrapers.db`) remembers diagnosed
+failures and their fixes. Before re-deriving a recipe that broke, run
+`node failures.js match <hostname> '<json probe>'` — the probe can carry
+`failure_type`/`symptom`/`step_selector`/`step_action`/`step_from`, most of
+which come straight from the run's `failedStep`. A hit on a **different**
+site is still valuable when the resolution transfers ("this is the
+consent-overlay pattern again"). `node failures.js common` shows which
+failure types dominate overall.
+
+When you diagnose something, record it: `node failures.js record '<json>'`
+with a `failure_type`, a `symptom`, and ideally a `resolution`. Recording
+the same shape twice bumps `occurrences` rather than adding a row, and a
+repeat is itself a finding worth acting on. **Keep the taxonomy small** —
+run `node failures.js types` and reuse an existing type rather than
+inventing a near-duplicate; `failures.js` rejects an unknown type unless you
+deliberately pass `new_failure_type_description`. A taxonomy that fragments
+("cookie_wall" beside "consent_overlay") cannot answer "have we seen this
+before", which is the only reason the database exists.
+
 **Don't guess a selector — probe for it.** `probe` steps report what's on
 the page and never change it or fail the run; results land in the output
 JSON's `diagnostics`. Four generic actions wrap them: `diagnose_page` (all

@@ -450,6 +450,77 @@ have been.
 Reach for `diagnose_page` explicitly only when the run *isn't* failing — a
 recipe that "works" but returns the wrong thing.
 
+## The failure knowledge base
+
+A **second** database, `data/failures.db`, remembers what has gone wrong
+before and what fixed it. Separate from `scrapers.db` on purpose:
+
+- **Different lifecycle.** `scrapers.db` is this environment's recipe state;
+  this is accumulated troubleshooting knowledge, worth exporting and sharing
+  on its own.
+- **Different write pattern.** Failures get recorded exactly when a scrape
+  is failing, which is often when `scrapers.db` is busiest. Separate files
+  mean separate locks and no contention on the hot path.
+- **Different blast radius.** Rebuilding one should never risk the other.
+
+As with `scrapers.db` the file is gitignored (it accumulates hostnames,
+selectors and error text) while the **taxonomy lives in code**
+(`lib/failureTypes.js`), so a fresh clone has the vocabulary even though it
+starts with no history — the same split as `lib/builtinActions.js`.
+
+### The taxonomy is closed on purpose
+
+Twelve types: `selector_not_found`, `selector_ambiguous`, `layout_change`,
+`bot_block`, `auth_required`, `consent_overlay`, `slow_render`,
+`empty_result`, `navigation_failed`, `pagination_broken`,
+`extraction_wrong`, `param_shape_wrong`.
+
+Recording a failure only pays off if a later, similar failure lands on the
+same label. `failures.js record` therefore rejects a type outside the
+vocabulary unless you deliberately pass `new_failure_type_description`.
+Resist it: `cookie_wall` sitting beside `consent_overlay` is how a taxonomy
+stops being able to answer "have we seen this before". A test asserts the
+vocabulary stays at 20 or fewer.
+
+### Using it
+
+```
+node failures.js match <hostname> '<json probe>'   # before re-deriving anything
+node failures.js common                            # what dominates, across every site
+node failures.js list [hostname] [--type=<name>]
+node failures.js types
+node failures.js record '<json>'
+node failures.js forget <id>
+```
+
+The probe for `match` takes `failure_type`, `symptom`, `step_selector`,
+`step_action` and `step_from` — most of which come straight from a failed
+run's `failedStep`. Matches are **scored, not filtered**, because the most
+useful hit is often a different site with the same shape and a resolution
+that transfers:
+
+```
+score=8 [consent_overlay] example-eu.com -> composed dismiss_overlay before collect
+   why: same failure type, same step action, shared terms: results, consent, dialog
+```
+
+Anything below a score of 4 is withheld — a weak match is worse than none,
+because it sends you down the wrong path.
+
+### Identity tolerates noise
+
+Two records are the same failure when `(failure_type, hostname, page_type,
+recipe_name, step_selector, step_action)` match. **Symptom text is
+deliberately excluded**: "timed out at 8000ms" and "timed out at 30000ms"
+are obviously one recurring problem, and counting them separately is exactly
+the fragmentation this table exists to prevent. A repeat bumps `occurrences`
+and says so — "seen 4 times" is a prompt to fix it at the source. A later
+recording fills in a missing `diagnosis` or `resolution` without clobbering
+one already there.
+
+A failure type cannot be deleted while failures still reference it; the
+foreign key is enforced, which is the taxonomy protecting itself.
+
 ## Failure diagnostics
 
 ### Where it failed
