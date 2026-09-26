@@ -3,12 +3,19 @@
 // reach and read a site lives as data in sites/site_fields rows (db.js).
 //
 // Usage:
-//   node engine.js <hostname-or-url>[#page_type] '<json params>' [--raw]
+//   node engine.js <hostname-or-url>[#page_type[:recipe_name]] '<json params>' [--raw]
 //
-// page_type suffix ('#listing' | '#article') picks which recipe to use for a
-// hostname. Omitting it defaults to 'listing' (back-compat). A 'listing' page
-// extracts repeated cards (jobs array); an 'article' page extracts one record
-// (single content block, e.g. a job detail page) from `params.url`.
+// page_type suffix ('#listing' | '#article' | '#action') picks which recipe
+// to use for a hostname. Omitting it defaults to 'listing' (back-compat). A
+// 'listing' page extracts repeated cards (jobs array); 'article' and 'action'
+// both extract one record (single content block) via the same code path —
+// 'article' is for reading a detail/post page (e.g. a job posting) from
+// `params.url`; 'action' is for a repeatable automation (login, add-to-cart,
+// etc, typically nav_method: 'ui_steps') where the "content" captured
+// afterward, if any, is a result/confirmation rather than the main point.
+// A hostname can have more than one recipe of the same page_type — add
+// ':recipe_name' to disambiguate, e.g. "example.com#action:login" vs
+// "example.com#action:add_to_cart". Omitting it uses recipe_name 'default'.
 //
 // --raw includes each record's source innerText blob as `_raw` (useful when
 // tuning a site's field extraction rules) — roughly doubles output size, so
@@ -18,14 +25,15 @@
 //   { success, documented, ... site data or diagnostic fields ... }
 //
 // success:false + documented:false  -> nothing known about this site/page_type
-//                                       yet. Fall back to interactive tools,
-//                                       then call register.js to document it.
+//                                       /recipe_name yet. Fall back to
+//                                       interactive tools, then call
+//                                       register.js to document it.
 // success:false + documented:true   -> site is documented but currently
 //                                       marked broken/needs-review, or this
 //                                       run hit a real failure. Check the
 //                                       `notes`/`error`/`timedOut` fields.
 // success:true (listing)            -> trust `jobs` and `count`.
-// success:true (article)            -> trust `article` (single object).
+// success:true (article/action)     -> trust `article` (single object).
 
 const { openDb, getSite, getFields, logRun, parseSiteArg } = require('./db');
 const { withPage } = require('./lib/runner');
@@ -239,7 +247,7 @@ async function main() {
   } catch {
     /* leave as-is */
   }
-  const { hostname, pageType } = parseSiteArg(hostnamePart);
+  const { hostname, pageType, recipeName } = parseSiteArg(hostnamePart);
 
   let params = {};
   if (paramsArg) {
@@ -252,13 +260,13 @@ async function main() {
   }
 
   const db = openDb();
-  const site = getSite(db, hostname, pageType);
+  const site = getSite(db, hostname, pageType, recipeName);
 
   if (!site) {
     console.log(JSON.stringify({
       success: false,
       documented: false,
-      error: `No site documented for "${hostname}#${pageType}". Fall back to interactive browser tools, then run register.js.`,
+      error: `No site documented for "${hostname}#${pageType}:${recipeName}". Fall back to interactive browser tools, then run register.js.`,
     }));
     process.exit(1);
   }
@@ -276,7 +284,7 @@ async function main() {
 
   const fields = getFields(db, site.id);
 
-  if (site.page_type === 'article') {
+  if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
     try {
       articleOutcome = await withPage(async page => {
@@ -287,7 +295,7 @@ async function main() {
         } else if (site.nav_method === 'ui_steps') {
           await runUiSteps(page, site.nav_template, params);
         } else {
-          throw new Error(`Unsupported nav_method for page_type=article: ${site.nav_method}`);
+          throw new Error(`Unsupported nav_method for page_type=${site.page_type}: ${site.nav_method}`);
         }
 
         let timedOut = false;

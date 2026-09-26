@@ -10,45 +10,65 @@ remember or re-derive it.
 
 ## Architecture
 
-- **`engine.js`** — the only scraping code. Takes a hostname (+ optional
-  `#page_type`) + params, looks up that recipe in the DB, executes it,
-  extracts fields, logs the run, prints one JSON object. Nothing
-  site-specific is hardcoded here.
+- **`engine.js`** — the only execution code. Takes a hostname (+ optional
+  `#page_type[:recipe_name]`) + params, looks up that recipe in the DB,
+  executes it, extracts fields (if any), logs the run, prints one JSON
+  object. Nothing site-specific is hardcoded here.
 - **`data/scrapers.db`** (SQLite, via Node's built-in `node:sqlite`) — the
   knowledge base. Three tables:
-  - `sites` — one row per `(hostname, page_type)` pair: how to navigate
-    there (`nav_method` + `nav_template`), a `status`
-    (`working`/`broken`/`needs-review`), and free-text `notes`. Two
-    `page_type`s exist:
+  - `sites` — one row per `(hostname, page_type, recipe_name)` triple: how
+    to navigate/act (`nav_method` + `nav_template`), a `status`
+    (`working`/`broken`/`needs-review`), and free-text `notes`.
+    `recipe_name` defaults to `"default"` and only needs to be set
+    explicitly when a hostname has more than one recipe of the same
+    `page_type` (see below). Three `page_type`s exist:
     - `listing` (default, back-compat) — a results page with repeated
       cards. Uses `card_anchor_text` to find them, extracts one record per
       card, pagination config, `result_count_regex` for a self-consistency
       check.
     - `article` — a single-record page (e.g. a job/post detail page). Uses
       `content_selector` (defaults to `document.body`) and `nav_method:
-      "direct_url"` (goto `params.url` as-is). `content_stop_text`
-      optionally truncates the extracted text at a literal marker, to cut
-      off "related content" widgets that would otherwise bloat the output.
+      "direct_url"` (goto `params.url` as-is) or `"ui_steps"`.
+      `content_stop_text` optionally truncates the extracted text at a
+      literal marker, to cut off "related content" widgets that would
+      otherwise bloat the output.
+    - `action` — a repeatable, parameterized automation that isn't
+      primarily about reading content: login, add-to-cart, or any other
+      multi-step interaction. Executes through the *identical* code path as
+      `article` (run `nav_method: "ui_steps"`, then optionally read
+      `content_selector` back as a result/confirmation) — it's a distinct
+      `page_type` purely so it shows up clearly in `query.js sites` and can
+      be looked up by name (`#action:login`), not different engine
+      behavior. A hostname commonly needs *several* action recipes at once
+      (e.g. `login`, `add_to_cart`, `checkout_to_review`), which is exactly
+      what `recipe_name` disambiguates. Credential-shaped values belong in
+      caller-supplied params substituted into `ui_steps` at call time (like
+      any other param), never written into the stored recipe itself.
   - `site_fields` — named, enumerable fields per site, each with an
     extraction rule: `positional_segment` / `regex_anywhere` /
     `anchor_attribute` (all recipes), plus `title_regex` (matches against
     `document.title`, often cleaner than blob parsing) and `full_blob` (the
     whole extracted text, e.g. for a catch-all `description` field) —
-    article recipes only.
+    article/action recipes only. `anchor_attribute` can also take an
+    optional CSS selector (via the `regex_pattern` column, repurposed) to
+    pull the attribute off a different element within the card than the one
+    `card_anchor_text` matched — e.g. the anchor that identifies a listing
+    card isn't always the anchor whose `href` you actually want.
   - `scrape_runs` — an audit log of every invocation (params, success,
     result count vs. the site's own claimed count, duration, error). This
     is the reliability history — not just a static status flag.
-- **`register.js`** — how a newly-learned site/page gets documented: pass it
-  a JSON recipe (inline or a file), it upserts `sites` + `site_fields`. This
-  replaces "write a new `sites/<hostname>.js` file." See its header comment
-  for both the `listing` and `article` JSON shapes.
+- **`register.js`** — how a newly-learned site/page/action gets documented:
+  pass it a JSON recipe (inline or a file), it upserts `sites` +
+  `site_fields`. This replaces "write a new `sites/<hostname>.js` file." See
+  its header comment for the `listing`, `article`, and `action` JSON shapes.
 - **`query.js`** — how to check what's already documented, without reading
   any code:
   ```
-  node query.js sites                          # every known site+page_type + status
-  node query.js site hiringcafe.com             # full recipe + fields (page_type defaults to listing)
-  node query.js site hiringcafe.com#article     # same, for the article recipe
-  node query.js runs hiringcafe.com#article     # recent run history / reliability
+  node query.js sites                                # every known recipe (hostname+page_type+recipe_name) + status
+  node query.js site hiringcafe.com                   # full recipe + fields (page_type defaults to listing, recipe_name to default)
+  node query.js site hiringcafe.com#article           # same, for the article recipe
+  node query.js site example.com#action:login         # a specific named action recipe
+  node query.js runs hiringcafe.com#article           # recent run history / reliability
   ```
 - **`scrape.sh`** — thin wrapper around `engine.js` using the right Node
   binary (see version note below).
@@ -56,25 +76,29 @@ remember or re-derive it.
 ## Workflow (for Claude to follow)
 
 1. **Before assuming a site needs interactive discovery**, run
-   `node query.js site <hostname>` (add `#article` if you specifically want
-   a detail-page recipe rather than the results-listing one). If it's there
+   `node query.js site <hostname>` (add `#article` or `#action` if you
+   specifically want one of those rather than the results-listing recipe;
+   add `:recipe_name` too if the hostname has more than one recipe of that
+   page_type — `node query.js sites` shows what's registered). If it's there
    and `status: "working"`, skip straight to step 2.
-2. **Known, working site** → `./scrape.sh <hostname>[#page_type] '<json params>'`
-   (`#page_type` defaults to `listing` if omitted — existing calls are
-   unaffected). Add a trailing `--raw` only when debugging field extraction
-   — it includes each record's source text as `_raw`, roughly doubling
-   output size. Always check the `success` field in the JSON, not just exit
-   code — `exit 0` only means "ran without crashing." A `documented:false`
-   field means nothing is known about this site/page_type yet;
-   `documented:true` + `success:false` means it's known but
-   broken/needs-review right now, or this specific run failed (check
-   `error`/`timedOut`/`consistencyWarning`).
+2. **Known, working site** → `./scrape.sh <hostname>[#page_type[:recipe_name]] '<json params>'`
+   (`#page_type` defaults to `listing`, `:recipe_name` defaults to
+   `default`, if omitted — existing calls are unaffected). Add a trailing
+   `--raw` only when debugging field extraction — it includes each record's
+   source text as `_raw`, roughly doubling output size. Always check the
+   `success` field in the JSON, not just exit code — `exit 0` only means
+   "ran without crashing." A `documented:false` field means nothing is known
+   about this site/page_type/recipe_name yet; `documented:true` +
+   `success:false` means it's known but broken/needs-review right now, or
+   this specific run failed (check `error`/`timedOut`/`consistencyWarning`).
 3. **Unknown site, or `success:false`** → fall back to normal interactive
    Claude-in-Chrome tools for that visit.
 4. **After a successful interactive session**, write a small JSON recipe
    (see shape in `register.js`'s header comment — `listing` for a
    card-repeated results page, `article` for a single-record detail/post
-   page) and run `node register.js '<json>'` to document it. Inspect the
+   page, `action` for a repeatable automation like login or add-to-cart —
+   give it an explicit `recipe_name` if the hostname already has a recipe of
+   that same page_type) and run `node register.js '<json>'` to document it. Inspect the
    live DOM/text first (dump a card's `outerHTML`, or an article page's
    `document.body.innerText`, via a one-off Puppeteer snippet) rather than
    guessing selectors — Tailwind/JIT-styled sites in particular have

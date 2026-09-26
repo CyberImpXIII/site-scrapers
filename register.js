@@ -7,10 +7,20 @@
 //   node register.js '<json>'
 //   node register.js path/to/site-def.json
 //
+// A hostname can hold more than one recipe. What disambiguates a recipe is
+// (hostname, page_type, recipe_name) together — "recipe_name" defaults to
+// "default" when omitted, so existing single-recipe-per-page_type callers
+// are unaffected. Give it an explicit name when a site has more than one
+// recipe of the same page_type, e.g. two "action" recipes on the same
+// hostname: {"page_type":"action","recipe_name":"login",...} and
+// {"page_type":"action","recipe_name":"add_to_cart",...}. Look them up with
+// engine.js/query.js via "<hostname>#<page_type>:<recipe_name>".
+//
 // JSON shape (page_type: "listing", repeated cards — the default):
 // {
 //   "hostname": "example.com",
 //   "page_type": "listing",              // optional, defaults to "listing"
+//   "recipe_name": "default",            // optional, defaults to "default" -- see above
 //   "display_name": "Example Job Board",
 //   "status": "working",                 // or "broken" / "needs-review"
 //   "nav_method": "url_param",           // or "ui_steps"
@@ -56,6 +66,33 @@
 // extract_kind for article fields: "regex_anywhere" | "positional_segment" |
 // "anchor_attribute" (against content_selector's own attributes) | "title_regex"
 // (matches against document.title) | "full_blob" (the whole extracted text).
+//
+// JSON shape (page_type: "action", a repeatable, parameterized automation --
+// login, add-to-cart, or any other multi-step interaction that isn't
+// primarily about reading content). Executes identically to "article"
+// (ui_steps, then an optional post-action read of the resulting page) --
+// it's a separate page_type purely for organization/discovery (so
+// `query.js sites` and `#action:` lookups read clearly), not different
+// engine code. credential-shaped values (passwords, tokens, etc) belong in
+// caller-supplied params (substituted at run time via {{key}} in nav_template
+// ui_steps), never written into nav_template/notes/fields where they'd be
+// persisted in the DB.
+// {
+//   "hostname": "example.com",
+//   "page_type": "action",
+//   "recipe_name": "login",              // required in practice whenever a hostname has >1 action recipe
+//   "status": "working",
+//   "nav_method": "ui_steps",
+//   "nav_template": "[{\"action\":\"goto\",\"url\":\"https://example.com/login\"},{\"action\":\"type\",\"selector\":\"#email\",\"text\":\"{{email}}\"},{\"action\":\"type\",\"selector\":\"#password\",\"text\":\"{{password}}\"},{\"action\":\"click\",\"selector\":\"#submit\"},{\"action\":\"waitForSelector\",\"selector\":\".account-nav\"}]",
+//   "nav_params_schema": "{\"email\":\"string\",\"password\":\"string, pass at call time only, never stored\"}",
+//   "content_selector": ".account-nav",  // what to read back afterward, to both confirm success and report a result
+//   "card_min_text_len": 5,
+//   "ready_timeout_ms": 15000,
+//   "notes": "free text",
+//   "fields": [
+//     {"field_name":"logged_in_as","extract_kind":"full_blob"}
+//   ]
+// }
 
 const fs = require('fs');
 const { openDb, upsertSite, insertField } = require('./db');
@@ -109,6 +146,7 @@ function main() {
     success: true,
     hostname: def.hostname,
     pageType,
+    recipeName: def.recipe_name || 'default',
     siteId,
     fieldsRegistered: (def.fields || []).length,
   }));
