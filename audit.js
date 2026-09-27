@@ -44,7 +44,13 @@ function out(o) {
 // candidates for one parameterised action.
 function signature(step) {
   const parts = [step.action];
-  for (const k of ['stop_if_missing', 'restore_scroll', 'kind', 'only_if_selector']) {
+  // `kind` carries its VALUE because it is a small closed enum describing what
+  // the step asks, not site data — a forms probe and a blockers probe are
+  // different steps. Collapsing it to "str" like a selector made them look
+  // interchangeable, which would let the audit advise extracting a "shared"
+  // sequence that two recipes do not actually share.
+  if (step.kind !== undefined) parts.push(`kind=${step.kind}`);
+  for (const k of ['stop_if_missing', 'restore_scroll', 'only_if_selector', 'optional_selector']) {
     if (step[k] !== undefined) parts.push(`${k}=${typeof step[k] === 'string' ? 'str' : step[k]}`);
   }
   if (step.action === 'repeat') parts.push(`x${step.times ?? '?'}`);
@@ -77,7 +83,15 @@ function recipesWithSteps(db) {
     const key = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
     let expanded = raw;
     try {
-      expanded = expandSteps(db, raw, site.hostname, new Set([refKey(site)]));
+      // refKey takes camelCase, but a DB row is snake_case — passing the row
+      // directly seeded cycle detection with "host#undefined:undefined", so a
+      // self-referencing recipe would not have been caught here.
+      expanded = expandSteps(
+        db,
+        raw,
+        site.hostname,
+        new Set([refKey({ hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name })])
+      );
     } catch {
       /* dangling reference — audit the unexpanded form rather than skipping */
     }
@@ -308,4 +322,15 @@ async function main() {
   out({ ...report, summary: counts.join(', ') });
 }
 
-main();
+// Only run as a CLI, so the pure functions above can be unit-tested. They are
+// the interesting part — signature normalisation and duplication detection are
+// where a wrong answer quietly produces either noise or false confidence.
+if (require.main === module) main();
+
+module.exports = {
+  signature,
+  literalsOf,
+  findRepeatedSequences,
+  findSharedLiterals,
+  findInlineDuplicates,
+};

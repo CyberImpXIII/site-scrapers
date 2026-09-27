@@ -45,6 +45,7 @@ const {
   snapshotVersionIfChanged,
   definitionHasPassingRun,
 } = require('./db');
+const { decideVerdict } = require('./lib/verdict');
 
 const REPO_ROOT = __dirname;
 
@@ -197,19 +198,7 @@ async function main() {
   //
   // Getting this wrong made indeed.com "blocked" on no evidence of
   // attendability, which is exactly the discretion this is meant to remove.
-  const verdict = attended
-    ? extracted
-      ? wall
-        ? 'blocked' // a wall was present AND a person got past it: proven attendable
-        : 'working' // nothing was in the way after all
-      : 'blocked-attn' // a person present was not enough; real work remains
-    : extracted
-      ? 'working'
-      : wall
-        ? 'blocked-attn' // a wall, but attendability unproven
-        : alreadyProven
-          ? 'inconclusive'
-          : 'broken';
+  const verdict = decideVerdict({ extracted, wall, attended, alreadyProven });
 
   const report = {
     target,
