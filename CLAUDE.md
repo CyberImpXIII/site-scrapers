@@ -48,15 +48,88 @@ a page_type (implicit `recipe_name` = `default`).
    type into its search box with `ui_steps` instead of faking a URL param;
    if it cannot filter at all, drop the param from `nav_params_schema`
    rather than promising something it does not do.
-8. **`node lab.js` is the workbench** for building recipes — `probe <url>`
+8. **Never write an inline script blob. Use a helper — and if none fits,
+   write the helper first, then use it.** No `node -e "..."`, no
+   `python3 -c "..."`, no `node - <<EOF` / `python3 - <<PY` heredocs. Each
+   one costs tokens to author, reintroduces a shell-quoting bug roughly every
+   third attempt, and leaves nothing behind for next time. The helper you add
+   is reusable; the blob never is. What to reach for instead:
+
+   | instead of | use |
+   |---|---|
+   | `python3 -c` to read a JSON field | `jq` (already installed) |
+   | a heredoc that patches a file | the **Edit** tool |
+   | `node -e` to change a recipe in the DB | `node lab.js set <target> '<json>'` |
+   | `node -e` to inspect a recipe | `node query.js site <target>` |
+   | a pipeline to run/summarise recipes | `./dev.sh run` / `verify` / `health` |
+
+   Everything above already exists, so an inline blob is almost always a
+   discipline failure rather than a missing tool. When something genuinely
+   isn't covered, add a `./dev.sh` subcommand or a `lab.js` command in the
+   same turn and call that — do not write it inline "just this once".
+
+   Helpers must trim their own output: reading five lines instead of five
+   hundred saves more than a shorter command does. They must also keep
+   failure detail — a helper printing only a pass/fail count forces a second
+   run to learn what broke.
+
+   - `./dev.sh test [n]` — run the suite, summary only; `n` runs it
+     repeatedly to flake-check. Keeps failing test NAMES, so a failure is
+     diagnosable without a second run.
+   - `./dev.sh run <target> '<params>' ...` — run several recipes, one line
+     each (success / count / first record / where it broke).
+   - `./dev.sh verify <target> '<params>' ...` — batch-verify.
+   - `./dev.sh health` — only the recipes needing attention.
+   - `./dev.sh snap` / `new` — baseline the recipe list, then see what changed.
+     Worth doing before any batch of recipe work.
+   - `./dev.sh clean [--yes]` — remove stray `*.test` / `*.internal`
+     scaffolding recipes. Lists by default.
+
+   Write a new helper when you notice yourself composing the same pipeline a
+   second time — not speculatively. An unused helper is worse than the inline
+   version it replaced, and a wrong one is worse still.
+
+9. **`node lab.js` is the workbench** for building recipes — `probe <url>`
    (card/form/blocker sweep), `sel <url> '<css>'` (match counts), `raw`
    /`peek <target>` (samples plus per-field null counts), `set <target>`
    (selectors and fields in one call), `params`, and `new` (prints the whole
    build-and-verify sequence). Prefer it over ad-hoc `node -e` one-liners.
-9. After a successful interactive session (and the user said yes to step 5,
+10. After a successful interactive session (and the user said yes to step 5,
    for actions), document it: `node register.js '<recipe json>'` (all three
    JSON shapes are in register.js's header comment). Give it an explicit
    `recipe_name` if the hostname already has a recipe of the same page_type.
+
+**The recipe is the unique document; the actions it performs are not.** A
+recipe should hold only what is genuinely specific to its site — selectors,
+URLs, field mappings, parameter values. Everything procedural belongs in a
+parameterised generic action it references. Two consequences, both enforceable:
+
+- **Reuse before you write.** Run `node query.js generic-actions` and
+  `node query.js expand <target>` before adding steps. If an existing action
+  does most of what you need, pass it a parameter rather than writing a
+  near-duplicate; if it *almost* fits, add a parameter to it rather than
+  forking it.
+- **Hard-code as little as possible.** A literal inside a generic action is
+  acceptable only when it is universal platform vocabulary (ARIA dialog
+  roles, captcha iframes, form controls). Anything that belongs to a domain
+  or a site is a parameter with a documented default — "jobs / openings /
+  positions" baked into an empty-result probe made it a job-board probe
+  wearing a generic name. Use `default_selector` for an overridable default
+  and `optional_selector: true` for a step that skips itself when the caller
+  passes nothing.
+
+**`node audit.js` measures this** rather than leaving it to judgement:
+
+| check | finds |
+|---|---|
+| `inline` | recipes re-implementing an existing generic action step-for-step (fix: one `run_generic_action`) |
+| `repeats` | step sequences shared by 2+ recipes that no action covers yet — the next actions worth creating |
+| `literals` | the same literal hard-coded in 2+ recipes, i.e. copy-paste hiding a parameter |
+| `hardcoded` | literals inside generic actions, to judge universal vs smuggled site knowledge |
+
+Run it after adding recipes. A finding in `inline` or `literals` is a
+defect; a finding in `hardcoded` is a judgement call the tool surfaces rather
+than decides.
 
 For `action` recipes specifically, prefer keeping them within the small
 `action_types` taxonomy (`node query.js action-types`) rather than inventing

@@ -104,7 +104,20 @@ async function main() {
   // partialResults exists to say.
   const count = result.count ?? (result.article ? 1 : 0);
   const extracted = count > 0;
-  const verdict = extracted ? 'working' : 'broken';
+
+  // Zero records is ambiguous, and treating it as failure demoted a
+  // genuinely working recipe: nodesk.co with {"search":"qa"} returned
+  // nothing because the site had no matches for that keyword, so the cards
+  // never rendered and the wait expired. A query with no results says
+  // nothing about the recipe.
+  //
+  // So a previously-verified definition is never demoted by an empty run —
+  // that verdict is "inconclusive", and the caller is told to retry with a
+  // query known to have matches. Only a definition that has NEVER produced
+  // records gets called broken, because then there is no evidence either way
+  // and the cautious reading is the correct one.
+  const alreadyProven = definitionHasPassingRun(db, site.id);
+  const verdict = extracted ? 'working' : alreadyProven ? 'inconclusive' : 'broken';
 
   const report = {
     target,
@@ -126,6 +139,19 @@ async function main() {
   if (dry) {
     out({ ...report, note: 'Dry run — status not changed.' });
     process.exit(extracted ? 0 : 1);
+  }
+
+  if (verdict === 'inconclusive') {
+    out({
+      ...report,
+      newStatus: site.status,
+      definitionHasPassingRun: true,
+      note:
+        'Inconclusive, status unchanged. This definition has already produced records, and an empty run most often means the ' +
+        'query simply had no matches — re-run with params known to return results. If you believe the recipe really is broken, ' +
+        'check debugDir: diagnostics.json says whether the page was a wall or just empty.',
+    });
+    process.exit(0);
   }
 
   if (site.status !== verdict) {

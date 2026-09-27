@@ -102,8 +102,14 @@ test('a failing run with noDiagnostics:true captures nothing', async () => {
   assert.equal(result.success, false);
   assert.equal(result.debugDir, null);
 
+  // Scoped to THIS recipe, for the same reason the test above is: data/.debug/
+  // is shared mutable state and test FILES run in parallel, so comparing the
+  // whole directory fails whenever another file happens to produce a capture
+  // inside this window. That is exactly what it started doing once the suite
+  // grew — a flaky assertion, not a real regression.
   const after = captureDirsBefore();
-  assert.deepEqual(after, before, 'expected no new capture directory when diagnostics are disabled');
+  const newForThisRecipe = [...after].filter(d => !before.has(d) && d.includes(RECIPE_NAME));
+  assert.deepEqual(newForThisRecipe, [], 'expected no new capture directory when diagnostics are disabled');
 });
 
 test('a failing run keeps a rolling window of frames leading up to it', async () => {

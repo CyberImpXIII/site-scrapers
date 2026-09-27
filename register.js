@@ -50,7 +50,9 @@
 //   "page_type": "listing",              // optional, defaults to "listing"
 //   "recipe_name": "default",            // optional, defaults to "default" -- see above
 //   "display_name": "Example Job Board",
-//   "status": "working",                 // or "broken" / "needs-review"
+//   "status": "working",                 // or "broken" / "needs-review" / "blocked"
+//     "blocked" means the recipe works but the SITE needs a human every run
+//     (CAPTCHA, login wall, 2FA) -- nothing to fix, so do not re-derive it.
 //   "nav_method": "url_param",           // or "ui_steps"
 //   "nav_template": "https://example.com/?q={{query}}",
 //   "nav_params_schema": "{\"query\":\"string, required\"}",
@@ -450,7 +452,7 @@ function main() {
   // here, not after launching a browser.
   const VALID_PAGE_TYPES = ['listing', 'article', 'action'];
   const VALID_NAV_METHODS = ['url_param', 'ui_steps', 'direct_url'];
-  const VALID_STATUSES = ['working', 'broken', 'needs-review'];
+  const VALID_STATUSES = ['working', 'broken', 'needs-review', 'blocked'];
 
   if (!VALID_PAGE_TYPES.includes(pageType)) {
     console.log(JSON.stringify({

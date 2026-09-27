@@ -276,7 +276,25 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
     // which is the expensive part of building a recipe.
     const path = [...trail, index];
     progress.current = describeStep(step, index, steps.length, path);
-    const sel = step.selector ? substitute(step.selector, params) : undefined;
+    // A selector that is still "{{param}}" after substitution means the
+    // caller supplied nothing, so fall back to default_selector when the step
+    // offers one. This is what lets a generic action parameterise its
+    // vocabulary without forcing every caller to restate it — the default
+    // stays overridable instead of being baked in.
+    let sel = step.selector ? substitute(step.selector, params) : undefined;
+    if (sel !== undefined && /^\s*\{\{[^}]*\}\}\s*$/.test(sel)) {
+      // Still a placeholder, so the caller supplied nothing. Either fall back
+      // to the step's default, or treat the step as not asked for and skip
+      // it. Both let a generic action offer an OPTIONAL selector parameter —
+      // the way a site adds its own unrecognised consent banner without
+      // forking the whole action. Erroring on the literal "{{param}}" instead
+      // would make every such parameter mandatory.
+      if (step.default_selector) {
+        sel = step.default_selector;
+      } else if (step.optional_selector) {
+        continue;
+      }
+    }
     switch (step.action) {
       case 'goto': {
         const targetUrl = substitute(step.url, params);
@@ -413,6 +431,7 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
             ...step,
             selectors: step.selectors === undefined ? undefined : substitute(String(step.selectors), params),
             label: step.label === undefined ? undefined : substitute(String(step.label), params),
+            record_nouns: step.record_nouns === undefined ? undefined : substitute(String(step.record_nouns), params),
           })
         );
         break;
@@ -441,6 +460,16 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         // resume_url_includes (a URL substring reached after it). With
         // neither, this just waits out timeout_ms and then continues blind
         // — only use that as a last resort.
+        // `only_if_selector` makes the pause CONDITIONAL, which is what a
+        // captcha handoff needs: an unconditional one would stop every run
+        // to wait for a person who has nothing to do. Parallels
+        // stop_if_missing on click — if the guard selector isn't on the
+        // page, the whole step is skipped.
+        if (step.only_if_selector) {
+          const guard = substitute(step.only_if_selector, params);
+          const present = (await page.$$(guard)).length > 0;
+          if (!present) break;
+        }
         const timeout = step.timeout_ms ?? 300000;
         if (step.resume_selector) {
           await page.waitForSelector(substitute(step.resume_selector, params), { timeout });
@@ -685,8 +714,13 @@ async function main() {
       status: site.status,
       notes: site.notes,
       error:
-        `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
-        'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
+        site.status === 'blocked'
+          ? `Site is documented and the recipe is believed correct, but status="blocked": this site requires a person ` +
+            'every run (CAPTCHA, login wall or 2FA). There is nothing to fix here — do not re-derive the recipe. ' +
+            'Either run it attended with a handoff step (see the captcha_handoff generic action), or tell the user ' +
+            'it needs them. Pass {"allowUnverified": true} to attempt it anyway.'
+          : `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
+            'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
     }));
     process.exit(1);
   }
