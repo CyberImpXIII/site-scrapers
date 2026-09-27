@@ -105,7 +105,11 @@ async function main() {
     if (!a) die(`Usage: node lab.js ${cmd} <url>${cmd === 'sel' ? " '<css,css>'" : ''}`);
     const tail =
       cmd === 'probe'
-        ? [{ action: 'run_generic_action', ref: 'diagnose_page' }]
+        ? [
+            { action: 'run_generic_action', ref: 'diagnose_page' },
+            { action: 'run_generic_action', ref: 'diagnose_antibot' },
+            { action: 'probe', kind: 'empty_state', label: 'empty' },
+          ]
         : [{ action: 'run_generic_action', ref: 'probe_selectors', with: { selectors: '{{sel}}' } }];
     ensureProber(db, [
       { action: 'goto', url: '{{url}}' },
@@ -117,6 +121,19 @@ async function main() {
     if (!r.success) die(`prober run failed: ${r.error}`);
     for (const p of r.diagnostics || []) {
       if (p.kind === 'blockers') out({ blockers: { blocked: p.blocked, flags: p.flags, bodyTextLength: p.bodyTextLength, title: p.title } });
+      if (p.kind === 'antibot') {
+        out({
+          antibot: {
+            detected: p.detected,
+            blocking: p.blocking,
+            presentButNotBlocking: p.presentButNotBlocking,
+            services: p.services,
+            automationSignals: p.automationSignals,
+            advice: p.advice,
+          },
+        });
+      }
+      if (p.kind === 'empty_state') out({ emptyState: { likelyCause: p.likelyCause, explicitEmptyMessage: p.explicitEmptyMessage, largestSiblingGroup: p.largestSiblingGroup, advice: p.advice } });
       if (p.kind === 'selectors') out({ selectors: p.matches });
       if (p.kind === 'forms') out({ forms: { fields: p.fields.length, required: p.requiredCount, fileUpload: p.fileUploadPresent, submits: p.submits } });
       if (p.kind === 'repeated_structure') {
