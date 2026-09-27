@@ -139,3 +139,54 @@ test('a parameter shared across recipes is not a finding', () => {
   ]);
   assert.deepEqual(found, [], 'sharing a parameter name is reuse working, not duplication');
 });
+
+// --- unfillablePlaceholders(): can this recipe even be exercised? ----------
+// Getting this wrong is how a verified recipe gets reported as a liar. An
+// earlier version looked for the word "required" in the schema prose, which
+// missed wellfound.com — whose schema documents `role` without calling it
+// required — so the sweep ran it with no params, left "{{role}}" in the URL,
+// got nothing back, and condemned a recipe verified at 39 records.
+
+const { unfillablePlaceholders } = require('../audit');
+
+test('a template with no placeholders is always runnable', () => {
+  assert.deepEqual(unfillablePlaceholders('https://x.test/jobs', null), []);
+  assert.deepEqual(unfillablePlaceholders('', null), []);
+  assert.deepEqual(unfillablePlaceholders(null, null), []);
+});
+
+test('a placeholder with no probe value is unfillable', () => {
+  assert.deepEqual(unfillablePlaceholders('https://x.test/role/{{role}}', null), ['role']);
+  assert.deepEqual(unfillablePlaceholders('https://x.test/role/{{role}}', {}), ['role']);
+});
+
+test('a placeholder the probe set supplies is fillable', () => {
+  assert.deepEqual(
+    unfillablePlaceholders('https://x.test/role/{{role}}', { role: 'software-engineer' }),
+    [],
+    'this is the wellfound case — documented without the word "required", but supplied'
+  );
+});
+
+test('only the MISSING placeholders are reported', () => {
+  assert.deepEqual(
+    unfillablePlaceholders('https://x.test?q={{query}}&loc={{location}}', { query: 'sales' }),
+    ['location']
+  );
+});
+
+test('a repeated placeholder is reported once', () => {
+  assert.deepEqual(unfillablePlaceholders('https://x.test/{{q}}/page?q={{q}}', null), ['q']);
+});
+
+test('an empty-string value still counts as supplied', () => {
+  // The caller chose to pass it. Substitution will produce an empty segment,
+  // which is the recipe's business, not the audit's.
+  assert.deepEqual(unfillablePlaceholders('https://x.test?q={{q}}', { q: '' }), []);
+});
+
+test('a ui_steps template is scanned the same way', () => {
+  const steps = JSON.stringify([{ action: 'goto', url: 'https://x.test' }, { action: 'type', text: '{{search}}' }]);
+  assert.deepEqual(unfillablePlaceholders(steps, null), ['search']);
+  assert.deepEqual(unfillablePlaceholders(steps, { search: 'qa' }), []);
+});

@@ -156,6 +156,21 @@ parameterised generic action it references. Two consequences, both enforceable:
 | `repeats` | step sequences shared by 2+ recipes that no action covers yet — the next actions worth creating |
 | `literals` | the same literal hard-coded in 2+ recipes, i.e. copy-paste hiding a parameter |
 | `hardcoded` | literals inside generic actions, to judge universal vs smuggled site knowledge |
+| `params` | **live**: do recipes that declare parameters actually honour them |
+| `working` | **live**: does every recipe claiming `working` actually return records *now* |
+
+`audit.js working` is the check that `status` is telling the truth. `dev.sh
+health` answers the same question from run *history*, which goes stale exactly
+when it matters; this runs each one. A `LIAR` verdict means the status is
+wrong — fix the recipe, or let `verify.js` write an honest one. `UNRUNNABLE`
+means the recipe's `nav_template` has placeholders that `param_probe_values`
+cannot fill, so it could not be exercised at all; that is not a pass.
+
+Both live audits need `param_probe_values`, and the values are usually already
+in run history: `node lab.js history <target>` shows the param sets that have
+actually returned records, and `node lab.js adopt-history <target>` sets the
+two most recent distinct ones. Prefer those over inventing values — an article
+recipe needs a real posting URL, and a guessed one proves nothing.
 
 Run it after adding recipes. A finding in `inline` or `literals` is a
 defect; a finding in `hardcoded` is a judgement call the tool surfaces rather

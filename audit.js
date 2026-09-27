@@ -14,6 +14,7 @@
 //   node audit.js literals       # the same literal string hard-coded in 2+ recipes
 //   node audit.js hardcoded      # generic actions carrying literals that should be parameters
 //   node audit.js params         # LIVE: do recipes that declare parameters actually honour them?
+//   node audit.js working        # LIVE: does every recipe claiming "working" actually return records now?
 //
 // `params` runs each recipe twice using its own `param_probe_values` and
 // compares the records. It needs the network, so it is not part of ./test.sh —
@@ -67,6 +68,15 @@ function literalsOf(step) {
     if (typeof v === 'string' && v.length > 2 && !/^\{\{[^}]*\}\}$/.test(v)) out.push({ field: k, value: v });
   }
   return out;
+}
+
+// Which template placeholders a probe param-set cannot fill. Pure and
+// exported, because getting it wrong is how a verified recipe gets called a
+// liar: an earlier version looked for the word "required" in the schema prose
+// and so ran wellfound.com with no params, leaving "{{role}}" in the URL.
+function unfillablePlaceholders(navTemplate, probeSet) {
+  const names = [...String(navTemplate || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]);
+  return [...new Set(names)].filter(name => !(probeSet && typeof probeSet === 'object' && name in probeSet));
 }
 
 function recipesWithSteps(db) {
@@ -302,6 +312,101 @@ async function auditParameters(db) {
   return findings;
 }
 
+// Does every recipe claiming "working" actually work RIGHT NOW?
+//
+// `status` is only as good as the last run behind it, and recipes rot: sites
+// redesign, filters stop being honoured, a card container gets renamed. A
+// recipe that claims working and returns nothing is worse than one marked
+// broken, because a caller trusts it. `dev.sh health` answers this from run
+// HISTORY, which goes stale exactly when it matters; this answers it from a
+// run made now.
+//
+// Verdicts:
+//   ok            records came back
+//   LIAR          claims working, returned nothing — status is wrong
+//   PARTIAL       timed out but still extracted records; usable, likely short timeout
+//   UNRUNNABLE    needs parameters and has no param_probe_values to supply them
+async function auditWorking(db) {
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const execFileAsync = promisify(execFile);
+  const path = require('path');
+
+  const run = async (target, params) => {
+    const args = [path.join(__dirname, 'engine.js'), target, JSON.stringify({ ...params, allowUnverified: true })];
+    try {
+      const { stdout } = await execFileAsync(process.execPath, args, { cwd: __dirname, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      return JSON.parse(stdout);
+    } catch (e) {
+      try {
+        return JSON.parse(e.stdout);
+      } catch {
+        return { success: false, error: 'no parseable output' };
+      }
+    }
+  };
+
+  const findings = [];
+  for (const s of listSites(db)) {
+    if (s.status !== 'working') continue;
+    if (/\.internal$/.test(s.hostname)) continue; // tool scaffolding, not a recipe
+    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
+    const target = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
+
+    let schema = {};
+    try {
+      schema = JSON.parse(site.nav_params_schema || '{}');
+    } catch {
+      /* an unparseable schema is reported by the run itself */
+    }
+    // A required parameter with no probe value cannot be exercised: calling
+    // without it leaves "{{param}}" unsubstituted in the URL, which produces a
+    // confusing empty result rather than an error. Reported as UNRUNNABLE
+    // rather than counted as a failure, since the recipe may be fine.
+    let probes = null;
+    try {
+      probes = site.param_probe_values ? JSON.parse(site.param_probe_values) : null;
+    } catch {
+      /* fall through */
+    }
+    // Detected from the TEMPLATE, not from the schema prose. Looking for the
+    // word "required" in a description missed wellfound.com, whose schema
+    // documents `role` without calling it required — so the audit ran it with
+    // no params, left "{{role}}" unsubstituted in the URL, got nothing back and
+    // called a recipe verified at 39 records a liar. An unfilled placeholder is
+    // the exact, mechanical condition: the URL has holes nothing can fill.
+    const probeSet = Array.isArray(probes) && probes.length ? probes[0] : null;
+    const unfillable = unfillablePlaceholders(site.nav_template, probeSet);
+    if (unfillable.length) {
+      findings.push({
+        recipe: target,
+        result: 'UNRUNNABLE',
+        why: `claims working, but nav_template has placeholder(s) {{${unfillable.join('}}, {{')}}} that param_probe_values does not supply — running it would leave them unsubstituted and look like a failure`,
+        fix: `node lab.js set ${target} '{"param_probe_values":[{...}]}'`,
+      });
+      continue;
+    }
+
+    const r = await run(target, (Array.isArray(probes) && probes[0]) || {});
+    const count = r.count ?? (r.article ? 1 : 0);
+    findings.push({
+      recipe: target,
+      result: count > 0 ? (r.partialResults ? 'PARTIAL' : 'ok') : 'LIAR',
+      records: count,
+      timedOut: r.timedOut ?? null,
+      error: r.error ?? null,
+      failedStep: r.failedStep ? `step ${r.failedStep.index} ${r.failedStep.action} ${r.failedStep.selector ?? ''}` : null,
+      waitingOn: r.failureContext?.matcher?.value ?? null,
+      debugDir: r.debugDir ?? null,
+      ...(count === 0
+        ? { why: 'claims working but returned no records. Either fix it, or let verify.js set an honest status from a real run.' }
+        : {}),
+      ...(r.partialResults ? { why: 'records came back but the wait expired first — raise ready_timeout_ms' } : {}),
+    });
+  }
+  return findings;
+}
+
 async function main() {
   const which = process.argv[2] || 'all';
   const db = openDb();
@@ -315,6 +420,8 @@ async function main() {
   // Only on request: this one runs live recipes, so it is slow and needs the
   // network, unlike the static checks above.
   if (which === 'params') report.parameterValidation = await auditParameters(db);
+  // Also live, and the one that answers "is what we claim actually true".
+  if (which === 'working') report.workingRecipeValidation = await auditWorking(db);
 
   const counts = Object.entries(report)
     .filter(([, v]) => Array.isArray(v))
@@ -328,6 +435,7 @@ async function main() {
 if (require.main === module) main();
 
 module.exports = {
+  unfillablePlaceholders,
   signature,
   literalsOf,
   findRepeatedSequences,

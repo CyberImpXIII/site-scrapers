@@ -16,6 +16,7 @@
 //   node lab.js set <target> '<json>'             # set card_selector / anchor / timeout / fields at once
 //   node lab.js params <target> '<A>' '<B>'       # do two different params actually return different results?
 //   node lab.js new <target>                      # print a register.js skeleton for a new recipe
+//   node lab.js history <target>                 # params that have actually returned records (for param_probe_values)
 //
 // `set` takes: {"card_selector":"...", "card_anchor_text":"...",
 //   "ready_timeout_ms":25000, "nav_template":"...", "nav_params_schema":"{}",
@@ -261,6 +262,115 @@ async function main() {
       verdict: inert
         ? 'INERT — both parameter sets returned the same records. The recipe is ignoring its params; either find the real filter mechanism or drop the param from nav_params_schema so it stops promising something it does not do.'
         : 'Parameters change the result set, as a caller would expect.',
+    });
+    return;
+  }
+
+  if (cmd === 'history') {
+    // What params have actually WORKED for this recipe. The answer to "what do
+    // I put in param_probe_values" is usually already in run history, and
+    // recovering it beats inventing values that may match nothing — an
+    // article recipe needs a real posting URL, and guessing one is useless.
+    if (!a) die('Usage: node lab.js history <target>');
+    const { hostname, pageType, recipeName } = parseSiteArg(a);
+    const site = getSite(db, hostname, pageType, recipeName);
+    if (!site) die(`No recipe for "${a}"`);
+    const rows = db
+      .prepare(
+        `SELECT params_json, result_count, version_label, ran_at FROM scrape_runs
+          WHERE site_id = ? AND IFNULL(result_count,0) > 0
+          ORDER BY id DESC LIMIT 20`
+      )
+      .all(site.id);
+    const seen = new Set();
+    const distinct = [];
+    for (const r of rows) {
+      let p;
+      try {
+        p = JSON.parse(r.params_json || '{}');
+      } catch {
+        continue;
+      }
+      // Drop harness-only params: they are not part of the recipe's contract.
+      for (const k of ['allowUnverified', 'noSession', 'noDiagnostics', 'rollingFrames', 'rollingIntervalMs', 'attended', 'attendedTimeoutMs', 'session']) {
+        delete p[k];
+      }
+      const key = JSON.stringify(p);
+      if (key === '{}' || seen.has(key)) continue;
+      seen.add(key);
+      distinct.push({ params: p, records: r.result_count, version: r.version_label, at: r.ran_at });
+    }
+    out({
+      target: a,
+      placeholdersInTemplate: [...String(site.nav_template || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]),
+      currentProbeValues: site.param_probe_values ? JSON.parse(site.param_probe_values) : null,
+      paramsThatReturnedRecords: distinct,
+      note: distinct.length
+        ? 'Pick two contrasting sets from these for param_probe_values — they are known to return records, so an empty comparison will not be a false alarm.'
+        : 'No successful run with params on record. Run it once with real params first, then come back.',
+    });
+    return;
+  }
+
+  if (cmd === 'adopt-history') {
+    // Sets param_probe_values from the two most recent DISTINCT param sets that
+    // actually returned records. Exists because `audit.js working` cannot
+    // validate a recipe whose template has placeholders it has no values for,
+    // and 18 recipes were in that state — values that are known to work are
+    // already sitting in run history, so adopting them beats inventing them.
+    if (!a) die('Usage: node lab.js adopt-history <target>   (--force to overwrite existing probe values)');
+    const { hostname, pageType, recipeName } = parseSiteArg(a);
+    const site = getSite(db, hostname, pageType, recipeName);
+    if (!site) die(`No recipe for "${a}"`);
+    const placeholders = [...String(site.nav_template || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]);
+    if (!placeholders.length) {
+      out({ target: a, skipped: true, why: 'nav_template has no placeholders, so there is nothing to probe' });
+      return;
+    }
+    if (site.param_probe_values && b !== '--force') {
+      out({ target: a, skipped: true, why: 'already has param_probe_values; pass --force to replace them' });
+      return;
+    }
+    const rows = db
+      .prepare('SELECT params_json FROM scrape_runs WHERE site_id = ? AND IFNULL(result_count,0) > 0 ORDER BY id DESC LIMIT 40')
+      .all(site.id);
+    const seen = new Set();
+    const picks = [];
+    for (const r of rows) {
+      let p;
+      try {
+        p = JSON.parse(r.params_json || '{}');
+      } catch {
+        continue;
+      }
+      for (const k of ['allowUnverified', 'noSession', 'noDiagnostics', 'rollingFrames', 'rollingIntervalMs', 'attended', 'attendedTimeoutMs', 'session']) {
+        delete p[k];
+      }
+      // Must actually cover the template, or adopting it just moves the problem.
+      if (!placeholders.every(n => n in p)) continue;
+      const key = JSON.stringify(p);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      picks.push(p);
+      if (picks.length === 2) break;
+    }
+    if (!picks.length) {
+      out({
+        target: a,
+        skipped: true,
+        why: `no successful run supplied every placeholder (${placeholders.join(', ')}) — run it once with real params first`,
+      });
+      return;
+    }
+    db.prepare('UPDATE sites SET param_probe_values = ? WHERE id = ?').run(JSON.stringify(picks), site.id);
+    out({
+      target: a,
+      adopted: picks.length,
+      probeValues: picks,
+      note:
+        picks.length === 1
+          ? 'Only one distinct working param set on record. Enough for `audit.js working`, but `audit.js params` needs two to prove a parameter is not inert.'
+          : 'Two distinct sets adopted — enough for both `audit.js working` and `audit.js params`.',
     });
     return;
   }
