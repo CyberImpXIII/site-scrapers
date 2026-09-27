@@ -55,6 +55,9 @@ const {
   commonFailures,
   matchFailures,
   deleteFailure,
+  listBlockerSignatures,
+  insertBlockerSignature,
+  deleteBlockerSignature,
 } = require('./failuresDb');
 
 function fail(msg) {
@@ -65,6 +68,66 @@ function fail(msg) {
 function main() {
   const [, , cmd, arg, ...rest] = process.argv;
   const db = openFailuresDb();
+
+  if (cmd === 'signatures') {
+    const rows = listBlockerSignatures(db, { service: arg });
+    console.log(JSON.stringify({
+      count: rows.length,
+      signatures: rows.map(r => ({
+        id: r.id,
+        service: r.service,
+        where: r.where_seen,
+        pattern: r.pattern,
+        weight: r.blocking_weight,
+        source: r.source,
+        notes: r.notes,
+      })),
+      note:
+        'weight 2 = this signal alone means the page is walled; 1 = corroborating only (a challenge widget on a working ' +
+        'page is the classic 1). builtin rows are seeded from lib/blockerSignatures.js and re-seeded on every open — ' +
+        'edit that file to change one. Add discoveries with `add-signature`; they are source=user and survive re-seeding.',
+    }, null, 2));
+    return;
+  }
+
+  if (cmd === 'add-signature') {
+    if (!arg) fail('Usage: node failures.js add-signature \'{"service":"...","where_seen":"title|body|resource|dom","pattern":"...","flags":"i","blocking_weight":1|2,"notes":"..."}\'');
+    let def;
+    try {
+      def = JSON.parse(arg);
+    } catch (e) {
+      fail(`Not valid JSON: ${e.message}`);
+    }
+    if (!def.service || !def.where_seen || !def.pattern) fail('service, where_seen and pattern are all required');
+    const WHERE = ['title', 'body', 'resource', 'dom'];
+    if (!WHERE.includes(def.where_seen)) fail(`where_seen must be one of: ${WHERE.join(', ')}`);
+    if (def.where_seen !== 'dom') {
+      // Refuse a pattern that cannot compile: a bad row would be silently
+      // skipped by the probe forever, which looks like the signature simply
+      // never matching.
+      try {
+        new RegExp(def.pattern, def.flags || '');
+      } catch (e) {
+        fail(`pattern is not a valid regex: ${e.message}`);
+      }
+    }
+    insertBlockerSignature(db, def);
+    console.log(JSON.stringify({
+      success: true,
+      service: def.service,
+      where: def.where_seen,
+      weight: def.blocking_weight ?? 1,
+      note: 'Recorded. Every later run of the antibot probe uses it — no code change and no restart needed. If it proves general, promote it into lib/blockerSignatures.js so a fresh clone has it too.',
+    }));
+    return;
+  }
+
+  if (cmd === 'forget-signature') {
+    if (!arg) fail('Usage: node failures.js forget-signature <id>');
+    const r = deleteBlockerSignature(db, Number(arg));
+    console.log(JSON.stringify({ success: r.deleted, ...(r.reason ? { error: r.reason } : {}) }));
+    process.exit(r.deleted ? 0 : 1);
+  }
 
   if (cmd === 'types') {
     console.log(JSON.stringify(listFailureTypes(db), null, 2));

@@ -188,6 +188,18 @@ async function main() {
       die(`not valid JSON: ${e.message}`);
     }
 
+    // The same gate register.js enforces, because a second write path that
+    // skips it is no gate at all. "working" and "blocked" are claims that have
+    // to come from a run; the cautious statuses stay settable here.
+    const EARNED = ['working', 'blocked'];
+    if (EARNED.includes(def.status)) {
+      die(
+        `status "${def.status}" cannot be set here — it has to be earned by a run. ` +
+          `Use: node verify.js ${a} '<params>'  (add --attended to prove a person alone is sufficient). ` +
+          'Settable by hand: broken, needs-review, blocked-attn (the last requires notes).'
+      );
+    }
+
     const cols = [
       'card_selector', 'card_anchor_text', 'ready_timeout_ms', 'nav_template', 'nav_params_schema',
       'notes', 'content_selector', 'card_min_text_len', 'param_probe_values', 'status',

@@ -484,6 +484,29 @@ function main() {
     process.exit(1);
   }
 
+  // "blocked" is a claim about the SITE — that a person is genuinely required
+  // every run — and like "working" it is not an agent's to assert. It is
+  // reached programmatically: `verify.js` sets it when the failure sweep
+  // identifies a wall, or when `verify.js --attended` shows that a person
+  // present was sufficient. Left hand-settable, it would become the
+  // comfortable place to park anything hard.
+  //
+  // "blocked-attn" is the opposite: it stays freely settable because it is the
+  // cautious direction (it parks work instead of claiming success) and because
+  // nothing can detect "the agent is out of moves". The asymmetry is
+  // deliberate — cheap to enter, earned to leave.
+  if (def.status === 'blocked') {
+    console.log(JSON.stringify({
+      success: false,
+      error:
+        '"status": "blocked" cannot be set by hand — it asserts that a person is required every run, which has to come ' +
+        'from a run. Register as "needs-review" (or "blocked-attn" with notes, if you are stuck), then: ' +
+        `node verify.js ${def.hostname}#${pageType}:${def.recipe_name || 'default'} '<params>' sets "blocked" ` +
+        'automatically when it detects a wall, and --attended sets it when a person being present was enough.',
+    }));
+    process.exit(1);
+  }
+
   // "blocked-attn" means work has stopped until the user participates, so it
   // has to say WHAT is needed. A bare status would leave them to rediscover
   // the dead end that produced it, which defeats the purpose of the state.

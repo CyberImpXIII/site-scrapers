@@ -21,6 +21,9 @@ const {
   matchFailures,
   listFailureTypes,
   deleteFailure,
+  listBlockerSignatures,
+  insertBlockerSignature,
+  deleteBlockerSignature,
 } = require('../failuresDb');
 const { FAILURE_TYPES } = require('../lib/failureTypes');
 
@@ -48,7 +51,9 @@ test('the taxonomy is seeded from code, so a fresh clone has the vocabulary', ()
   try {
     fs.mkdirSync(path.join(tmp, 'lib'), { recursive: true });
     fs.copyFileSync(path.join(REPO_ROOT, 'failuresDb.js'), path.join(tmp, 'failuresDb.js'));
-    fs.copyFileSync(path.join(REPO_ROOT, 'lib', 'failureTypes.js'), path.join(tmp, 'lib', 'failureTypes.js'));
+    for (const f of ['failureTypes.js', 'blockerSignatures.js']) {
+      fs.copyFileSync(path.join(REPO_ROOT, 'lib', f), path.join(tmp, 'lib', f));
+    }
     const { openFailuresDb: openFresh, listFailureTypes: listFresh } = require(path.join(tmp, 'failuresDb.js'));
     const fresh = openFresh();
     const names = listFresh(fresh).map(t => t.name);
@@ -185,4 +190,55 @@ test('the CLI accepts a deliberately new type via the escape hatch', async () =>
   );
   deleteFailure(db, out.id);
   db.prepare('DELETE FROM failure_types WHERE name = ?').run('failtest_novel_type');
+});
+
+// --- Signature table ------------------------------------------------------
+// The blocker signatures used to be a static array inside probes.js. They are
+// exactly the knowledge that grows — vendors change markup, new services
+// appear — so freezing them in library code meant every discovery required a
+// code change and anything learned in a session was lost.
+
+test('signatures are seeded from code and extensible at runtime', () => {
+  const { BLOCKER_SIGNATURES } = require('../lib/blockerSignatures');
+  const seeded = listBlockerSignatures(db);
+  assert.ok(seeded.length >= BLOCKER_SIGNATURES.length, 'the code baseline must be present in the table');
+  assert.ok(seeded.every(r => r.source === 'builtin' || r.source === 'user'));
+
+  // A discovery lands in the table and is usable without touching code.
+  insertBlockerSignature(db, {
+    service: 'failtest_service',
+    where_seen: 'title',
+    pattern: 'failtest challenge marker',
+    flags: 'i',
+    blocking_weight: 2,
+    notes: 'Test-only signature from test/failures.test.js.',
+  });
+  const added = listBlockerSignatures(db, { service: 'failtest_service' });
+  assert.equal(added.length, 1);
+  assert.equal(added[0].source, 'user', 'a runtime discovery is a user row, so re-seeding leaves it alone');
+
+  // A builtin cannot be deleted, because the next open would bring it back and
+  // a change that silently reverts is worse than one refused now.
+  const builtin = seeded.find(r => r.source === 'builtin');
+  assert.equal(deleteBlockerSignature(db, builtin.id).deleted, false);
+  assert.equal(deleteBlockerSignature(db, added[0].id).deleted, true);
+});
+
+test('blocking weight, not a hardcoded phrase list, decides whether a wall is a wall', () => {
+  const rows = listBlockerSignatures(db);
+  const widget = rows.filter(r => r.service === 'captcha_widget');
+  const cloudflare = rows.filter(r => r.service === 'cloudflare');
+
+  // A challenge widget is weight 1 on its resource/DOM signals: jobspresso.co
+  // embeds reCAPTCHA on a form while serving content perfectly, and treating
+  // that as a block wrongly condemned a working recipe.
+  assert.ok(
+    widget.some(r => r.where_seen === 'resource' && r.blocking_weight === 1),
+    'an embedded challenge resource must be corroborating only'
+  );
+  // A Cloudflare interlude IS the page, so its title signal stands alone.
+  assert.ok(
+    cloudflare.some(r => r.where_seen === 'title' && r.blocking_weight === 2),
+    'a challenge title alone must establish a wall'
+  );
 });

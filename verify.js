@@ -55,6 +55,7 @@ function out(o) {
 async function main() {
   const [, , target, paramsArg, ...flags] = process.argv;
   const dry = flags.includes('--dry') || paramsArg === '--dry';
+  const attended = flags.includes('--attended') || paramsArg === '--attended';
   if (!target) {
     out({
       success: false,
@@ -86,7 +87,18 @@ async function main() {
 
   // allowUnverified is the whole point: a candidate has to be runnable in
   // order to earn its status.
-  const runParams = JSON.stringify({ ...params, allowUnverified: true });
+  const runParams = JSON.stringify({
+    ...params,
+    allowUnverified: true,
+    ...(attended ? { attended: true } : {}),
+  });
+  if (attended) {
+    // Printed to stderr so stdout stays a clean JSON document for jq.
+    process.stderr.write(
+      `Attended verification of ${target}: a browser window will open. Clear whatever is in the way ` +
+        '(a challenge, a sign-in), then leave it — the run continues by itself the moment the records appear.\n'
+    );
+  }
   let result;
   try {
     const { stdout } = await execFileAsync(process.execPath, [path.join(REPO_ROOT, 'engine.js'), target, runParams], {
@@ -136,15 +148,68 @@ async function main() {
   if (!extracted && result.debugDir) {
     try {
       const probes = JSON.parse(require('fs').readFileSync(path.join(result.debugDir, 'diagnostics.json'), 'utf8'));
-      const blockers = probes.find(p => p.kind === 'blockers');
-      const walls = (blockers?.flags ?? []).filter(f => ['captcha', 'botCheck', 'loginWall'].includes(f));
-      if (walls.length) wall = walls;
+      // The antibot probe is authoritative: it names the service, weighs
+      // whether the challenge IS the page, and catches wordings the generic
+      // blockers regexes miss (Cloudflare's "Verifying you are human" does not
+      // match a /verify you are human/ pattern). blockers is the fallback, for
+      // walls that are not anti-bot services — a plain login page.
+      const antibot = probes.find(p => p.kind === 'antibot');
+      if (antibot?.blocking && antibot.detected?.length) wall = antibot.detected;
+      if (!wall) {
+        // The fallback list comes from the signature table's own service names
+        // rather than being hardcoded here — a new wall service added at
+        // runtime should count immediately, without a second place to update.
+        const { WALL_SERVICES } = require('./failuresDb');
+        const legacyToService = { captcha: 'captcha_widget', botCheck: 'rate_limit', loginWall: 'login_wall' };
+        const blockers = probes.find(p => p.kind === 'blockers');
+        const walls = (blockers?.flags ?? [])
+          .map(f => legacyToService[f] ?? f)
+          .filter(s => WALL_SERVICES.includes(s));
+        if (walls.length) wall = walls;
+      }
     } catch {
       /* no capture or unreadable — fall through to the ordinary verdict */
     }
   }
 
-  const verdict = extracted ? 'working' : wall ? 'blocked' : alreadyProven ? 'inconclusive' : 'broken';
+  // --attended answers the one question that decides between the two blocked
+  // states, and answers it from a RUN rather than from an agent's opinion:
+  // with a person present to clear whatever is in the way, does the recipe
+  // complete?
+  //
+  //   records came back  -> a human alone was sufficient. If a wall was seen,
+  //                         that is "blocked" (needs a person every run); if
+  //                         none was, the recipe simply works.
+  //   nothing came back  -> a human alone was NOT sufficient, so this is not
+  //                         merely blocked. It stays blocked-attn: there is
+  //                         real work left that the user's presence did not
+  //                         resolve.
+  //
+  // This is the ONLY route out of blocked-attn. An agent cannot promote it by
+  // asserting the recipe is fine, which is the point — entering that state is
+  // cheap and cautious, leaving it has to be earned.
+  // "blocked" claims a person is SUFFICIENT. Detecting a wall does not
+  // establish that — the wall might need credentials nobody has, or the recipe
+  // might be broken behind it too. So an unattended run that hits a wall can
+  // only conclude "blocked-attn": something is in the way and whether a person
+  // resolves it is still unknown. Only an attended run that actually returned
+  // records can promote to "blocked".
+  //
+  // Getting this wrong made indeed.com "blocked" on no evidence of
+  // attendability, which is exactly the discretion this is meant to remove.
+  const verdict = attended
+    ? extracted
+      ? wall
+        ? 'blocked' // a wall was present AND a person got past it: proven attendable
+        : 'working' // nothing was in the way after all
+      : 'blocked-attn' // a person present was not enough; real work remains
+    : extracted
+      ? 'working'
+      : wall
+        ? 'blocked-attn' // a wall, but attendability unproven
+        : alreadyProven
+          ? 'inconclusive'
+          : 'broken';
 
   const report = {
     target,
@@ -182,6 +247,22 @@ async function main() {
   }
 
   if (site.status !== verdict) {
+    // blocked-attn requires notes saying what the user needs to do, and when
+    // this tool sets the status it has to supply them itself — otherwise it
+    // would write a state that register.js would reject as unusable.
+    if (verdict === 'blocked-attn') {
+      const reason = wall
+        ? `A wall was detected (${wall.join(', ')}) and no records came back${attended ? ' even with a person present' : ''}.`
+        : 'A person being present was not enough to complete the run.';
+      const next = attended
+        ? 'An attended run has already been tried and did not succeed, so this needs real work, not another attempt: read debugDir/diagnostics.json.'
+        : `NEXT STEP FOR THE USER: run \`node verify.js ${target} '${paramsArg && paramsArg !== '--attended' ? paramsArg : '{}'}' --attended\` and clear the wall in the window that opens. If records come back, this becomes "blocked" (needs a person each run). If not, it needs real work.`;
+      const stamp = `[verify.js ${new Date().toISOString().slice(0, 10)}] ${reason} ${next}`;
+      db.prepare('UPDATE sites SET notes = ? WHERE id = ?').run(
+        site.notes ? `${site.notes}\n${stamp}` : stamp,
+        site.id
+      );
+    }
     db.prepare('UPDATE sites SET status = ?, last_verified = ? WHERE id = ?').run(verdict, new Date().toISOString(), site.id);
     // status is a versioned column, so a change to it is a change to the
     // recipe and gets its own snapshot.

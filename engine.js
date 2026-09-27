@@ -768,7 +768,14 @@ async function main() {
       process.exit(1);
     }
   }
-  const headed = [expandedSteps, paginationSteps].some(st => st && stepsNeedHeaded(st));
+  // `attended` forces a visible window and gives the person time to clear
+  // whatever is in the way, regardless of nav_method — a url_param recipe has
+  // no steps to hang a handoff on, and a blocked-attn recipe may have no
+  // handoff at all. It exists so the question "is a HUMAN alone enough here,
+  // or is more automation work needed?" can be answered by a run rather than
+  // by an agent's opinion. See verify.js --attended.
+  const attended = Boolean(params.attended);
+  const headed = attended || [expandedSteps, paginationSteps].some(st => st && stepsNeedHeaded(st));
   // Session persistence is ON BY DEFAULT (params.session picks which named,
   // parallel session — e.g. a second account — default 'default'); a run
   // opts out entirely with params.noSession: true.
@@ -946,7 +953,11 @@ async function main() {
 
       let timedOut = false;
       try {
-        await waitForCards(site.ready_timeout_ms);
+        // An attended run waits much longer, because it is waiting on a
+        // PERSON clearing a wall rather than on a page rendering. It still
+        // resolves the instant the cards appear, so solving the challenge
+        // continues the run immediately instead of burning the whole window.
+        await waitForCards(attended ? numericParam(params.attendedTimeoutMs, params, 240000) : site.ready_timeout_ms);
       } catch {
         timedOut = true;
       }

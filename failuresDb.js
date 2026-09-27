@@ -19,6 +19,7 @@ const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
 const path = require('path');
 const { FAILURE_TYPES } = require('./lib/failureTypes');
+const { BLOCKER_SIGNATURES, WALL_SERVICES } = require('./lib/blockerSignatures');
 
 const FAILURES_DB_PATH = path.join(__dirname, 'data', 'failures.db');
 
@@ -57,6 +58,29 @@ CREATE TABLE IF NOT EXISTS failures (
 
 CREATE INDEX IF NOT EXISTS idx_failures_hostname ON failures(hostname);
 CREATE INDEX IF NOT EXISTS idx_failures_type ON failures(failure_type);
+
+-- How a walled page is RECOGNISED. A table rather than a literal in probe
+-- code, because this is precisely the knowledge that grows: vendors change
+-- their markup, new services appear, and a site occasionally needs a
+-- signature nobody has seen. Frozen in code, every discovery would need a
+-- code change and anything learned in a session would be lost.
+-- Seeded from lib/blockerSignatures.js so a fresh clone still recognises the
+-- common services; rows added at runtime are source='user' and survive
+-- re-seeding, same contract as generic_actions.
+CREATE TABLE IF NOT EXISTS blocker_signatures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service TEXT NOT NULL,              -- cloudflare | datadome | login_wall | ...
+  where_seen TEXT NOT NULL,           -- 'title' | 'body' | 'resource' | 'dom'
+  pattern TEXT NOT NULL,              -- regex source, or a CSS selector when where_seen='dom'
+  flags TEXT,                         -- regex flags; NULL for dom selectors
+  blocking_weight INTEGER NOT NULL DEFAULT 1,  -- 2 = this alone means walled; 1 = corroborating only
+  source TEXT NOT NULL DEFAULT 'builtin',
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(service, where_seen, pattern)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sig_service ON blocker_signatures(service);
 `;
 
 function applyConcurrencyPragmas(db) {
@@ -83,12 +107,74 @@ function seedFailureTypes(db) {
   for (const [name, description] of stale) upsert.run(name, description, now);
 }
 
+// Compare-before-write, like seedFailureTypes: an unconditional upsert on
+// every open turns every reader into a writer.
+function seedBlockerSignatures(db) {
+  const existing = new Map(
+    db
+      .prepare("SELECT service, where_seen, pattern, flags, blocking_weight FROM blocker_signatures WHERE source = 'builtin'")
+      .all()
+      .map(r => [`${r.service}\u0000${r.where_seen}\u0000${r.pattern}`, r])
+  );
+  const stale = BLOCKER_SIGNATURES.filter(([service, where, pattern, flags, weight]) => {
+    const cur = existing.get(`${service}\u0000${where}\u0000${pattern}`);
+    return !cur || cur.flags !== (flags ?? null) || cur.blocking_weight !== weight;
+  });
+  if (stale.length === 0) return;
+  const now = new Date().toISOString();
+  const upsert = db.prepare(
+    `INSERT INTO blocker_signatures (service, where_seen, pattern, flags, blocking_weight, source, created_at)
+     VALUES (?,?,?,?,?, 'builtin', ?)
+     ON CONFLICT(service, where_seen, pattern) DO UPDATE SET
+       flags = excluded.flags, blocking_weight = excluded.blocking_weight`
+  );
+  for (const [service, where, pattern, flags, weight] of stale) {
+    upsert.run(service, where, pattern, flags ?? null, weight, now);
+  }
+}
+
+function listBlockerSignatures(db, { service } = {}) {
+  return service
+    ? db.prepare('SELECT * FROM blocker_signatures WHERE service = ? ORDER BY service, where_seen').all(service)
+    : db.prepare('SELECT * FROM blocker_signatures ORDER BY service, where_seen').all();
+}
+
+function insertBlockerSignature(db, s) {
+  db.prepare(
+    `INSERT INTO blocker_signatures (service, where_seen, pattern, flags, blocking_weight, source, notes, created_at)
+     VALUES (?,?,?,?,?, 'user', ?, ?)
+     ON CONFLICT(service, where_seen, pattern) DO UPDATE SET
+       flags = excluded.flags, blocking_weight = excluded.blocking_weight, notes = excluded.notes`
+  ).run(
+    s.service,
+    s.where_seen,
+    s.pattern,
+    s.flags ?? null,
+    s.blocking_weight ?? 1,
+    s.notes ?? null,
+    new Date().toISOString()
+  );
+}
+
+function deleteBlockerSignature(db, id) {
+  // Only user rows: deleting a builtin would silently come back on the next
+  // open, and a change that reverts later is worse than one refused now.
+  const row = db.prepare('SELECT source FROM blocker_signatures WHERE id = ?').get(id);
+  if (!row) return { deleted: false, reason: 'no such signature' };
+  if (row.source === 'builtin') {
+    return { deleted: false, reason: 'that signature is a builtin, owned by lib/blockerSignatures.js and re-seeded on every open — edit that file instead' };
+  }
+  db.prepare('DELETE FROM blocker_signatures WHERE id = ?').run(id);
+  return { deleted: true };
+}
+
 function openFailuresDb() {
   fs.mkdirSync(path.dirname(FAILURES_DB_PATH), { recursive: true });
   const db = new DatabaseSync(FAILURES_DB_PATH);
   applyConcurrencyPragmas(db);
   db.exec(SCHEMA);
   seedFailureTypes(db);
+  seedBlockerSignatures(db);
   return db;
 }
 
@@ -270,4 +356,8 @@ module.exports = {
   matchFailures,
   deleteFailure,
   signatureOf,
+  listBlockerSignatures,
+  insertBlockerSignature,
+  deleteBlockerSignature,
+  WALL_SERVICES,
 };
