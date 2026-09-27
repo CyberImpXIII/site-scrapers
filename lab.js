@@ -182,10 +182,15 @@ async function main() {
     const site = getSite(db, hostname, pageType, recipeName);
     if (!site) die(`No recipe for "${a}"`);
     let def;
+    // `@path` reads the JSON from a file. Long notes contain apostrophes and
+    // nested quotes, and shell-escaping those inline is how a set silently
+    // turns into a no-op — which is exactly what happened to a usajobs.gov
+    // note before this existed.
+    const raw = b.startsWith('@') ? require('fs').readFileSync(b.slice(1), 'utf8') : b;
     try {
-      def = JSON.parse(b);
+      def = JSON.parse(raw);
     } catch (e) {
-      die(`not valid JSON: ${e.message}`);
+      die(`not valid JSON${b.startsWith('@') ? ` in ${b.slice(1)}` : ''}: ${e.message}`);
     }
 
     // The same gate register.js enforces, because a second write path that
