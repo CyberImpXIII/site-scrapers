@@ -25,22 +25,39 @@ a page_type (implicit `recipe_name` = `default`).
    extracted anyway and are present in `jobs`/`article` — check `count`
    before discarding them, and consider raising `ready_timeout_ms`. Add trailing `--raw` only when debugging extraction
    (roughly doubles output size) — omit it otherwise.
-3. `documented:false` → nothing known. `documented:true, success:false` →
+3. **Two blocked states, different in kind — do not confuse them.**
+   - **`blocked`** is about the SITE. The recipe is believed correct; the site
+     needs a person every run (CAPTCHA, login wall, bot protection). The path
+     forward is known: run it attended, or tell the user. Nothing to fix, so
+     re-deriving it wastes effort. `verify.js` sets this automatically when
+     the failure sweep sees a wall.
+   - **`blocked-attn`** is about YOUR knowledge. The recipe is *not* known
+     correct and troubleshooting is stalled: you cannot determine the next
+     step without the user participating. Retrying or re-deriving is exactly
+     what already failed. Set it deliberately — nothing can detect it, since
+     it is a judgement that you are out of moves — and `register.js` requires
+     `notes` saying what was tried, what the obstacle is, and what only they
+     can supply or decide. Then surface it and move on to other work.
+
+   `./dev.sh blocked` lists both, separated, so what is waiting on the user is
+   visible instead of being rediscovered later.
+
+4. `documented:false` → nothing known. `documented:true, success:false` →
    broken/needs-review, or this run failed — check `error`/`timedOut`/
    `consistencyWarning`.
-4. Unknown or broken → fall back to interactive browser tools.
-5. Whenever navigating to a page to *do* something for the user — not just
+5. Unknown or broken → fall back to interactive browser tools.
+6. Whenever navigating to a page to *do* something for the user — not just
    to scrape a listing/article — confirm with the user whether they'd like
    that action stored as a reusable, adjustable recipe (`page_type: action`)
    before moving on, rather than assuming a one-off interactive pass is
    fine. Don't ask this for read-only listing/article lookups.
-6. **`status: "working"` cannot be set by hand.** `register.js` refuses it.
+7. **`status: "working"` cannot be set by hand.** `register.js` refuses it.
    Register as `needs-review`, then `node verify.js <target> '<params>'` — a
    run that actually extracts records is what sets the status. Editing a
    verified recipe invalidates it (the thing that passed no longer exists);
    promoting does not, since promotion copies the definition unchanged. Use
    `{"allowUnverified": true}` to run an unblessed recipe while iterating.
-7. **Prove a parameter does something.** Give every recipe that declares
+8. **Prove a parameter does something.** Give every recipe that declares
    params a `param_probe_values`: two or more contrasting param sets that
    *should* return different records, e.g.
    `[{"q":"sales"},{"q":"engineer"}]`. They live on the recipe because only
@@ -51,15 +68,17 @@ a page_type (implicit `recipe_name` = `default`).
    `node lab.js params <target> '<A>' '<B>'` does one recipe ad hoc.
    A recipe that accepts a param and ignores it is worse than a broken one —
    it answers the wrong question silently.
-   Note this validates *parameters*, not fixed values baked into a
+   nodesk.co shipped an inert param: `?s=` never filtered, and both keywords
+   returned byte-identical records. If a site filters client-side, type into
+   its search box with `ui_steps` instead of faking a URL param; if it cannot
+   filter at all, drop the param from `nav_params_schema` rather than
+   promising what it does not do.
+
+   This validates *parameters* only, not fixed values baked into a
    `nav_template`. If a template hard-codes a filter and the schema promises
-   it (e.g. "remote only"), nothing here checks that promise — verify it by
-   reading records, or stop promising it. nodesk.co shipped exactly that: `?s=` never filtered, and both
-   keywords returned byte-identical results. If a site filters client-side,
-   type into its search box with `ui_steps` instead of faking a URL param;
-   if it cannot filter at all, drop the param from `nav_params_schema`
-   rather than promising something it does not do.
-8. **Never write an inline script blob. Use a helper — and if none fits,
+   it (e.g. linkedin.com#listing's "f_WT=2 (Remote) fixed"), nothing here
+   checks that promise — confirm it by reading the records, or stop making it.
+9. **Never write an inline script blob. Use a helper — and if none fits,
    write the helper first, then use it.** No `node -e "..."`, no
    `python3 -c "..."`, no `node - <<EOF` / `python3 - <<PY` heredocs. Each
    one costs tokens to author, reintroduces a shell-quoting bug roughly every
@@ -100,12 +119,12 @@ a page_type (implicit `recipe_name` = `default`).
    second time — not speculatively. An unused helper is worse than the inline
    version it replaced, and a wrong one is worse still.
 
-9. **`node lab.js` is the workbench** for building recipes — `probe <url>`
+10. **`node lab.js` is the workbench** for building recipes — `probe <url>`
    (card/form/blocker sweep), `sel <url> '<css>'` (match counts), `raw`
    /`peek <target>` (samples plus per-field null counts), `set <target>`
    (selectors and fields in one call), `params`, and `new` (prints the whole
    build-and-verify sequence). Prefer it over ad-hoc `node -e` one-liners.
-10. After a successful interactive session (and the user said yes to step 5,
+11. After a successful interactive session (and the user said yes to step 6,
    for actions), document it: `node register.js '<recipe json>'` (all three
    JSON shapes are in register.js's header comment). Give it an explicit
    `recipe_name` if the hostname already has a recipe of the same page_type.

@@ -12,11 +12,24 @@ CREATE TABLE IF NOT EXISTS sites (
   page_type TEXT NOT NULL DEFAULT 'listing',         -- 'listing' (repeated cards) | 'article' (single content block) | 'action' (a repeatable automation -- login, add-to-cart, etc; shares 'article's execution path -- ui_steps then optional field capture -- but isn't primarily about reading content)
   recipe_name TEXT NOT NULL DEFAULT 'default',       -- disambiguates multiple recipes for the same (hostname, page_type), e.g. two 'action' recipes: 'login' and 'add_to_cart'. Leave 'default' for the single/primary recipe of a given page_type.
   display_name TEXT,
-  status TEXT NOT NULL DEFAULT 'needs-review',       -- 'working' | 'broken' | 'needs-review' | 'blocked'
-                                                    -- 'blocked' = the recipe is CORRECT but the site requires a
-                                                    -- person every run (CAPTCHA, login wall, 2FA). Distinct from
-                                                    -- 'broken': there is nothing to fix, so re-deriving it is wasted
-                                                    -- effort. Not usable unattended either.
+  status TEXT NOT NULL DEFAULT 'needs-review',       -- 'working' | 'broken' | 'needs-review' | 'blocked' | 'blocked-attn'
+                                                    -- The two blocked states are different in KIND, not degree:
+                                                    --
+                                                    -- 'blocked'      a property of the SITE. The recipe is believed
+                                                    --                correct; the site requires a person every run
+                                                    --                (CAPTCHA, login wall, 2FA). The path forward is
+                                                    --                known -- run it attended. Nothing to fix, so
+                                                    --                re-deriving it is wasted effort.
+                                                    --
+                                                    -- 'blocked-attn' a property of the AGENT's knowledge. The recipe
+                                                    --                is NOT known correct and troubleshooting is
+                                                    --                stalled: the next step cannot be determined
+                                                    --                without the user participating. Distinct from
+                                                    --                'broken', where the fault is understood and the
+                                                    --                work is just undone. Retrying alone will not
+                                                    --                help, which is exactly why it needs its own
+                                                    --                state -- otherwise an agent loops on it.
+                                                    --                notes MUST say what is needed from the user.
   nav_method TEXT NOT NULL,                          -- 'url_param' | 'ui_steps' | 'direct_url' (article: goto params.url as-is)
   nav_template TEXT NOT NULL,                        -- URL template (url_param/direct_url) OR JSON step array (ui_steps)
   nav_params_schema TEXT,                            -- JSON: documents accepted params, for callers

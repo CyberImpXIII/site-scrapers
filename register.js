@@ -458,7 +458,7 @@ function main() {
   // here, not after launching a browser.
   const VALID_PAGE_TYPES = ['listing', 'article', 'action'];
   const VALID_NAV_METHODS = ['url_param', 'ui_steps', 'direct_url'];
-  const VALID_STATUSES = ['working', 'broken', 'needs-review', 'blocked'];
+  const VALID_STATUSES = ['working', 'broken', 'needs-review', 'blocked', 'blocked-attn'];
 
   if (!VALID_PAGE_TYPES.includes(pageType)) {
     console.log(JSON.stringify({
@@ -480,6 +480,19 @@ function main() {
     console.log(JSON.stringify({
       success: false,
       error: `Unknown status "${def.status}". Use one of: ${VALID_STATUSES.join(', ')}.`,
+    }));
+    process.exit(1);
+  }
+
+  // "blocked-attn" means work has stopped until the user participates, so it
+  // has to say WHAT is needed. A bare status would leave them to rediscover
+  // the dead end that produced it, which defeats the purpose of the state.
+  if (def.status === 'blocked-attn' && !(def.notes || '').trim()) {
+    console.log(JSON.stringify({
+      success: false,
+      error:
+        'status "blocked-attn" requires notes saying what is needed from the user — what was tried, what the obstacle is, ' +
+        'and what specifically only they can supply or decide. Without that the status is just a dead end with no handle on it.',
     }));
     process.exit(1);
   }

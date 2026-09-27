@@ -200,7 +200,9 @@ async function main() {
       target: a,
       changed: [...setting, ...(def.fields ? ['fields'] : [])],
       version: v ? `v${v.major}.${v.minor}` : null,
-      status: site.status,
+      // Re-read: `site` was fetched before the UPDATE, so reporting its
+      // status would echo the old value back and look like the write failed.
+      status: getSite(db, hostname, pageType, recipeName).status,
       fields: getFields(db, site.id).map(f => f.field_name),
       note: 'Status unchanged — run `node verify.js` to earn "working" from a real run.',
     });

@@ -14,6 +14,7 @@
 #   ./dev.sh run <target> '<params>' ...    # run recipes, one line each: success / count / first record
 #   ./dev.sh verify <target> '<params>' ... # earn "working" for several recipes, one line each
 #   ./dev.sh health                         # every recipe's observed rate, flagging status disagreements
+#   ./dev.sh blocked                        # what is waiting on the user vs. waiting on a person each run
 #   ./dev.sh snap                           # save the current recipe list as a baseline
 #   ./dev.sh new                            # recipes added since the last snap
 #   ./dev.sh clean [--yes]                  # list (or remove) stray *.test / *.internal scaffolding recipes
@@ -71,6 +72,30 @@ case "$cmd" in
           }
         });' "$target"
     done
+    ;;
+
+  blocked)
+    # What is waiting on the USER, separated from what is waiting on work.
+    # The point of blocked-attn is that nobody should keep retrying it, so it
+    # has to be listable — otherwise it is invisible until someone trips over it.
+    "$NODE_BIN" -e '
+      const {openDb,listSites,getSite}=require("./db");
+      const db=openDb();
+      const rows=listSites(db).filter(s=>s.status==="blocked"||s.status==="blocked-attn");
+      if(!rows.length){console.log("nothing blocked");process.exit(0);}
+      for(const kind of ["blocked-attn","blocked"]){
+        const group=rows.filter(r=>r.status===kind);
+        if(!group.length) continue;
+        console.log(kind==="blocked-attn"
+          ? "\nNEEDS YOU — troubleshooting stalled, do not retry these:"
+          : "\nNEEDS A PERSON EACH RUN — recipe believed correct, run attended:");
+        for(const r of group){
+          const full=getSite(db,r.hostname,r.page_type,r.recipe_name);
+          console.log(`  ${r.hostname}#${r.page_type}:${r.recipe_name}`);
+          const n=(full.notes||"").trim();
+          console.log(`     ${n ? n.slice(0,300) : "(no notes — a blocked-attn recipe should say what is needed)"}`);
+        }
+      }'
     ;;
 
   health)

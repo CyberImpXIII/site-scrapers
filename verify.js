@@ -123,7 +123,28 @@ async function main() {
   // records gets called broken, because then there is no evidence either way
   // and the cautious reading is the correct one.
   const alreadyProven = definitionHasPassingRun(db, site.id);
-  const verdict = extracted ? 'working' : alreadyProven ? 'inconclusive' : 'broken';
+
+  // A wall is not a broken recipe, and the automatic failure sweep already
+  // knows the difference — read it rather than guessing. "broken" invites
+  // re-deriving a recipe that may be perfectly correct behind a login.
+  //
+  // Note this can only ever conclude "blocked" (a property of the site), not
+  // "blocked-attn" (a property of what the agent has been able to work out).
+  // The latter is a judgement about being out of moves, which nothing can
+  // detect automatically — it has to be set deliberately, with notes.
+  let wall = null;
+  if (!extracted && result.debugDir) {
+    try {
+      const probes = JSON.parse(require('fs').readFileSync(path.join(result.debugDir, 'diagnostics.json'), 'utf8'));
+      const blockers = probes.find(p => p.kind === 'blockers');
+      const walls = (blockers?.flags ?? []).filter(f => ['captcha', 'botCheck', 'loginWall'].includes(f));
+      if (walls.length) wall = walls;
+    } catch {
+      /* no capture or unreadable — fall through to the ordinary verdict */
+    }
+  }
+
+  const verdict = extracted ? 'working' : wall ? 'blocked' : alreadyProven ? 'inconclusive' : 'broken';
 
   const report = {
     target,
@@ -173,7 +194,12 @@ async function main() {
     newStatus: verdict,
     version: after ? `v${after.major}.${after.minor}` : beforeLabel,
     definitionHasPassingRun: definitionHasPassingRun(db, site.id),
-    note: extracted
+    wallDetected: wall,
+    note: wall
+      ? `Not verified, but the page was a wall (${wall.join(', ')}) rather than a bad recipe — marked "blocked". ` +
+        'The recipe may well be correct; it needs a person. Do not re-derive it on the strength of this run. ' +
+        'If you cannot work out what the user needs to supply, set status "blocked-attn" with notes explaining the dead end.'
+      : extracted
       ? `Verified: ${count} records extracted. register.js will now accept "status":"working" for this definition.`
       : 'Not verified. Read debugDir (diagnostics.json has the blocker and card-structure probes) before editing the recipe.',
   });

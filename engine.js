@@ -725,8 +725,13 @@ async function main() {
             'every run (CAPTCHA, login wall or 2FA). There is nothing to fix here — do not re-derive the recipe. ' +
             'Either run it attended with a handoff step (see the captcha_handoff generic action), or tell the user ' +
             'it needs them. Pass {"allowUnverified": true} to attempt it anyway.'
-          : `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
-            'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
+          : site.status === 'blocked-attn'
+            ? `status="blocked-attn": troubleshooting this recipe is STALLED pending the user. Whoever set this ` +
+              'concluded the next step cannot be determined without them — read `notes` above for what they need to ' +
+              'supply or decide. Do NOT retry, re-derive, or iterate on it: that was already tried and is what ' +
+              'produced this state. Surface it to the user and move on to other work.'
+            : `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
+              'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
     }));
     process.exit(1);
   }
