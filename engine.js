@@ -54,6 +54,12 @@
 // data/.debug/ directory, reported as `debugDir` in the output JSON — see
 // lib/debug.js. On by default; params.noDiagnostics: true skips it.
 
+// node:sqlite emits an ExperimentalWarning on every run, which lands on
+// stderr and makes this tool's output awkward to pipe into jq. Real warnings
+// are not expected here and would be noise in a machine-read stream.
+process.removeAllListeners('warning');
+
+
 const fs = require('fs');
 const path = require('path');
 const { openDb, getSite, getFields, logRun, parseSiteArg, getCurrentVersion } = require('./db');

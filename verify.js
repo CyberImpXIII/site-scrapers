@@ -27,6 +27,12 @@
 // A `--dry` flag reports what verification WOULD conclude without writing
 // the status, for checking a recipe you do not want to re-bless yet.
 
+// node:sqlite emits an ExperimentalWarning on every run, which lands on
+// stderr and makes this tool's output awkward to pipe into jq. Real warnings
+// are not expected here and would be noise in a machine-read stream.
+process.removeAllListeners('warning');
+
+
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);

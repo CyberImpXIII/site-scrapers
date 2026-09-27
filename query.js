@@ -33,6 +33,12 @@
 // and prefer reusing an existing action_type over inventing a near-duplicate
 // (e.g. "add_to_cart" vs "add-to-basket") — register.js enforces this.
 
+// node:sqlite emits an ExperimentalWarning on every run, which lands on
+// stderr and makes this tool's output awkward to pipe into jq. Real warnings
+// are not expected here and would be noise in a machine-read stream.
+process.removeAllListeners('warning');
+
+
 const {
   openDb,
   listSites,

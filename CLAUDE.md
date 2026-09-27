@@ -40,10 +40,21 @@ a page_type (implicit `recipe_name` = `default`).
    verified recipe invalidates it (the thing that passed no longer exists);
    promoting does not, since promotion copies the definition unchanged. Use
    `{"allowUnverified": true}` to run an unblessed recipe while iterating.
-7. **Prove a parameter does something**: `node lab.js params <target>
-   '{"q":"sales"}' '{"q":"engineer"}'`. A recipe that accepts a param and
-   ignores it is worse than a broken one — it answers the wrong question
-   silently. nodesk.co shipped exactly that: `?s=` never filtered, and both
+7. **Prove a parameter does something.** Give every recipe that declares
+   params a `param_probe_values`: two or more contrasting param sets that
+   *should* return different records, e.g.
+   `[{"q":"sales"},{"q":"engineer"}]`. They live on the recipe because only
+   the site knows which values are meaningful. Then
+   `node audit.js params` runs every recipe twice and reports `ok`, `INERT`
+   (the recipe ignores its params), `INCONCLUSIVE` (both runs empty — pick
+   better values) or `UNVALIDATABLE` (declares params, has no probe values).
+   `node lab.js params <target> '<A>' '<B>'` does one recipe ad hoc.
+   A recipe that accepts a param and ignores it is worse than a broken one —
+   it answers the wrong question silently.
+   Note this validates *parameters*, not fixed values baked into a
+   `nav_template`. If a template hard-codes a filter and the schema promises
+   it (e.g. "remote only"), nothing here checks that promise — verify it by
+   reading records, or stop promising it. nodesk.co shipped exactly that: `?s=` never filtered, and both
    keywords returned byte-identical results. If a site filters client-side,
    type into its search box with `ui_steps` instead of faking a URL param;
    if it cannot filter at all, drop the param from `nav_params_schema`

@@ -20,6 +20,14 @@ CREATE TABLE IF NOT EXISTS sites (
   nav_method TEXT NOT NULL,                          -- 'url_param' | 'ui_steps' | 'direct_url' (article: goto params.url as-is)
   nav_template TEXT NOT NULL,                        -- URL template (url_param/direct_url) OR JSON step array (ui_steps)
   nav_params_schema TEXT,                            -- JSON: documents accepted params, for callers
+  param_probe_values TEXT,                           -- JSON array of 2+ param objects that SHOULD return different
+                                                     -- results, e.g. [{"q":"sales"},{"q":"engineer"}]. Used by
+                                                     -- "audit.js params" to prove a declared parameter is not inert.
+                                                     -- Lives on the recipe because only the site knows which values
+                                                     -- are meaningful -- picking them centrally would mean baking
+                                                     -- domain vocabulary into shared code. Excluded from the
+                                                     -- versioned definition: these are test inputs, so changing
+                                                     -- them must not invalidate a verified recipe.
   session_mode TEXT,                                 -- NULL/'default': use the caller's named session (persistence is on by default). 'none': this recipe MUST run logged out -- the engine skips loading AND saving a session for it. For pages whose logged-in DOM differs from the logged-out one (e.g. linkedin.com's guest job search finds 0 cards with a logged-in session), where relying on the caller to remember params.noSession means silent 0-result runs.
   pagination_method TEXT NOT NULL DEFAULT 'none',    -- 'none' | 'steps' (run pagination_config ui_steps after page 1, e.g. the generic 'paginate' action) | 'url_param' / 'click_next' (not implemented)
   pagination_config TEXT,                            -- pagination_method 'steps': JSON ui_steps array
@@ -293,6 +301,13 @@ function migrateSessionModeColumn(db) {
   db.exec('ALTER TABLE sites ADD COLUMN session_mode TEXT');
 }
 
+// Old DBs predate sites.param_probe_values. Plain ADD COLUMN.
+function migrateParamProbeColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(sites)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'param_probe_values')) return;
+  db.exec('ALTER TABLE sites ADD COLUMN param_probe_values TEXT');
+}
+
 // Old DBs predate scrape_runs.version_id / version_label. Plain ADD COLUMNs.
 function migrateRunVersionColumn(db) {
   const cols = db.prepare('PRAGMA table_info(scrape_runs)').all();
@@ -385,6 +400,7 @@ function openDb() {
   migrateOutputCharsColumn(db);
   migrateGenericActionSourceColumn(db);
   migrateRunVersionColumn(db);
+  migrateParamProbeColumn(db);
   backfillBaselineVersions(db);
   seedActionTypes(db);
   seedBuiltinActions(db);
@@ -433,7 +449,8 @@ function upsertSite(db, s) {
   const existing = getSite(db, s.hostname, pageType, recipeName);
   if (existing) {
     db.prepare(
-      `UPDATE sites SET display_name=?, status=?, nav_method=?, nav_template=?, nav_params_schema=?, session_mode=?,
+      `UPDATE sites SET display_name=?, status=?, nav_method=?, nav_template=?, nav_params_schema=?,
+         param_probe_values=?, session_mode=?,
          pagination_method=?, pagination_config=?, action_type=?, card_anchor_text=?, card_selector=?, card_min_text_len=?,
          content_selector=?, content_stop_text=?, ready_timeout_ms=?, result_count_regex=?, notes=?, last_verified=?
        WHERE hostname=? AND page_type=? AND recipe_name=?`
@@ -443,6 +460,10 @@ function upsertSite(db, s) {
       s.nav_method,
       s.nav_template,
       s.nav_params_schema ?? null,
+      // Preserved rather than nulled when a caller omits it: probe values are
+      // authored once and a routine re-register should not silently discard
+      // the only thing that can prove the params work.
+      s.param_probe_values ?? existing.param_probe_values ?? null,
       s.session_mode ?? null,
       s.pagination_method ?? 'none',
       s.pagination_config ?? null,
@@ -465,9 +486,10 @@ function upsertSite(db, s) {
   } else {
     db.prepare(
       `INSERT INTO sites (hostname, page_type, recipe_name, display_name, status, nav_method, nav_template, nav_params_schema,
+         param_probe_values,
          session_mode, pagination_method, pagination_config, action_type, card_anchor_text, card_selector, card_min_text_len, content_selector,
          content_stop_text, ready_timeout_ms, result_count_regex, notes, first_seen, last_verified)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       s.hostname,
       pageType,
@@ -477,6 +499,7 @@ function upsertSite(db, s) {
       s.nav_method,
       s.nav_template,
       s.nav_params_schema ?? null,
+      s.param_probe_values ?? null,
       s.session_mode ?? null,
       s.pagination_method ?? 'none',
       s.pagination_config ?? null,

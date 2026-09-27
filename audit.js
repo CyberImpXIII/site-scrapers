@@ -13,8 +13,21 @@
 //   node audit.js repeats        # step sequences shared by 2+ recipes and not yet extracted
 //   node audit.js literals       # the same literal string hard-coded in 2+ recipes
 //   node audit.js hardcoded      # generic actions carrying literals that should be parameters
+//   node audit.js params         # LIVE: do recipes that declare parameters actually honour them?
+//
+// `params` runs each recipe twice using its own `param_probe_values` and
+// compares the records. It needs the network, so it is not part of ./test.sh —
+// that suite has to stay fast and deterministic. Verdicts: ok, INERT (the
+// recipe ignores its params), INCONCLUSIVE (both probe runs were empty, so
+// pick better values), UNVALIDATABLE (declares params but has no probe values).
 //
 // Every finding names the recipes involved, so a fix can start immediately.
+
+// node:sqlite emits an ExperimentalWarning on every run, which lands on
+// stderr and makes this tool's output awkward to pipe into jq. Real warnings
+// are not expected here and would be noise in a machine-read stream.
+process.removeAllListeners('warning');
+
 
 const { openDb, listSites, getSite, listGenericActions } = require('./db');
 const { expandSteps, refKey } = require('./lib/composeActions');
@@ -190,7 +203,92 @@ function findHardcodedInGenerics(db) {
   return findings;
 }
 
-function main() {
+// Does every recipe that DECLARES parameters actually honour them? Runs each
+// recipe twice with its own param_probe_values and compares the record sets.
+//
+// This is validation, not a unit test: it needs the live sites, so it does not
+// belong in ./test.sh, which must stay fast and offline-deterministic.
+//
+// It exists because a declared-but-ignored parameter is worse than a broken
+// recipe. nodesk.co accepted {"search":"sales"} and {"search":"engineer"} and
+// returned byte-identical results — it answered the wrong question without
+// complaining, and a count-based check said it was fine.
+async function auditParameters(db) {
+  const { execFile } = require('node:child_process');
+  const { promisify } = require('node:util');
+  const execFileAsync = promisify(execFile);
+  const path = require('path');
+
+  const run = async (target, params) => {
+    const args = [path.join(__dirname, 'engine.js'), target, JSON.stringify({ ...params, allowUnverified: true })];
+    try {
+      const { stdout } = await execFileAsync(process.execPath, args, { cwd: __dirname, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      return JSON.parse(stdout);
+    } catch (e) {
+      try {
+        return JSON.parse(e.stdout);
+      } catch {
+        return { success: false, error: 'no parseable output' };
+      }
+    }
+  };
+
+  const findings = [];
+  for (const s of listSites(db)) {
+    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
+    const target = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
+    let schema = {};
+    try {
+      schema = JSON.parse(site.nav_params_schema || '{}');
+    } catch {
+      /* unparseable schema is its own problem, reported below */
+    }
+    const declared = Object.keys(schema);
+    if (!declared.length) continue;
+    if (site.status === 'blocked' || site.status === 'broken') {
+      findings.push({ recipe: target, declaredParams: declared, result: 'skipped', why: `status is "${site.status}"` });
+      continue;
+    }
+
+    let probes = null;
+    try {
+      probes = site.param_probe_values ? JSON.parse(site.param_probe_values) : null;
+    } catch {
+      /* fall through to the unvalidatable branch */
+    }
+    if (!Array.isArray(probes) || probes.length < 2) {
+      findings.push({
+        recipe: target,
+        declaredParams: declared,
+        result: 'UNVALIDATABLE',
+        why: 'declares parameters but has no param_probe_values (needs 2+ contrasting param sets)',
+        fix: `node lab.js set ${target} '{"param_probe_values":[{"${declared[0]}":"<value A>"},{"${declared[0]}":"<value B>"}]}'`,
+      });
+      continue;
+    }
+
+    const [ra, rb] = [await run(target, probes[0]), await run(target, probes[1])];
+    const ids = r => JSON.stringify((r.jobs || []).map(j => j.href ?? j.title ?? '').slice(0, 25));
+    const bothEmpty = (ra.count ?? 0) === 0 && (rb.count ?? 0) === 0;
+    const identical = ids(ra) === ids(rb);
+
+    findings.push({
+      recipe: target,
+      declaredParams: declared,
+      a: { params: probes[0], url: ra.url, count: ra.count ?? 0 },
+      b: { params: probes[1], url: rb.url, count: rb.count ?? 0 },
+      result: bothEmpty ? 'INCONCLUSIVE' : identical ? 'INERT' : 'ok',
+      why: bothEmpty
+        ? 'both probe runs returned nothing, so the comparison proves nothing — pick probe values known to return records'
+        : identical
+          ? 'both parameter sets returned the SAME records: the recipe is ignoring its parameters. Either find the real filter mechanism (a client-side search may need a ui_steps type step rather than a URL param) or drop the parameter from nav_params_schema so it stops promising what it cannot do.'
+          : 'parameters change the result set, as a caller would expect',
+    });
+  }
+  return findings;
+}
+
+async function main() {
   const which = process.argv[2] || 'all';
   const db = openDb();
   const recipes = recipesWithSteps(db);
@@ -200,6 +298,9 @@ function main() {
   if (which === 'all' || which === 'repeats') report.extractableSequences = findRepeatedSequences(recipes);
   if (which === 'all' || which === 'literals') report.literalsSharedAcrossRecipes = findSharedLiterals(recipes);
   if (which === 'all' || which === 'hardcoded') report.literalsInsideGenericActions = findHardcodedInGenerics(db);
+  // Only on request: this one runs live recipes, so it is slow and needs the
+  // network, unlike the static checks above.
+  if (which === 'params') report.parameterValidation = await auditParameters(db);
 
   const counts = Object.entries(report)
     .filter(([, v]) => Array.isArray(v))

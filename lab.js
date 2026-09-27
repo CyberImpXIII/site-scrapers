@@ -23,6 +23,12 @@
 // Only the keys you pass are changed; "fields" replaces the whole set.
 // Status is never set here — that is verify.js's job, from a real run.
 
+// node:sqlite emits an ExperimentalWarning on every run, which lands on
+// stderr and makes this tool's output awkward to pipe into jq. Real warnings
+// are not expected here and would be noise in a machine-read stream.
+process.removeAllListeners('warning');
+
+
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
@@ -165,11 +171,24 @@ async function main() {
       die(`not valid JSON: ${e.message}`);
     }
 
-    const cols = ['card_selector', 'card_anchor_text', 'ready_timeout_ms', 'nav_template', 'nav_params_schema', 'notes', 'content_selector', 'card_min_text_len'];
+    const cols = [
+      'card_selector', 'card_anchor_text', 'ready_timeout_ms', 'nav_template', 'nav_params_schema',
+      'notes', 'content_selector', 'card_min_text_len', 'param_probe_values', 'status',
+    ];
     const setting = cols.filter(k => k in def);
     if (setting.length) {
       db.prepare(`UPDATE sites SET ${setting.map(k => `${k} = ?`).join(', ')} WHERE id = ?`)
-        .run(...setting.map(k => def[k]), site.id);
+        // These columns are TEXT holding JSON, so accept the natural
+        // object/array form in the input and serialise it here rather than
+        // making every caller pre-stringify.
+        .run(
+          ...setting.map(k =>
+            ['param_probe_values', 'nav_params_schema', 'nav_template'].includes(k) && typeof def[k] !== 'string'
+              ? JSON.stringify(def[k])
+              : def[k]
+          ),
+          site.id
+        );
     }
     if (Array.isArray(def.fields)) {
       db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(site.id);

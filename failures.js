@@ -39,6 +39,12 @@
 // "consent_overlay") cannot answer "have we seen this before", which is the
 // only reason this database exists.
 
+// node:sqlite emits an ExperimentalWarning on every run, which lands on
+// stderr and makes this tool's output awkward to pipe into jq. Real warnings
+// are not expected here and would be noise in a machine-read stream.
+process.removeAllListeners('warning');
+
+
 const {
   openFailuresDb,
   listFailureTypes,
