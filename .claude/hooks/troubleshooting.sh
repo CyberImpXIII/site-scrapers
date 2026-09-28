@@ -4,10 +4,12 @@
 # PreToolUse hook on Bash; see ../settings.json.
 # Tests: bash .claude/hooks/test-troubleshooting.sh
 #
-# A SECOND COPY lives at claudeTest/.claude/hooks/, same reason as the other two
-# hooks: a hook only fires when Claude Code's project dir is the one holding it.
-# Copies rather than a symlink, because a missing hook command exits non-zero
-# and would block every Bash call. Keep them in step.
+# COPIED INTO EVERY TOOL FOLDER'S .claude/hooks/, because a hook only fires when
+# Claude Code's project dir is the one holding it. site-scrapers holds the
+# canonical copy; `./check-hooks.sh --sync` pushes it everywhere and
+# `./check-hooks.sh` fails on drift or a missing install. Copies rather than
+# symlinks: a missing hook command exits non-zero, which is read as a block, so a
+# dangling link would refuse every Bash call.
 #
 # WHY THIS IS A HOOK AND NOT A RULE. Two documented rules that nothing enforced:
 #
@@ -36,9 +38,26 @@
 
 set -uo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-[ -f "$REPO/dev.sh" ] || REPO="$REPO/site-scrapers"
-[ -f "$REPO/dev.sh" ] || exit 0
+# Walk UP to find site-scrapers rather than assuming a depth -- see the same
+# block in prefer-recipes.sh for why: a fixed "../.." resolved to nothing when
+# the hook was installed in another tool folder, so it exited 0 and enforced
+# nothing while still looking installed.
+find_repo() {
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [ "$d" != "/" ] && [ -n "$d" ]; do
+    if [ -f "$d/site-scrapers/dev.sh" ] && [ -f "$d/site-scrapers/engine.js" ]; then
+      printf '%s\n' "$d/site-scrapers"; return 0
+    fi
+    if [ -f "$d/dev.sh" ] && [ -f "$d/engine.js" ]; then
+      printf '%s\n' "$d"; return 0
+    fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+REPO="$(find_repo)" || exit 0
+[ -n "$REPO" ] || exit 0
 
 input=$(cat 2>/dev/null) || exit 0
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0

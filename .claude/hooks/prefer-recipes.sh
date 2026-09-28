@@ -3,13 +3,16 @@
 # recipe. PreToolUse hook on the Claude-in-Chrome tools and WebFetch; see
 # ../settings.json. Tests: bash .claude/hooks/test-prefer-recipes.sh
 #
-# A SECOND COPY lives at claudeTest/.claude/hooks/, for the same reason
-# no-inline-blobs.sh has one: a hook only fires when Claude Code's project dir
-# is the one holding it, so this copy covers sessions inside the repo and
-# travels with a fresh clone, that one covers sessions started from the parent
-# folder. Copies rather than a symlink -- a hook whose command is missing exits
-# non-zero, which would block every matching call, so a dangling link would be
-# far worse than the duplication. Keep them in step.
+# THIS FILE IS COPIED INTO EVERY TOOL FOLDER'S .claude/hooks/, because a hook
+# only fires when Claude Code's project dir is the one holding it -- so a rule
+# enforced in only one folder is not enforced when a session starts in another.
+# site-scrapers holds the canonical copy (it is the committed, tested one);
+# `./check-hooks.sh --sync` pushes it everywhere and `./check-hooks.sh` fails if
+# the copies' logic diverges or a location is missing one.
+#
+# Copies rather than symlinks: a hook whose command is missing exits non-zero,
+# which Claude Code reads as a block, so a dangling link would refuse every
+# matching call -- far worse than the duplication.
 #
 # WHY THIS IS A HOOK AND NOT A RULE: it was already a rule, in two files.
 # claudeTest/CLAUDE.md opens with "Before reaching for a generic approach
@@ -40,11 +43,32 @@
 
 set -uo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# The repo is the parent of .claude/ for the in-repo copy, but the copy in the
-# parent folder sits beside site-scrapers/ rather than inside it.
-[ -f "$REPO/dev.sh" ] || REPO="$REPO/site-scrapers"
-[ -f "$REPO/dev.sh" ] || exit 0
+# Find site-scrapers by walking UP from this hook, not by assuming a depth.
+#
+# The first version used "../.." with a one-level fallback, which worked from
+# site-scrapers/ and from the tools folder and nowhere else. Installed in
+# emailTools/.claude/hooks/ it resolved to a path that does not exist, exited 0,
+# and enforced nothing -- a guard that is present, reports no error, and does
+# not run. Each tool folder is its own repo at its own depth, so the layout has
+# to be discovered.
+find_repo() {
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [ "$d" != "/" ] && [ -n "$d" ]; do
+    # A sibling checkout, which is how every other tool folder sees it.
+    if [ -f "$d/site-scrapers/dev.sh" ] && [ -f "$d/site-scrapers/engine.js" ]; then
+      printf '%s\n' "$d/site-scrapers"; return 0
+    fi
+    # Or we are inside it already.
+    if [ -f "$d/dev.sh" ] && [ -f "$d/engine.js" ]; then
+      printf '%s\n' "$d"; return 0
+    fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+REPO="$(find_repo)" || exit 0
+[ -n "$REPO" ] || exit 0
 
 input=$(cat 2>/dev/null) || exit 0
 tool=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null) || exit 0

@@ -71,6 +71,37 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## 0. Seams found but NOT yet gated (2026-09-28)
+
+Found while gating the hook layer, under the "Gate the seams" directive in
+`CLAUDE.md`. Each is a place where a mistake would be **silent**, which is why
+they are worth writing down rather than leaving to be rediscovered. None is
+currently checked.
+
+- **Probe-knowledge categories are consumed by string.** `lib/probes.js` reads
+  `probeKnowledge('card_anatomy', 'utility_class')`,
+  `probeKnowledgeGrouped('card_anatomy', 'field_shape')`,
+  `probeKnowledge('repeated_structure', 'ad_container'|'generated_class')` and
+  `probeKnowledge('forms', 'stable_attr')`. A typo in either argument returns
+  `[]` and the feature **quietly does nothing** — no error, no empty-result
+  warning, just a probe that stops ranking or proposing. Wanted: a test that
+  every category a consumer names has rows, and every category with rows is
+  named by a consumer. This is the same shape as the `nav_params_schema`
+  parameter-never-read check `audit.js` already does for recipes.
+- **`lib/outputShape.js` is meant to be the only way to read a run's records**,
+  so that dropping the legacy `jobs` key stays a one-line change. Nothing stops
+  a new reader going back to `r.jobs` or `r.count` directly. Wanted: an
+  `audit.js` rule flagging those reads outside `lib/outputShape.js`.
+- **`AUDIT-VERIFIED[<rule>]` waivers name a rule id** that must match one an
+  audit rule actually emits. A waiver for a misspelled or retired id sits in the
+  notes forever, waiving nothing, and reads as though the finding was handled.
+  Wanted: an `audit.js` rule flagging a waiver whose id no rule emits.
+- **The four `CLAUDE.md` copies** are kept in sync by a prose instruction
+  ("Keeping these rules in sync"), which is exactly the arrangement that had
+  already drifted for the hooks. Wanted: a check that the shared sections agree
+  by meaning. Harder than the hook check, because each file legitimately carries
+  tool-specific sections too — so it needs a marker delimiting the shared block.
+
 ## 1. Make the probes narrow the answer, not just bound it
 
 Jacob's framing, and it is the right one: *do as much procedurally as possible,

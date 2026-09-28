@@ -169,6 +169,35 @@ salesforce's `:has()` three times.
 
 ---
 
+## Gate the seams — STANDING DIRECTIVE
+
+**Any change that creates an interface gates it in the same change** — a gate, a
+test, or an audit. If you cannot see how to check something, say so rather than
+leaving it unchecked and unmentioned.
+
+The gap is never in the feature; it is in the seam between two things that each
+work. Recorded here because each of these was live and invisible: four copies of
+a hook kept in step by a comment; two hooks installed in 2 of 4 tool folders, so
+a rule applied depending on which directory a session started in; both resolving
+a sibling repo by a fixed `../..`, so elsewhere they exited 0 and enforced
+nothing *while still looking installed*; every hook header promising "fails
+open" with nothing testing it; `usage()` on a hardcoded line range, bumped wrong
+three times, truncating the help while the tool kept working.
+
+**A guard that is present, reports no error, and does not run is the worst state
+available, because you stop looking.**
+
+If your change adds one of these, check it in the same change: a second copy of
+anything (do the copies agree, by *meaning* not bytes); a file something needs
+to work (present, executable, parses); a documented list (documented ==
+implemented, both directions); a vocabulary code consumes (every key consumed,
+every consumed key present); an accessor meant to be the only way in (audit that
+nothing bypasses it); a fallback or fail-open path (test the failure, not the
+success); a promise in a comment (check it, or delete the promise).
+
+Worked examples: `check-hooks.sh`, `test/hooks.test.js`, `audit.js units`,
+`lib/gate.js`, `lib/outputShape.js`.
+
 ## Working in this repo
 
 **Check for a primary context before changing anything that exists.** More than

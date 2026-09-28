@@ -2,12 +2,15 @@
 # Blocks inline script blobs in Bash commands. PreToolUse hook; see
 # ../settings.json. Tests: bash .claude/hooks/test-no-inline-blobs.sh
 #
-# A SECOND COPY lives at claudeTest/.claude/hooks/, because a hook only fires
-# when Claude Code's project dir is the one holding it -- this copy covers
-# sessions inside the repo and travels with a fresh clone, that one covers
-# sessions started from the parent folder. Copies rather than a symlink: a hook
-# whose command is missing exits non-zero, which would block EVERY Bash call,
-# so a dangling link would be far worse than the duplication. Keep them in step.
+# COPIED INTO EVERY TOOL FOLDER'S .claude/hooks/, because a hook only fires when
+# Claude Code's project dir is the one holding it -- so a rule enforced in one
+# folder is not enforced when a session starts in another. site-scrapers holds
+# the canonical copy; `./check-hooks.sh --sync` pushes it everywhere and
+# `./check-hooks.sh` fails on drift or a missing install.
+#
+# Copies rather than symlinks: a hook whose command is missing exits non-zero,
+# which Claude Code reads as a block, so a dangling link would refuse EVERY Bash
+# call -- far worse than the duplication.
 #
 # WHY THIS IS A HOOK AND NOT A RULE: it was already a rule. CLAUDE.md rule 4
 # says "Never write an inline script blob", and the session that WROTE that rule

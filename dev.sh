@@ -19,6 +19,7 @@
 #   ./dev.sh apply <target> <file.json> '<params>'          # lab.js set, then peek, to see what it did
 #   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
 #   ./dev.sh board <company> ...            # which ATS hosts each company's job board (one cheap HTTP check each)
+#   ./dev.sh hooks [--sync]                 # verify the hook layer across every tool folder (--sync pushes this repo's copies)
 #   ./dev.sh known <hostname>               # every recipe registered for a hostname, as "target<TAB>status"
 #   ./dev.sh failures <hostname>            # what has broken here before, one line each, best match first
 #   ./dev.sh browser-ok [minutes]           # allow interactive browsing of a covered site for N minutes (default 15)
@@ -40,7 +41,12 @@ export NODE_NO_WARNINGS=1
 BASELINE="$DIR/data/.dev-baseline.json"
 cd "$DIR"
 
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+# Prints the header comment block -- however long it is. This was `sed -n
+# '2,34p'`, a hardcoded line range that had to be bumped by hand every time a
+# subcommand was documented, and was bumped wrong three times in one session:
+# the help silently truncated mid-list, which is the failure mode where the tool
+# still runs and just stops telling you what it can do.
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 1; }
 
 # Where `browser-ok` writes its marker. Under data/, which is gitignored, so an
 # override never travels to anyone else's clone.
@@ -99,6 +105,17 @@ case "$cmd" in
     echo "   $suite"
     echo "-- offline audit"
     "$0" audit | sed 's/^/   /'
+    # The hook layer, which enforces three rules and until now had none of the
+    # guarantees it provides. Reported here rather than left to be remembered,
+    # for the same reason the audit is.
+    echo "-- hooks"
+    hookout=$("$DIR/check-hooks.sh" 2>&1); hookrc=$?
+    if [ "$hookrc" = 0 ]; then
+      printf '%s\n' "$hookout" | tail -1 | sed 's/^/   /'
+    else
+      printf '%s\n' "$hookout" | grep -E '^  (ERROR|note)' | sed 's/^ */   /'
+      printf '%s\n' "$hookout" | tail -1 | sed 's/^/   /'
+    fi
     echo "-- working tree"
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
       git status --short | sed 's/^/   /'
@@ -190,6 +207,12 @@ case "$cmd" in
         for (const [k,v] of Object.entries(d.fieldCoverage||{})) console.log(`    ${k.padEnd(18)} ${v}`);
         const s=(d.samples||[])[0]; if (s) console.log(`    first: ${JSON.stringify(s).slice(0,220)}`);
       });'
+    ;;
+
+  hooks)
+    # The hook layer checked like everything else here. See check-hooks.sh for
+    # what it verifies and why the hook layer needed its own guard.
+    "$DIR/check-hooks.sh" "$@"
     ;;
 
   known)
