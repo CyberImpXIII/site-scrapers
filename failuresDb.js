@@ -16,6 +16,7 @@
 // clone still knows the vocabulary even though it starts with no history.
 
 const { DatabaseSync } = require('node:sqlite');
+const { assertAuthorized, authorize } = require('./lib/writeGuard');
 const fs = require('fs');
 const path = require('path');
 const { FAILURE_TYPES } = require('./lib/failureTypes');
@@ -162,6 +163,7 @@ function listBlockerSignatures(db, { service } = {}) {
 }
 
 function insertBlockerSignature(db, s) {
+  assertAuthorized('insertBlockerSignature');
   db.prepare(
     `INSERT INTO blocker_signatures (service, where_seen, pattern, flags, blocking_weight, source, notes, created_at)
      VALUES (?,?,?,?,?, 'user', ?, ?)
@@ -179,6 +181,7 @@ function insertBlockerSignature(db, s) {
 }
 
 function deleteBlockerSignature(db, id) {
+  assertAuthorized('deleteBlockerSignature');
   // Only user rows: deleting a builtin would silently come back on the next
   // open, and a change that reverts later is worse than one refused now.
   const row = db.prepare('SELECT source FROM blocker_signatures WHERE id = ?').get(id);
@@ -224,6 +227,7 @@ function listProbeKnowledge(db, { probeKind, category } = {}) {
 }
 
 function insertProbeKnowledge(db, k) {
+  assertAuthorized('insertProbeKnowledge');
   db.prepare(
     `INSERT INTO probe_knowledge (probe_kind, category, value_kind, value, source, notes, created_at)
      VALUES (?,?,?,?, 'user', ?, ?)
@@ -236,9 +240,11 @@ function openFailuresDb() {
   const db = new DatabaseSync(FAILURES_DB_PATH);
   applyConcurrencyPragmas(db);
   db.exec(SCHEMA);
-  seedFailureTypes(db);
-  seedBlockerSignatures(db);
-  seedProbeKnowledge(db);
+  authorize('failuresDb.js seeding from code', () => {
+    seedFailureTypes(db);
+    seedBlockerSignatures(db);
+    seedProbeKnowledge(db);
+  });
   return db;
 }
 
@@ -251,6 +257,7 @@ function getFailureType(db, name) {
 }
 
 function insertFailureType(db, name, description) {
+  assertAuthorized('insertFailureType');
   db.prepare('INSERT INTO failure_types (name, description, created_at) VALUES (?,?,?)')
     .run(name, description, new Date().toISOString());
 }
@@ -269,6 +276,7 @@ function signatureOf(f) {
 // where recorded is 'new' or 'repeat' -- a repeat is itself a finding
 // ("this is the fourth time") and the caller should say so.
 function recordFailure(db, f) {
+  assertAuthorized('recordFailure');
   const now = new Date().toISOString();
   const candidates = db
     .prepare('SELECT * FROM failures WHERE failure_type = ? AND IFNULL(hostname, \'\') = IFNULL(?, \'\')')
@@ -405,6 +413,7 @@ function matchFailures(db, probe, limit = 5) {
 }
 
 function deleteFailure(db, id) {
+  assertAuthorized('deleteFailure');
   db.prepare('DELETE FROM failures WHERE id = ?').run(id);
 }
 

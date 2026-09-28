@@ -25,6 +25,7 @@ const {
   insertBlockerSignature,
   deleteBlockerSignature,
 } = require('../failuresDb');
+const { authorizeForTests } = require('../lib/writeGuard');
 const { FAILURE_TYPES } = require('../lib/failureTypes');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -39,6 +40,7 @@ function record(f) {
 }
 
 test.before(() => {
+  authorizeForTests();
   db = openFailuresDb();
 });
 

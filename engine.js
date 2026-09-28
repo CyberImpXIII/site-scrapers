@@ -62,7 +62,13 @@ process.removeAllListeners('warning');
 
 const fs = require('fs');
 const path = require('path');
-const { openDb, getSite, getFields, logRun, parseSiteArg, getCurrentVersion } = require('./db');
+const { openDb, getSite, getFields, logRun: logRunRaw, parseSiteArg, getCurrentVersion } = require('./db');
+const { authorize: authorizeWrite } = require('./lib/writeGuard');
+
+// A run recording its own outcome is a sanctioned write, but a narrow one: this
+// authorizes the single insert rather than the whole run, so nothing else in
+// engine.js can write to the recipe DB under cover of it.
+const logRun = (db, run) => authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run));
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');

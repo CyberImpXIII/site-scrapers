@@ -61,6 +61,7 @@ const {
   listProbeKnowledge,
   insertProbeKnowledge,
 } = require('./failuresDb');
+const { authorize } = require('./lib/writeGuard');
 
 function fail(msg) {
   console.log(JSON.stringify({ success: false, error: msg }));
@@ -285,4 +286,6 @@ function main() {
   fail(`Unknown command "${cmd ?? ''}". Use: match | common | list | types | record | forget`);
 }
 
-main();
+// failures.js IS a sanctioned path: it enforces the closed failure taxonomy and
+// refuses a pattern that will not compile before anything is written.
+authorize('failures.js', main);

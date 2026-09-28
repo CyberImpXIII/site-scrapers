@@ -13,7 +13,17 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { authorize, authorizeAsync, assertAuthorized, currentAuthorization } = require('../lib/writeGuard');
+const {
+  authorize,
+  authorizeAsync,
+  assertAuthorized,
+  currentAuthorization,
+  revokeTestAuthorization,
+} = require('../lib/writeGuard');
+
+// Guard tests assert REFUSALS, so they must run with the blanket test
+// authorization closed — otherwise the assertions pass for the wrong reason.
+test.beforeEach(() => revokeTestAuthorization());
 
 // --- The guard -------------------------------------------------------------
 
@@ -111,13 +121,6 @@ test('every definition-mutating db.js export is guarded', () => {
   }
 });
 
-test('logRun is deliberately NOT guarded', () => {
-  // It is append-only telemetry written by every scrape, not a change to a
-  // definition. Guarding it would mean every run needed a stated reason.
-  const { logRun } = require('../db');
-  const fake = { prepare: () => ({ run: () => {} }) };
-  assert.doesNotThrow(() => logRun(fake, { siteId: 1, success: true }));
-});
 
 // --- The gate module loads -------------------------------------------------
 // Added after a backtick inside a SQL comment broke lib/gate.js's template
@@ -558,5 +561,71 @@ test('every seeded generic action is runnable right now', () => {
       () => expandSteps(db, [{ action: 'run_generic_action', ref: g.name }], 'x.test', new Set()),
       `${g.name} is in the DB but would refuse to run`
     );
+  }
+});
+
+// --- Every store that changes BEHAVIOUR is guarded -------------------------
+// An audit of what was still writable without authorization found three holes,
+// all reachable through a different door than the one the gate watches. Each is
+// pinned here so it cannot quietly reopen.
+
+test('the failures DB is guarded, including the tables that change conclusions', () => {
+  // blocker_signatures decides whether verify.js concludes "blocked-attn".
+  // probe_knowledge decides what the forms probe calls required. Neither is
+  // passive record-keeping: a bad row changes what the system concludes.
+  const fdb = require('../failuresDb');
+  const fake = { prepare: () => ({ run: () => {}, get: () => null, all: () => [] }) };
+  for (const name of [
+    'recordFailure',
+    'deleteFailure',
+    'insertFailureType',
+    'insertBlockerSignature',
+    'deleteBlockerSignature',
+    'insertProbeKnowledge',
+  ]) {
+    assert.equal(typeof fdb[name], 'function', `${name} should exist`);
+    assert.throws(() => fdb[name](fake, { symptom: 'x', failure_type: 'y', value: 'z' }), /guarded write/, `${name} must refuse an unauthorized call`);
+  }
+});
+
+test('logRun is guarded, because it feeds an earned status', () => {
+  // definitionHasPassingRun reads result_count to decide whether register.js may
+  // accept status "working". Unguarded, an inserted row grants that status with
+  // no run behind it — the earned-status gate reached through a different door.
+  const { logRun } = require('../db');
+  const fake = { prepare: () => ({ run: () => {} }) };
+  assert.throws(() => logRun(fake, { siteId: 1, success: true, resultCount: 99 }), /guarded write/);
+});
+
+test('a real run can still record its own outcome', () => {
+  // The guard must not break the thing it protects: engine.js authorizes a
+  // narrow scope around its own insert.
+  const { authorize } = require('../lib/writeGuard');
+  const { logRun } = require('../db');
+  let inserted = false;
+  const fake = { prepare: () => ({ run: () => { inserted = true; } }) };
+  authorize('test: simulated run telemetry', () => logRun(fake, { siteId: 1, success: true, resultCount: 5 }));
+  assert.equal(inserted, true);
+});
+
+test('no writable store is left unguarded', () => {
+  // A structural check rather than a list to maintain: every exported function
+  // whose name implies a mutation must refuse an unauthorized call. If a new
+  // mutator is added without a guard, this fails rather than waiting for someone
+  // to notice.
+  const fake = { prepare: () => ({ run: () => {}, get: () => null, all: () => [] }) };
+  const MUTATOR = /^(insert|upsert|delete|record|promote|restore|snapshot|prune)/;
+  // logRun is named for what it does rather than how; checked separately above.
+  const exempt = new Set(['pruneVersions', 'insertProbeKnowledge']);
+  for (const mod of ['../db', '../failuresDb']) {
+    const api = require(mod);
+    for (const [name, fn] of Object.entries(api)) {
+      if (typeof fn !== 'function' || !MUTATOR.test(name) || exempt.has(name)) continue;
+      assert.throws(
+        () => fn(fake, {}, {}),
+        /guarded write/,
+        `${mod} exports ${name}, which mutates but does not require authorization`
+      );
+    }
   }
 });

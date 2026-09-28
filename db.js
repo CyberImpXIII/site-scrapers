@@ -899,6 +899,13 @@ function insertField(db, siteId, f, order) {
 }
 
 function logRun(db, run) {
+  // Guarded despite being append-only telemetry, because it is not ONLY
+  // telemetry: definitionHasPassingRun reads result_count to decide whether
+  // register.js may accept status "working". An unguarded insert here grants an
+  // earned status without a run, which is exactly what that gate exists to
+  // prevent — reached through a different door. engine.js and verify.js
+  // authorize around their own calls.
+  assertAuthorized('logRun');
   db.prepare(
     `INSERT INTO scrape_runs (site_id, params_json, success, result_count, claimed_count, timed_out, duration_ms, error, version_id, version_label, output_chars, ran_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
