@@ -561,13 +561,16 @@ function findHardcodedInGenerics(db) {
 // recipe. nodesk.co accepted {"search":"sales"} and {"search":"engineer"} and
 // returned byte-identical results — it answered the wrong question without
 // complaining, and a count-based check said it was fine.
-async function auditParameters(db) {
+// Runs a recipe and returns its output JSON. Injectable so the live audits'
+// DECISION logic can be tested without a network or a browser: the classification
+// is where a wrong answer does damage (a false LIAR sends someone to fix a
+// working recipe), and that part has nothing to do with actually running Chrome.
+function defaultRunner() {
   const { execFile } = require('node:child_process');
   const { promisify } = require('node:util');
   const execFileAsync = promisify(execFile);
   const path = require('path');
-
-  const run = async (target, params) => {
+  return async (target, params) => {
     const args = [path.join(__dirname, 'engine.js'), target, JSON.stringify({ ...params, allowUnverified: true })];
     try {
       const { stdout } = await execFileAsync(process.execPath, args, { cwd: __dirname, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -580,6 +583,9 @@ async function auditParameters(db) {
       }
     }
   };
+}
+
+async function auditParameters(db, { run = defaultRunner() } = {}) {
 
   const findings = [];
   for (const s of listSites(db)) {
@@ -651,25 +657,7 @@ async function auditParameters(db) {
 //   LIAR          claims working, returned nothing — status is wrong
 //   PARTIAL       timed out but still extracted records; usable, likely short timeout
 //   UNRUNNABLE    needs parameters and has no param_probe_values to supply them
-async function auditWorking(db) {
-  const { execFile } = require('node:child_process');
-  const { promisify } = require('node:util');
-  const execFileAsync = promisify(execFile);
-  const path = require('path');
-
-  const run = async (target, params) => {
-    const args = [path.join(__dirname, 'engine.js'), target, JSON.stringify({ ...params, allowUnverified: true })];
-    try {
-      const { stdout } = await execFileAsync(process.execPath, args, { cwd: __dirname, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-      return JSON.parse(stdout);
-    } catch (e) {
-      try {
-        return JSON.parse(e.stdout);
-      } catch {
-        return { success: false, error: 'no parseable output' };
-      }
-    }
-  };
+async function auditWorking(db, { run = defaultRunner() } = {}) {
 
   const findings = [];
   for (const s of listSites(db)) {
@@ -759,25 +747,12 @@ async function auditWorking(db) {
 // is a defect. The threshold is "the recipe returned nothing and removing it
 // returned something", plus a large-increase case, so an ordinary filter does
 // not get reported.
-async function auditFixedParams(db) {
-  const { execFile } = require('node:child_process');
-  const { promisify } = require('node:util');
-  const execFileAsync = promisify(execFile);
-  const path = require('path');
-
+async function auditFixedParams(db, { run = defaultRunner() } = {}) {
   const countFor = async (target, params) => {
-    const args = [path.join(__dirname, 'engine.js'), target, JSON.stringify({ ...params, allowUnverified: true })];
-    try {
-      const { stdout } = await execFileAsync(process.execPath, args, { cwd: __dirname, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-      return JSON.parse(stdout).count ?? 0;
-    } catch (e) {
-      try {
-        return JSON.parse(e.stdout).count ?? 0;
-      } catch {
-        return null;
-      }
-    }
+    const r = await run(target, params);
+    return r && typeof r === 'object' ? (r.count ?? 0) : null;
   };
+
 
   const findings = [];
   for (const s of listSites(db)) {
@@ -865,6 +840,9 @@ async function main() {
 if (require.main === module) main();
 
 module.exports = {
+  auditParameters,
+  auditWorking,
+  auditFixedParams,
   unfillablePlaceholders,
   fixedQueryParams,
   templateWithout,
