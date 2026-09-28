@@ -443,3 +443,120 @@ test('the generated export is written read-only', () => {
   const mode = fs.statSync(TARGET).mode & 0o777;
   assert.equal(mode & 0o222, 0, `expected no write bits on the generated export, got ${mode.toString(8)}`);
 });
+
+// --- Provenance travels with the library, in the committed file ------------
+// The change_log lives in the gitignored DB, so it is invisible in a diff.
+// Stamping the reason onto each exported action puts it where a reviewer will
+// see it: a legitimate edit changes `steps` AND `changeNote` together, while a
+// hand-edit changes steps and leaves a note describing something else.
+
+test('every exported builtin carries a change note', () => {
+  const { BUILTIN_ACTIONS } = require('../lib/builtinActions');
+  for (const a of BUILTIN_ACTIONS) {
+    assert.ok(
+      typeof a.changeNote === 'string' && a.changeNote.length > 10,
+      `${a.name} has no changeNote — without it, a change to shared behaviour has no visible reason in the diff`
+    );
+    assert.ok('changedAt' in a, `${a.name} should carry a changedAt, even if null`);
+  }
+});
+
+test('a recorded change timestamp is backed by a change_log entry', () => {
+  // A changedAt with nothing behind it would mean the note was written by hand
+  // rather than earned by a gated change.
+  const { BUILTIN_ACTIONS } = require('../lib/builtinActions');
+  const { openDb } = require('../db');
+  const db = openDb();
+  require('../lib/gate').ensureChangeLog(db);
+  for (const a of BUILTIN_ACTIONS.filter(x => x.changedAt)) {
+    const row = db
+      .prepare('SELECT COUNT(*) AS n FROM change_log WHERE target = ? AND rolled_back = 0')
+      .get(`generic:${a.name}`);
+    assert.ok(row.n > 0, `${a.name} claims a change at ${a.changedAt} but no change_log entry backs it`);
+  }
+});
+
+// --- The audit that does not depend on how the row got there ---------------
+// Write-time gating gives a useful error early, but it can only cover paths it
+// knows about. Auditing at the POINT OF USE — against whatever the DB actually
+// says, every time an action is expanded — makes a bad definition unrunnable
+// regardless of whether it arrived through the gate, a hand-edited export, a
+// pulled change, or sqlite3 on the command line.
+
+test('an unrunnable action is refused at expansion, however it got into the DB', () => {
+  const { expandSteps } = require('../lib/composeActions');
+  const { openDb } = require('../db');
+  const db = openDb();
+
+  // Injected with raw SQL on purpose: no authorize(), no gate, no register.js.
+  const inject = steps =>
+    db
+      .prepare(
+        `INSERT OR REPLACE INTO generic_actions (name, description, action_type, nav_params_schema, steps, source, created_at, updated_at)
+         VALUES ('guardtest_tampered', 'injected directly', NULL, '{}', ?, 'user', datetime('now'), datetime('now'))`
+      )
+      .run(JSON.stringify(steps));
+
+  try {
+    inject([{ action: 'probe', kind: 'ghost_kind' }]);
+    assert.throws(
+      () => expandSteps(db, [{ action: 'run_generic_action', ref: 'guardtest_tampered' }], 'x.test', new Set()),
+      /not runnable as currently defined in the database.*ghost_kind/s,
+      'an unregistered probe kind must stop the run before a browser is launched'
+    );
+
+    inject([{ action: 'no_such_step_type' }]);
+    assert.throws(
+      () => expandSteps(db, [{ action: 'run_generic_action', ref: 'guardtest_tampered' }], 'x.test', new Set()),
+      /step type "no_such_step_type" is not implemented/
+    );
+
+    inject([{ ms: 100 }]);
+    assert.throws(
+      () => expandSteps(db, [{ action: 'run_generic_action', ref: 'guardtest_tampered' }], 'x.test', new Set()),
+      /no "action"/,
+      'a step the engine would silently skip is worse than one that fails'
+    );
+
+    // Nesting must not hide it.
+    inject([{ action: 'repeat', times: 1, steps: [{ action: 'probe', kind: 'ghost_kind' }] }]);
+    assert.throws(
+      () => expandSteps(db, [{ action: 'run_generic_action', ref: 'guardtest_tampered' }], 'x.test', new Set()),
+      /ghost_kind/
+    );
+
+    // And a valid definition still expands.
+    inject([{ action: 'wait', ms: 10 }]);
+    assert.doesNotThrow(() =>
+      expandSteps(db, [{ action: 'run_generic_action', ref: 'guardtest_tampered' }], 'x.test', new Set())
+    );
+  } finally {
+    db.prepare("DELETE FROM generic_actions WHERE name = 'guardtest_tampered'").run();
+  }
+});
+
+test('the runtime audit only blocks UNRUNNABLE definitions, not style', () => {
+  // If it blocked style problems too, a run could fail over something
+  // `audit.js` is meant to merely report, and people would route around it.
+  const { assertGenericActionRunnable } = require('../lib/composeActions');
+  assert.doesNotThrow(() =>
+    assertGenericActionRunnable('stylistically_poor', [
+      { action: 'click', selector: 'div:has(a[href])' }, // audit.js warns; still runnable
+      { action: 'wait', ms: 1 },
+    ])
+  );
+});
+
+test('every seeded generic action is runnable right now', () => {
+  // The whole library is expanded through the real path. If any action in the
+  // DB were unrunnable, every recipe referencing it would fail at run time.
+  const { expandSteps } = require('../lib/composeActions');
+  const { openDb, listGenericActions } = require('../db');
+  const db = openDb();
+  for (const g of listGenericActions(db)) {
+    assert.doesNotThrow(
+      () => expandSteps(db, [{ action: 'run_generic_action', ref: g.name }], 'x.test', new Set()),
+      `${g.name} is in the DB but would refuse to run`
+    );
+  }
+});

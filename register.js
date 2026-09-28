@@ -456,14 +456,20 @@ function registerGenericAction(db, def) {
         steps: stepsJson,
       });
       if (isBuiltin) {
-        // Keep it a builtin, and rewrite the export so the file and the DB
-        // agree. Skipping this would leave the change invisible to a clone and
-        // make the next open re-seed the OLD steps over it.
+        // Keep it a builtin. The export is regenerated AFTER the gate returns,
+        // not here: guardedChange writes the change_log row after mutate(), so
+        // exporting inside mutate() stamped every action with the PREVIOUS
+        // change note -- the reason would always lag one edit behind.
         db.prepare("UPDATE generic_actions SET source = 'builtin' WHERE name = ?").run(def.name);
-        require('./lib/exportBuiltins').exportBuiltins(db);
       }
     },
   });
+
+  // Now that the change is logged, regenerate the export so each action's
+  // stamped reason matches the change that actually produced it.
+  if (isBuiltin && gated.ok) {
+    authorize(`export builtins after ${def.name}`, () => require('./lib/exportBuiltins').exportBuiltins(db));
+  }
 
   console.log(JSON.stringify({
     success: gated.ok,

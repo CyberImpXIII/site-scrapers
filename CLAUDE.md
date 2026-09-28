@@ -70,6 +70,17 @@ The file still exists rather than the library living only in the DB, because
 `data/*.db` is gitignored: it is how a clone gets the library, and how a change
 to shared behaviour stays reviewable in a diff. A binary DB would be neither.
 
+**A generic action is audited at the point of USE, not only when written.**
+Every expansion validates the action against whatever the DB currently says —
+unimplemented step types, unregistered probe kinds, steps with no `action` — and
+refuses to run if it would not execute. That check does not depend on how the
+row got there, so it holds for a hand-edited export, a pulled change, or raw
+SQL, none of which a write-time gate can see. It throws before a browser is
+launched, so failing costs nothing, and it is deliberately narrow: only defects
+that make an action *unrunnable*, never style, which `audit.js` reports instead.
+Write-time gating still exists because it gives the useful error early, next to
+the change that caused it.
+
 Seeding (`openDb()`) is the remaining code→DB direction, for clones and for a
 pulled change, and it validates: a builtin that would not run is **not seeded**
 and the previous version stays in use, and one whose change breaks a dependent
