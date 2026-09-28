@@ -101,8 +101,16 @@ case "$cmd" in
     #
     # Exits non-zero if the suite fails, so it can gate rather than just report.
     echo "-- suite"
-    suite=$(./test.sh 2>&1 | grep -E '^# (tests|pass|fail)|^not ok' | tr '\n' ' ')
-    echo "   $suite"
+    # test.sh is already quiet, so a clean run collapses to one line here. When
+    # it fails, print what it said IN FULL -- the assertion, the diff and the
+    # file:line. It used to be grepped down to the failing test's name, which
+    # told you something broke and then made you run it again to find out what.
+    suiteout=$(./test.sh 2>&1); suiterc=$?
+    if [ "$suiterc" = 0 ]; then
+      printf '   %s\n' "$(printf '%s' "$suiteout" | tr '\n' ' ')"
+    else
+      printf '%s\n' "$suiteout" | sed 's/^/   /'
+    fi
     echo "-- offline audit"
     "$0" audit | sed 's/^/   /'
     # The hook layer, which enforces three rules and until now had none of the
@@ -123,7 +131,10 @@ case "$cmd" in
     else
       echo "   clean"
     fi
-    case "$suite" in *"# fail 0"*) ;; *) echo "SUITE FAILED — do not commit"; exit 1 ;; esac
+    # Gates on test.sh's own exit code rather than on matching "# fail 0" in
+    # its text: a run that dies before printing a summary has no such line, and
+    # a string match would have read that as a pass.
+    [ "$suiterc" = 0 ] || { echo "SUITE FAILED — do not commit"; exit 1; }
     ;;
 
   audit)

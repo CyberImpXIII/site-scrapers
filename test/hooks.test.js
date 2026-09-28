@@ -1,4 +1,5 @@
-// The hook layer and dev.sh, checked by the suite rather than by hand.
+// The tooling's own seams -- the hook layer, dev.sh and test.sh -- checked by
+// the suite rather than by hand.
 //
 // These exist because the enforcement layer had no enforcement of its own. The
 // hooks are the only thing making three rules real, and every property they
@@ -135,6 +136,77 @@ test('dev.sh implements every subcommand it documents', () => {
   // wrong" rather than "this was never written".
   const missing = [...documented].filter(c => !implemented.has(c));
   assert.deepEqual(missing, [], `documented but not implemented: ${missing.join(', ')}`);
+});
+
+// --- test.sh: quiet for a reader, complete for the gate ---------------------
+
+test('a failing run is detected on BOTH the quiet and the verbose path', () => {
+  // test.sh's default output is filtered down to failures plus counts, because
+  // it is read far more often by a model than a person. lib/gate.js asks for
+  // --verbose instead, so the reader-facing filter cannot influence what the
+  // gate sees. This asserts the thing that actually matters either way: a real
+  // failure is still counted. A gate that silently reported zero failures
+  // would wave a broken change straight through.
+  const { parseTap } = require('../lib/gate');
+  const os = require('node:os');
+  // Written outside test/ and not matching *.test.js in this directory, so the
+  // suite never collects it as one of its own and fails forever.
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ss-tap-')), 'deliberate.test.js');
+  fs.writeFileSync(
+    tmp,
+    "const test=require('node:test');const assert=require('node:assert/strict');\n" +
+      "test('passes and should be invisible',()=>{assert.equal(1,1)});\n" +
+      "test('fails and must be loud',()=>{assert.equal('got','wanted','the extraction returned the wrong field')});\n"
+  );
+
+  const run = args => {
+    const r = require('node:child_process').spawnSync(path.join(REPO, 'test.sh'), args, {
+      encoding: 'utf8',
+    });
+    return `${r.stdout || ''}${r.stderr || ''}`;
+  };
+  const quiet = run([tmp]);
+  const verbose = run(['--verbose', tmp]);
+  fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
+
+  for (const [label, out] of [['quiet', quiet], ['verbose', verbose]]) {
+    const parsed = parseTap(out);
+    assert.equal(parsed.failed, 1, `${label}: parseTap must see the failure`);
+    assert.equal(parsed.passed, 1, `${label}: parseTap must see the pass`);
+    assert.deepEqual(parsed.failures, ['fails and must be loud'], `${label}: the failing test must be named`);
+  }
+
+  // Loud on failure: the assertion message has to survive the filter, or a
+  // quiet run tells you something broke without telling you what.
+  assert.match(quiet, /the extraction returned the wrong field/, 'quiet mode must still show why it failed');
+
+  // Quiet on success: the passing test must not appear at all, and verbose
+  // must still carry it. Asserted as presence/absence rather than as a size
+  // ratio -- the saving is proportional to the number of PASSING tests, so on
+  // a two-test fixture the failure block dominates and a ratio says nothing.
+  // The real size claim is the all-pass case in the next test.
+  assert.doesNotMatch(quiet, /^\s*ok \d+ - passes and should be invisible/m, 'a passing test must be invisible');
+  assert.match(verbose, /^\s*ok \d+ - passes and should be invisible/m, 'verbose must still carry every pass');
+});
+
+test('a fully passing run says almost nothing', () => {
+  const os = require('node:os');
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ss-tap-')), 'allpass.test.js');
+  fs.writeFileSync(
+    tmp,
+    "const test=require('node:test');const assert=require('node:assert/strict');\n" +
+      Array.from({ length: 12 }, (_, i) => `test('case ${i}',()=>{assert.ok(true)});`).join('\n')
+  );
+  const r = require('node:child_process').spawnSync(path.join(REPO, 'test.sh'), [tmp], { encoding: 'utf8' });
+  fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
+
+  const lines = (r.stdout || '').trim().split('\n').filter(Boolean);
+  assert.equal(r.status, 0, 'a passing run exits 0');
+  // 12 tests in, three lines out. The zero-valued cancelled/skipped/todo lines
+  // are dropped too -- they are noise when there is nothing to report.
+  assert.ok(lines.length <= 3, `expected at most 3 lines from a clean run, got ${lines.length}:\n${lines.join('\n')}`);
+  assert.match(r.stdout, /^# pass 12$/m);
+  assert.match(r.stdout, /^# fail 0$/m);
 });
 
 test('dev.sh usage prints the whole header, however long it grows', () => {
