@@ -8,6 +8,22 @@ extraction calls), and make what's already known about a site *queryable*,
 so a fresh/context-less session can check `query.js` instead of needing to
 remember or re-derive it.
 
+## Where things are documented
+
+| you want | read |
+|---|---|
+| the rules an agent must follow | `CLAUDE.md` — short on purpose, it is always in context |
+| building or fixing a recipe | `docs/recipes.md` |
+| a run failed or returned the wrong thing | `docs/diagnosing.md` |
+| the engine, generic actions, the write guard | `docs/architecture.md` |
+| logins, sessions, handing control to a person | `docs/handoffs.md` |
+| **mistakes already paid for once** | `docs/lessons.md` |
+| what has gone wrong on a specific site | `node failures.js match <hostname>` |
+
+This README is the narrative overview. `CLAUDE.md` is deliberately terse because
+it loads into every session; anything that is reference material rather than a
+rule lives in `docs/`.
+
 ## Architecture
 
 - **`engine.js`** — the only execution code. Takes a hostname (+ optional
