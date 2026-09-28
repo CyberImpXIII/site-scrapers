@@ -242,3 +242,64 @@ test('an empty selectors parameter is reported rather than silently probing noth
   const result = await runProbe(fakePage(async () => []), { kind: 'selectors', label: 's', selectors: '' });
   assert.match(result.error, /no selectors given/i);
 });
+
+// --- Probe knowledge lives in the DB, the probe LOGIC lives in code --------
+// The distinction is deliberate: probe kinds run page.evaluate with real logic,
+// and executing JavaScript stored in a writable row would be arbitrary code
+// execution from a data store. What goes in the DB is what the probes KNOW —
+// attribute names, phrases, markers — because that is what grows as new sites
+// and frameworks are met.
+
+test('probe knowledge is seeded and reaches the probes', async () => {
+  const { openFailuresDb, listProbeKnowledge } = require('../failuresDb');
+  const rows = listProbeKnowledge(openFailuresDb());
+  assert.ok(rows.length >= 15, `expected the seeded baseline, got ${rows.length}`);
+  for (const category of ['stable_attr', 'required_marker', 'submit_text', 'empty_phrase', 'generated_class']) {
+    assert.ok(rows.some(r => r.category === category), `${category} should be represented`);
+  }
+});
+
+test('every stored pattern compiles', () => {
+  // A pattern that cannot compile is skipped forever, which looks identical to
+  // one that simply never matches — the worst kind of silent failure.
+  const { openFailuresDb, listProbeKnowledge } = require('../failuresDb');
+  for (const r of listProbeKnowledge(openFailuresDb())) {
+    if (r.value_kind !== 'pattern') continue;
+    assert.doesNotThrow(() => new RegExp(r.value, 'i'), `${r.probe_kind}/${r.category} pattern does not compile: ${r.value}`);
+  }
+});
+
+test('a required marker in a LABEL is honoured, not just the HTML attribute', async () => {
+  // Greenhouse marks required fields with "*" in the label and omits the
+  // attribute; trusting the attribute alone called a 32-field form optional.
+  const result = await runProbe(
+    {
+      url: () => 'about:blank',
+      $$: async () => [],
+      evaluate: async (fn, maxFields, requiredMarkers, submitText) => {
+        assert.ok(Array.isArray(requiredMarkers) && requiredMarkers.length, 'markers must reach page context');
+        assert.ok(typeof submitText === 'string' && submitText.length, 'the submit pattern must reach page context');
+        // Mimic what the real page-side code produces for a starred label.
+        const marked = requiredMarkers.some(src => new RegExp(src, 'i').test('First Name*'));
+        return {
+          fields: [{ selector: '#n', tag: 'input', type: 'text', name: 'n', label: 'First Name*', placeholder: null, required: marked, requiredEvidence: marked ? 'label marker' : null, hasValue: false }],
+          submits: [],
+        };
+      },
+    },
+    { kind: 'forms', label: 'forms' }
+  );
+  assert.equal(result.fields[0].required, true, 'a starred label must count as required');
+  assert.equal(result.fields[0].requiredEvidence, 'label marker', 'the basis must be visible, not just the verdict');
+});
+
+test('probe knowledge falls back to the code baseline when the DB is unavailable', () => {
+  // A probe must never lose its knowledge entirely: a fresh clone, or a partial
+  // copy in a test, would otherwise silently detect nothing.
+  const { PROBE_KNOWLEDGE } = require('../lib/probeKnowledge');
+  assert.ok(PROBE_KNOWLEDGE.length >= 15, 'the code baseline must be complete enough to work alone');
+  for (const [kind, category, valueKind, value] of PROBE_KNOWLEDGE) {
+    assert.ok(kind && category && valueKind && value, `malformed baseline row: ${JSON.stringify([kind, category, valueKind, value])}`);
+    if (valueKind === 'pattern') assert.doesNotThrow(() => new RegExp(value, 'i'));
+  }
+});

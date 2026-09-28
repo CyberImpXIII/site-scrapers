@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { FAILURE_TYPES } = require('./lib/failureTypes');
 const { BLOCKER_SIGNATURES, WALL_SERVICES } = require('./lib/blockerSignatures');
+const { PROBE_KNOWLEDGE } = require('./lib/probeKnowledge');
 
 const FAILURES_DB_PATH = path.join(__dirname, 'data', 'failures.db');
 
@@ -81,6 +82,27 @@ CREATE TABLE IF NOT EXISTS blocker_signatures (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sig_service ON blocker_signatures(service);
+
+-- What the probes KNOW: attribute names, phrases and markers that grow as new
+-- sites and frameworks are met. The probe kinds themselves stay in code —
+-- executing JavaScript from a writable row would be arbitrary code execution
+-- from a data store. Numeric thresholds also stay in code, because they are
+-- tuning rather than knowledge.
+-- Seeded from lib/probeKnowledge.js so a fresh clone has the baseline; rows
+-- added at runtime are source='user' and survive re-seeding.
+CREATE TABLE IF NOT EXISTS probe_knowledge (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  probe_kind TEXT NOT NULL,           -- forms | empty_state | repeated_structure | ...
+  category TEXT NOT NULL,             -- stable_attr | required_marker | submit_text | empty_phrase | generated_class
+  value_kind TEXT NOT NULL,           -- 'attr' | 'pattern' | 'text'
+  value TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'builtin',
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(probe_kind, category, value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pk_kind ON probe_knowledge(probe_kind, category);
 `;
 
 function applyConcurrencyPragmas(db) {
@@ -168,6 +190,47 @@ function deleteBlockerSignature(db, id) {
   return { deleted: true };
 }
 
+// Compare-before-write, like the other seeds: openFailuresDb() runs in every
+// process, so an unconditional upsert would make every reader a writer.
+function seedProbeKnowledge(db) {
+  const existing = new Set(
+    db.prepare("SELECT probe_kind || '|' || category || '|' || value AS k FROM probe_knowledge WHERE source = 'builtin'").all().map(r => r.k)
+  );
+  const stale = PROBE_KNOWLEDGE.filter(([kind, cat, , value]) => !existing.has(`${kind}|${cat}|${value}`));
+  if (!stale.length) return;
+  const now = new Date().toISOString();
+  const insert = db.prepare(
+    `INSERT INTO probe_knowledge (probe_kind, category, value_kind, value, source, created_at)
+     VALUES (?,?,?,?, 'builtin', ?)
+     ON CONFLICT(probe_kind, category, value) DO NOTHING`
+  );
+  for (const [kind, cat, valueKind, value] of stale) insert.run(kind, cat, valueKind, value, now);
+}
+
+function listProbeKnowledge(db, { probeKind, category } = {}) {
+  const where = [];
+  const args = [];
+  if (probeKind) {
+    where.push('probe_kind = ?');
+    args.push(probeKind);
+  }
+  if (category) {
+    where.push('category = ?');
+    args.push(category);
+  }
+  return db
+    .prepare(`SELECT * FROM probe_knowledge ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY probe_kind, category, id`)
+    .all(...args);
+}
+
+function insertProbeKnowledge(db, k) {
+  db.prepare(
+    `INSERT INTO probe_knowledge (probe_kind, category, value_kind, value, source, notes, created_at)
+     VALUES (?,?,?,?, 'user', ?, ?)
+     ON CONFLICT(probe_kind, category, value) DO UPDATE SET notes = excluded.notes`
+  ).run(k.probe_kind, k.category, k.value_kind ?? 'pattern', k.value, k.notes ?? null, new Date().toISOString());
+}
+
 function openFailuresDb() {
   fs.mkdirSync(path.dirname(FAILURES_DB_PATH), { recursive: true });
   const db = new DatabaseSync(FAILURES_DB_PATH);
@@ -175,6 +238,7 @@ function openFailuresDb() {
   db.exec(SCHEMA);
   seedFailureTypes(db);
   seedBlockerSignatures(db);
+  seedProbeKnowledge(db);
   return db;
 }
 
@@ -360,4 +424,6 @@ module.exports = {
   insertBlockerSignature,
   deleteBlockerSignature,
   WALL_SERVICES,
+  listProbeKnowledge,
+  insertProbeKnowledge,
 };

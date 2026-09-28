@@ -58,6 +58,8 @@ const {
   listBlockerSignatures,
   insertBlockerSignature,
   deleteBlockerSignature,
+  listProbeKnowledge,
+  insertProbeKnowledge,
 } = require('./failuresDb');
 
 function fail(msg) {
@@ -68,6 +70,50 @@ function fail(msg) {
 function main() {
   const [, , cmd, arg, ...rest] = process.argv;
   const db = openFailuresDb();
+
+  if (cmd === 'probe-knowledge') {
+    const rows = listProbeKnowledge(db, { probeKind: arg });
+    console.log(JSON.stringify({
+      count: rows.length,
+      knowledge: rows.map(r => ({ id: r.id, probe: r.probe_kind, category: r.category, kind: r.value_kind, value: r.value, source: r.source, notes: r.notes })),
+      note:
+        'What the probes KNOW: attribute names, phrases and markers that grow as new sites are met. The probe kinds themselves ' +
+        'stay in code — executing JavaScript from a writable row would be arbitrary code execution. Numeric thresholds also stay ' +
+        'in code, because they are tuning rather than knowledge. Add a discovery with `add-probe-knowledge`; builtin rows are ' +
+        'seeded from lib/probeKnowledge.js and re-seeded on every open.',
+    }, null, 2));
+    return;
+  }
+
+  if (cmd === 'add-probe-knowledge') {
+    if (!arg) fail('Usage: node failures.js add-probe-knowledge \'{"probe_kind":"forms","category":"stable_attr","value_kind":"attr","value":"data-foo","notes":"..."}\'');
+    let def;
+    try {
+      def = JSON.parse(arg);
+    } catch (e) {
+      fail(`Not valid JSON: ${e.message}`);
+    }
+    if (!def.probe_kind || !def.category || !def.value) fail('probe_kind, category and value are all required');
+    const CATEGORIES = ['stable_attr', 'required_marker', 'submit_text', 'empty_phrase', 'generated_class'];
+    if (!CATEGORIES.includes(def.category)) fail(`category must be one of: ${CATEGORIES.join(', ')}`);
+    if ((def.value_kind ?? 'pattern') === 'pattern') {
+      // A pattern that cannot compile would be skipped forever, which looks
+      // identical to one that simply never matches.
+      try {
+        new RegExp(def.value, 'i');
+      } catch (e) {
+        fail(`value is not a valid regex: ${e.message}`);
+      }
+    }
+    insertProbeKnowledge(db, def);
+    console.log(JSON.stringify({
+      success: true,
+      probe: def.probe_kind,
+      category: def.category,
+      note: 'Recorded. Every later probe run uses it — no code change, no restart. If it proves general, promote it into lib/probeKnowledge.js so a fresh clone has it too.',
+    }));
+    return;
+  }
 
   if (cmd === 'signatures') {
     const rows = listBlockerSignatures(db, { service: arg });

@@ -51,7 +51,14 @@ test('the taxonomy is seeded from code, so a fresh clone has the vocabulary', ()
   try {
     fs.mkdirSync(path.join(tmp, 'lib'), { recursive: true });
     fs.copyFileSync(path.join(REPO_ROOT, 'failuresDb.js'), path.join(tmp, 'failuresDb.js'));
-    for (const f of ['failureTypes.js', 'blockerSignatures.js']) {
+    // Dependencies are DERIVED from failuresDb.js's own requires rather than
+    // listed here. A hand-maintained list broke this test three times — once
+    // per new lib/ dependency — and each time the failure looked like a
+    // fresh-clone regression rather than a stale fixture.
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'failuresDb.js'), 'utf8');
+    const deps = [...src.matchAll(/require\('\.\/lib\/([\w.]+)'\)/g)].map(m => m[1].replace(/\.js$/, '') + '.js');
+    assert.ok(deps.length > 0, 'expected to find lib/ dependencies to copy');
+    for (const f of new Set(deps)) {
       fs.copyFileSync(path.join(REPO_ROOT, 'lib', f), path.join(tmp, 'lib', f));
     }
     const { openFailuresDb: openFresh, listFailureTypes: listFresh } = require(path.join(tmp, 'failuresDb.js'));

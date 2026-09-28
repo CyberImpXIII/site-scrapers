@@ -36,7 +36,7 @@ process.removeAllListeners('warning');
 
 
 const { openDb, listSites, getSite, listGenericActions } = require('./db');
-const { expandSteps, refKey } = require('./lib/composeActions');
+const { expandSteps, refKey, applyWith } = require('./lib/composeActions');
 
 const MIN_SEQUENCE = 2;   // a single shared step is not worth extracting
 const MIN_RECIPES = 2;    // "reused" means more than one caller
@@ -203,6 +203,42 @@ function auditUnits(db) {
     }
     if (!b.description || b.description.length < 40) {
       add('warn', `generic:${b.name}`, 'has little or no description', 'the library is only discoverable through these');
+    }
+  }
+
+  // --- Are a generic action's parameters INERT? --------------------------
+  // The static check above catches a parameter no step mentions. This catches
+  // the next failure along: a parameter that IS mentioned but whose value never
+  // reaches the step, so passing it changes nothing. probe_card_candidates
+  // shipped exactly that, documenting min_group while hardcoding 3 — a `with:`
+  // clause was silently ignored.
+  //
+  // Done by substituting a sentinel and checking it survives, which is the same
+  // path a real call takes, so it cannot pass while the real thing fails.
+  for (const g of generics) {
+    let schema = {};
+    try {
+      schema = JSON.parse(g.nav_params_schema || '{}');
+    } catch {
+      continue; // already reported above
+    }
+    for (const param of Object.keys(schema)) {
+      const sentinel = `__audit_sentinel_${param}__`;
+      let substituted;
+      try {
+        substituted = JSON.stringify(applyWith(JSON.parse(g.steps), { [param]: sentinel }));
+      } catch (e) {
+        add('error', `generic:${g.name}`, `substituting "${param}" throws: ${e.message}`, 'a caller passing it would crash the run');
+        continue;
+      }
+      if (!substituted.includes(sentinel)) {
+        add(
+          'error',
+          `generic:${g.name}`,
+          `parameter "${param}" is INERT — a value passed via \`with\` never reaches any step`,
+          'the caller believes they changed something and nothing changed, which is worse than the parameter not existing'
+        );
+      }
     }
   }
 
