@@ -211,7 +211,10 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
   1 `PARTIAL` (glassdoor, section 0), no `INFRA` and no `LIAR`.** That also
   settled two things worth not re-deriving: `hiringcafe.com#listing` returned
   36 records, confirming its `DISAGREES` flag was contention from a burst of
-  overlapping runs rather than a regression; and the three recipes that sat at
+  overlapping runs rather than a regression — **`./dev.sh health` will keep
+  showing `DISAGREES` on it until those five failures age out of the 10-run
+  window, so do not investigate it again on the strength of that flag**; and
+  the three recipes that sat at
   `working` with zero runs under their current definition
   (`jobs.lever.co#action:describe_application_form`,
   `salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing`) all
