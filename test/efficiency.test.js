@@ -76,8 +76,20 @@ test('extracts all fixture cards correctly', async () => {
   const { json } = await runEngine();
   assert.equal(json.success, true);
   assert.equal(json.count, CARD_COUNT);
-  assert.equal(json.jobs[0].title, 'Support Engineer 1');
-  assert.equal(json.jobs[0].href, '/job/1');
+  assert.equal(json.records[0].title, 'Support Engineer 1');
+  assert.equal(json.records[0].href, '/job/1');
+});
+
+test('records are emitted once, under the generic key only', async () => {
+  // The rename's actual guarantee. `jobs` was domain vocabulary in a generic
+  // contract, and the fix has to be a RENAME rather than an addition: emitting
+  // both serialises the array twice, which failed the size assertion above
+  // with structured output larger than the raw page it came from. If `jobs`
+  // ever comes back alongside `records`, that regression is back with it.
+  const { json } = await runEngine();
+  assert.ok(Array.isArray(json.records), 'records is the contract');
+  assert.equal(json.jobs, undefined, 'the old key must not be emitted as well');
+  assert.equal(json.count, json.records.length, 'count must agree with the array it counts');
 });
 
 test('structured output is much smaller than the raw page it was extracted from', async () => {

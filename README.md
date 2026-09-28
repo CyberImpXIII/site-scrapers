@@ -29,7 +29,12 @@ rule lives in `docs/`.
 - **`engine.js`** — the only execution code. Takes a hostname (+ optional
   `#page_type[:recipe_name]`) + params, looks up that recipe in the DB,
   executes it, extracts fields (if any), logs the run, prints one JSON
-  object. Nothing site-specific is hardcoded here.
+  object. Nothing site-specific is hardcoded here. Extracted rows come back
+  under **`records`** — renamed from `jobs` on 2026-09-28, because an engine
+  that is generic everywhere else was handing a product catalogue's rows back
+  under a job-board noun. `recordsOf()` in `lib/outputShape.js` is the
+  accessor every reader uses; it still understands a legacy `jobs` key, so an
+  old saved run JSON stays readable, but nothing emits one.
 - **`data/scrapers.db`** (SQLite, via Node's built-in `node:sqlite`) — the
   knowledge base. Five tables:
   - `sites` — one row per `(hostname, page_type, recipe_name)` triple: how

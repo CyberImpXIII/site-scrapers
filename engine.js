@@ -1127,7 +1127,7 @@ async function main() {
       ? {
           partialResults: true,
           partialNote:
-            `The wait deadline passed, but ${outcome.jobs.length} records were still extracted and are present in "jobs". ` +
+            `The wait deadline passed, but ${outcome.jobs.length} records were still extracted and are present in "records". ` +
             'They are usable; they may also be incomplete. Check count before discarding them, and consider raising ready_timeout_ms.',
         }
       : {}),
@@ -1136,7 +1136,22 @@ async function main() {
     consistencyWarning,
     count: outcome.jobs.length,
     pagesVisited: outcome.pagesVisited,
-    jobs: outcome.jobs,
+    // `records`, not `jobs`: the engine is generic, so naming its output after
+    // job boards meant a product catalogue came back under `jobs` too.
+    //
+    // Renamed outright rather than dual-emitted through a deprecation window,
+    // which is what TODO 2 originally planned. Two findings killed the window.
+    // Nothing outside this repo reads the key — the script the TODO named as
+    // the external consumer (../scripts/dedupe_import_jobs.py) parses
+    // job-apply's markdown and has never read engine output. And emitting both
+    // serialises the whole array twice: test/efficiency.test.js failed with
+    // structured output at 1961 chars against a 1423-char raw fixture page,
+    // i.e. the transitional state broke the size guarantee this engine exists
+    // to provide. A deprecation alias nobody needs is not worth that.
+    //
+    // lib/outputShape.js still reads a legacy `jobs` key, so an OLD saved run
+    // JSON stays readable; nothing emits one any more.
+    records: outcome.jobs,
     handoffCaptures: outcome.captures,
     diagnostics: outcome.probeResults?.length ? outcome.probeResults : undefined,
     sessionUsed: sessionOpt ? sessionName : null,

@@ -30,6 +30,11 @@ everything. A `working` recipe → `./scrape.sh <target> '<json params>'`. Check
 the `success` field, not the exit code. A `success:false` run can still carry
 records: if `partialResults` is true, the wait expired but the data is there.
 
+Extracted rows come back as **`records`** (renamed from `jobs` on 2026-09-28 —
+the engine is generic, so a product catalogue was arriving under `jobs` too).
+Read them with `recordsOf()` from `lib/outputShape.js` rather than reaching for
+the key, which also handles an `article` run's single record.
+
 **2. Writes are BLOCKED outside a sanctioned path.**
 
 | to do this | use |
@@ -112,7 +117,7 @@ verify.js   <target> '<params>' [--dry] [--attended]
 audit.js    units | inline | repeats | literals | hardcoded | provenance  (offline)
             params | working | fixed-params                              (LIVE, minutes)
 failures.js match | record | common | list | types | signatures | probe-knowledge
-dev.sh      check | test [n] | audit | run | verify | inside | apply
+dev.sh      check | test [n] | audit | run | verify | inside | apply | waive
             health | blocked | snap | new | clean
 init.js     first-run setup after a clone
 ```
@@ -125,6 +130,14 @@ the summary you want is not there, add it rather than filtering inline.
 **Before committing: `./dev.sh check`** — suite, offline audit and working tree
 in one command, exiting non-zero if the suite fails. An `error` from the audit
 means something is already broken.
+
+**A warning you have checked gets waived, not re-derived.** `./dev.sh waive
+<target> <rule> '<what you checked>'` writes an `AUDIT-VERIFIED[rule]` line the
+audit itself reads, so it prints as `OK/W` with your evidence instead of as an
+open finding. It never applies to an `error`, and the finding still appears —
+this records an answer, it does not silence a check. Without it a verified
+warning gets re-investigated every session, which is what happened to
+salesforce's `:has()` three times.
 
 ---
 

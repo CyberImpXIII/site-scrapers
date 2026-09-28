@@ -37,6 +37,7 @@ process.removeAllListeners('warning');
 
 const { openDb, listSites, getSite, listGenericActions } = require('./db');
 const { expandSteps, refKey, applyWith } = require('./lib/composeActions');
+const { recordsOf } = require('./lib/outputShape');
 
 const MIN_SEQUENCE = 2;   // a single shared step is not worth extracting
 const MIN_RECIPES = 2;    // "reused" means more than one caller
@@ -99,9 +100,45 @@ function literalsOf(step) {
 // registered, a step type used in a recipe that the engine does not implement,
 // a parameter documented in a schema that the steps never read, a failure type
 // nothing can ever match.
+// A warning that has been CHECKED and found not to apply has to stop being
+// re-raised, or every later session pays to investigate it again. That is not
+// hypothetical: salesforce's descendant `:has()` was verified against the live
+// page, the verification was written into the recipe's notes, and the warning
+// kept firing regardless — so it was re-checked twice more, each time reaching
+// the same answer. A note nothing reads is not a record.
+//
+// The acknowledgement is evidence, not a mute button, and the shape is what
+// makes that true:
+//   - it NAMES the rule, so it cannot silence a different finding
+//   - it carries a date and a reason, so a stale waiver is visible as stale
+//   - the finding still appears, at its real severity, with the waiver
+//     attached — nothing is hidden, and `severity|unit|problem` is unchanged,
+//     so lib/gate.js sees no new finding and no change is rolled back
+//   - `error` can never be waived: it means something is broken now
+//
+//   AUDIT-VERIFIED[descendant-has] 2026-09-28: matches exactly 20, li do not nest here
+const ACK_RE = /AUDIT-VERIFIED\[([a-z0-9-]+)\]\s*(\d{4}-\d{2}-\d{2})\s*:\s*([^\n]+)/gi;
+function acknowledgements(notes) {
+  const out = new Map();
+  for (const m of String(notes || '').matchAll(ACK_RE)) {
+    out.set(m[1].toLowerCase(), { date: m[2], reason: m[3].trim() });
+  }
+  return out;
+}
+
+// The one place that decides whether a finding is waived, so the "an error is
+// never waivable" rule cannot be half-applied by a future caller that forgets
+// it. Returns the waiver to attach, or null.
+function waiverFor(severity, rule, acks) {
+  if (severity !== 'warn' || !rule) return null;
+  const ack = acks.get(String(rule).toLowerCase());
+  return ack ? { on: ack.date, reason: ack.reason } : null;
+}
+
 function auditUnits(db) {
   const findings = [];
-  const add = (severity, unit, problem, why) => findings.push({ severity, unit, problem, why });
+  const add = (severity, unit, problem, why, rule) =>
+    findings.push({ severity, unit, problem, why, ...(rule ? { rule } : {}) });
 
   const { PROBE_KINDS } = require('./lib/probes');
   const { BUILTIN_ACTIONS } = require('./lib/builtinActions');
@@ -260,17 +297,26 @@ function auditUnits(db) {
   // --- Mistakes this project actually made, now checkable offline ---------
   for (const { site, target: unit } of eachRecipe(db)) {
     const notes = String(site.notes || '');
+    const acks = acknowledgements(notes);
+    // Same signature as `add`, plus the rule id a waiver has to name. Only a
+    // `warn` can be waived; an `error` passes straight through.
+    const addRule = (severity, rule, problem, why) => {
+      const waived = waiverFor(severity, rule, acks);
+      findings.push({ severity, unit, problem, why, rule, ...(waived ? { waived } : {}) });
+    };
 
     // A descendant :has() also matches every ANCESTOR wrapper. It over-matched
     // twice: workingnomads.com (page chrome counted as cards) and
     // ziprecruiter.com (144 nodes where 20 were wanted). A direct-child
     // combinator, or a tighter selector, is almost always what was meant.
     if (site.card_selector && /:has\(\s*[^>)]/.test(site.card_selector)) {
-      add(
+      addRule(
         'warn',
-        unit,
+        'descendant-has',
         'card_selector uses a descendant :has(), which also matches ancestor wrappers',
-        'confirm the match count is the number of cards, not a multiple of it — use :has(> ...) or a tighter selector'
+        'confirm the match count is the number of cards, not a multiple of it — use :has(> ...) or a tighter selector. ' +
+          'If you have checked it and the count is right, record that in the recipe notes as ' +
+          '`AUDIT-VERIFIED[descendant-has] <YYYY-MM-DD>: <what you counted>` so the next session does not re-derive it'
       );
     }
 
@@ -629,7 +675,7 @@ async function auditParameters(db, { run = defaultRunner() } = {}) {
     }
 
     const [ra, rb] = [await run(target, probes[0]), await run(target, probes[1])];
-    const ids = r => JSON.stringify((r.jobs || []).map(j => j.href ?? j.title ?? '').slice(0, 25));
+    const ids = r => JSON.stringify(recordsOf(r).map(j => j.href ?? j.title ?? '').slice(0, 25));
     const bothEmpty = (ra.count ?? 0) === 0 && (rb.count ?? 0) === 0;
     const identical = ids(ra) === ids(rb);
 
@@ -851,4 +897,6 @@ module.exports = {
   findRepeatedSequences,
   findSharedLiterals,
   findInlineDuplicates,
+  acknowledgements,
+  waiverFor,
 };

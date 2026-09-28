@@ -106,7 +106,7 @@ test('positional_segment drifts when a card has an optional part', async () => {
     { field_name: 'title', extract_kind: 'positional_segment', segment_index: 1 },
   ]);
   assert.equal(r.count, 6);
-  const titles = r.jobs.map(j => j.title);
+  const titles = r.records.map(j => j.title);
   assert.ok(
     titles.some(t => /^\d\.\d$/.test(t)),
     `expected the rating to land in the title field on some cards, got ${JSON.stringify(titles)}`
@@ -120,7 +120,7 @@ test('child_text is immune to the same drift', async () => {
     { field_name: 'location', extract_kind: 'child_text', regex_pattern: '.loc' },
   ]);
   assert.equal(r.count, 6);
-  for (const [i, job] of r.jobs.entries()) {
+  for (const [i, job] of r.records.entries()) {
     assert.equal(job.title, `Engineer ${i}`, 'every title should be a title, rating or not');
     assert.equal(job.company, `Company ${i}`);
     assert.equal(job.location, `City ${i}`);
@@ -135,7 +135,7 @@ test('a missing element yields null rather than shifting its neighbours', async 
     { field_name: 'rating', extract_kind: 'child_text', regex_pattern: '.rating' },
     { field_name: 'title', extract_kind: 'child_text', regex_pattern: '.title' },
   ]);
-  for (const [i, job] of r.jobs.entries()) {
+  for (const [i, job] of r.records.entries()) {
     assert.equal(job.title, `Engineer ${i}`, 'the neighbour must not move');
     if (i % 2 === 0) assert.equal(job.rating, '4.5');
     else assert.equal(job.rating, null, 'an absent element is null, not the next element');
@@ -148,10 +148,10 @@ test('segment_index picks the nth match, and counts from the end when negative',
     { field_name: 'lastSpan', extract_kind: 'child_text', regex_pattern: 'div', segment_index: -1 },
   ]);
   // Even cards: company, rating, loc. Odd cards: company, loc.
-  assert.equal(r.jobs[0].firstSpan, 'Company 0');
-  assert.equal(r.jobs[0].lastSpan, 'City 0');
-  assert.equal(r.jobs[1].firstSpan, 'Company 1');
-  assert.equal(r.jobs[1].lastSpan, 'City 1', 'negative indexing must work on the shorter card too');
+  assert.equal(r.records[0].firstSpan, 'Company 0');
+  assert.equal(r.records[0].lastSpan, 'City 0');
+  assert.equal(r.records[1].firstSpan, 'Company 1');
+  assert.equal(r.records[1].lastSpan, 'City 1', 'negative indexing must work on the shorter card too');
 });
 
 test('a malformed selector yields null without losing the other fields', async () => {
@@ -162,7 +162,7 @@ test('a malformed selector yields null without losing the other fields', async (
     { field_name: 'title', extract_kind: 'child_text', regex_pattern: '.title' },
   ]);
   assert.equal(r.count, 6);
-  for (const [i, job] of r.jobs.entries()) {
+  for (const [i, job] of r.records.entries()) {
     assert.equal(job.broken, null);
     assert.equal(job.title, `Engineer ${i}`, 'the other fields must survive a bad selector');
   }
@@ -175,7 +175,7 @@ test('child_text collapses whitespace so values are comparable', async () => {
   const r = await runWithFields('child_text_ws', [
     { field_name: 'card', extract_kind: 'child_text', regex_pattern: 'h2' },
   ]);
-  for (const job of r.jobs) {
+  for (const job of r.records) {
     assert.ok(!/\s{2,}|\n/.test(job.card), `expected collapsed whitespace, got ${JSON.stringify(job.card)}`);
     assert.equal(job.card, job.card.trim());
   }

@@ -25,40 +25,15 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
-## 0. Found 2026-09-28 by reading live state, not in the original list
+## 0. Raise `glassdoor.com`'s `ready_timeout_ms`
 
-### 0a. `hiringcafe.com#listing` now flags `DISAGREES` — decide if it is real
+The one non-`ok` result in the 2026-09-28 `node audit.js working` sweep:
+`PARTIAL` — 30 records came back but the wait for
+`li[data-test="jobListing"]` expired first, so the run is logged as a failure
+while carrying the data. The audit's own `why` says to raise the timeout.
 
-`./dev.sh health` shows it `working` at 4/10. **Do not fix it yet.** Five of the
-six failures are a burst between 06:27 and 06:31 on 2026-09-28, three of them
-inside 41 seconds and two inside the same second — the parallel-contention
-signature rule 7 and `docs/lessons.md` both warn about. All five are
-`timed_out` with no error text. Before that burst it was 3/4.
-
-**One solo run decides it.** A repeat under parallel load is not evidence.
-
-### 0b. Three recipes are `working` with zero runs under their current definition
-
-`jobs.lever.co#action:describe_application_form`,
-`salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing` (whose last
-error is `Protocol error (Page.navigate): Target closed` — the INFRA
-signature). Per rule 3 status is earned, so these are assertions, not results.
-`node audit.js working` settles these and 0a in one sweep.
-
-### 0c. Stale builtin-editing instructions in two docs, one self-contradicting
-
-`lib/builtinActions.js` is mode 444 with a DO-NOT-EDIT header, and
-`docs/architecture.md:51` says a builtin is edited through `register.js`
-because the DB is the source of truth. But **`docs/architecture.md:95-99`**
-(same file, lower down) and **`README.md`'s "Where the built-in library lives"**
-both still say the file is authoritative, that you change a builtin by editing
-it, and that `register.js` *refuses* to register over a builtin name.
-
-That last claim is the damaging one: it tells a session the sanctioned path is
-closed when it is the only open one. Exactly the "stale notes are worse than
-none" failure in `docs/lessons.md`, and TODO 4's note that `register.js` can
-now add a builtin with `"builtin": true` is the same flip, recorded in a third
-place. Fix both doc sites; date the correction.
+Do it with `node lab.js set glassdoor.com '{"ready_timeout_ms":…,"note":"…"}'`
+and confirm with one solo run. Nothing else is wrong with the recipe.
 
 ---
 
@@ -72,45 +47,11 @@ so it is deterministic and you know in advance how much comes back.* A cap says
 Migrating four recipes meant reading 12–16 parts per site and deciding. Most of
 that decision is mechanically derivable.
 
-### 1a. Match known values — fully deterministic, do this first
-
-For a **migration**, the answer is already known: `node lab.js peek <target>`
-prints the values the current recipe produces. So the step is a *search*, not a
-report — **find the minimal selector whose text equals this value in every
-card**. One line per field, no judgement, and provably correct because it is
-validated against output that already exists.
-
-This would have replaced every judgement call made on builtin.com, nodesk.co,
-wellfound.com and ziprecruiter.com. Rough shape:
-
-```
-node lab.js match <target> '<params>'
-  -> { title: "a.mr-2.text-sm", company: "h3.f8.fw4", ... }
-```
-
-Cost comparison measured while doing it by hand: page HTML ~500KB, raw
-`lab.js inside` ~6KB, hand-filtered with jq ~1.2KB, and this would be ~200B.
-
-### 1b. Rank semantic over utility — do NOT exclude
-
-Most of what `card_anatomy` reports is framework noise. On builtin.com the top
-of the list was `div.col-12.col-lg-7`, `div.d-flex.align-items-start`,
-`div.d-none.d-xl-block` — pure Bootstrap — while the two real hooks were
-`div.left-side-tile-item-2` and `-3`.
-
-**Sort semantic-first and collapse the utility ones into a short tail. Do not
-drop them.** On builtin.com `div.d-flex.align-items-start` is the *only* hook
-for four fields (time, locations, salary, level); excluding utility classes
-would have left nothing. This is a ranking problem, not a filtering one.
-
-The vocabularies belong in `failures.db` as a new probe-knowledge category
-(`utility_class`), **not in code** — same reason the build-hash patterns live
-there: meeting a new framework should be a data change. Seed with Bootstrap
-(`d-flex`, `col-*`, `fs-*`, `mb-*`, `gap-*`, `justify-*`), Tailwind (`flex`,
-`items-*`, `px-*`, `text-*`, `w-full`, `space-x-*`), Bulma (`is-*`, `has-*`).
-
-Add it via `node failures.js` — see `lib/probeKnowledge.js` for the baseline
-shape and the reasoning about what is knowledge vs. tuning.
+**1a and 1b are DONE** (2026-09-28, commit `90c1397`). `node lab.js match
+<target> '<params>'` finds the selector reproducing each known value, and
+`card_anatomy` now sorts framework utility classes into a tail via the
+`utility_class` probe-knowledge category. What remains of this section is 1c
+and 1d.
 
 ### 1c. Propose fields by shape — for NEW recipes
 
@@ -133,21 +74,30 @@ badge is exactly the optional element that causes positional drift.
 
 ---
 
-## 2. `jobs` is domain vocabulary in a generic contract
+## 2. `jobs` is domain vocabulary in a generic contract — **DONE 2026-09-28**
 
-`engine.js:1106` returns `{ jobs: [...] }` for **every** listing recipe. Scrape
-a product catalogue and the records come back under `jobs`. Same class as the
-`record_nouns` leak already fixed, but this one is in the contract: `audit.js`
-and `lab.js` read `r.jobs` — 27 references across three source files plus three
-test files.
+`engine.js` now returns `{ records: [...] }`. Every reader goes through
+`recordsOf()` in `lib/outputShape.js`, which still accepts a legacy `jobs` key
+so an old saved run JSON stays readable.
 
-Sequencing (it is a breaking change, so do not do it in one step):
-1. Emit `records` as canonical **and** keep `jobs` as an alias.
-2. Move every reader to `records`.
-3. Drop `jobs` in a separate commit.
+**The planned three-step deprecation was dropped, on evidence.** Both reasons
+are worth keeping, because they are the kind of thing a later session would
+otherwise re-litigate:
 
-Check `../scripts/dedupe_import_jobs.py` before step 3 — it consumes this output
-and lives outside this repo.
+1. **The external consumer named here does not exist.**
+   `../scripts/dedupe_import_jobs.py` parses job-apply's markdown
+   (`~/.claude-job-searches/search-*.md`) and Proficiently's `job-history.md`.
+   Its own `jobs` is a local variable. It has never read engine output, and
+   nothing outside this repo references `scrape.sh` or `engine.js` at all.
+2. **Dual-emitting cost more than the deprecation was worth.** Emitting
+   `records` and `jobs` together serialises the array twice, and
+   `test/efficiency.test.js` failed on it: structured output 1961 chars
+   against a 1423-char raw fixture page — the transitional state broke the
+   size guarantee the engine exists to provide. Keeping an alias nobody reads
+   is not worth failing that.
+
+`test/efficiency.test.js` now asserts `jobs` is **not** emitted alongside
+`records`, so re-adding the alias re-fails on the same assertion.
 
 ---
 
@@ -173,17 +123,25 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
   count is right, but it has never been written down *why*, so every session
   re-checks it. Either tighten the selector to `:has(> ...)` or record the
   verification in the recipe notes so the warning stops being re-investigated.
-- **Live audits have never been run end to end.** Their verdict logic is now
-  tested offline (`test/live-audits.test.js`), but the real sweeps take minutes
-  and need a network:
+- **Two of the three live audits still have never been run end to end.**
+  `node audit.js working` was run solo on 2026-09-28: **31 recipes, 30 `ok`,
+  1 `PARTIAL` (glassdoor, section 0), no `INFRA` and no `LIAR`.** That also
+  settled two things worth not re-deriving: `hiringcafe.com#listing` returned
+  36 records, confirming its `DISAGREES` flag was contention from a burst of
+  overlapping runs rather than a regression; and the three recipes that sat at
+  `working` with zero runs under their current definition
+  (`jobs.lever.co#action:describe_application_form`,
+  `salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing`) all
+  returned records, so that status is now earned.
+
+  Still to run, **one at a time**:
   ```
-  node audit.js working        # does every "working" recipe still return records
   node audit.js params         # do declared parameters actually change the result
   node audit.js fixed-params   # does a hardcoded query param suppress results
   ```
-  **Run them one at a time.** Two at once produces browser-teardown errors that
-  look exactly like broken recipes — that is what the `INFRA` verdict is for. If
-  you see `INFRA`, re-run that recipe alone before concluding anything.
+  Two at once produces browser-teardown errors that look exactly like broken
+  recipes — that is what the `INFRA` verdict is for. If you see `INFRA`,
+  re-run that recipe alone before concluding anything.
 - **`register.js` can now add a builtin** with `"builtin": true` plus a `note`.
   Nothing else has used that path yet; `probe_card_anatomy` was the first.
 

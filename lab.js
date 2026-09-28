@@ -37,6 +37,7 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const path = require('path');
 const { openDb, getSite, getFields, insertField, parseSiteArg, snapshotVersionIfChanged } = require('./db');
+const { recordsOf } = require('./lib/outputShape');
 
 const REPO_ROOT = __dirname;
 const PROBER = 'lab-prober.internal';
@@ -194,7 +195,7 @@ async function main() {
     if (!a) die("Usage: node lab.js match <target> '<params>' [--wait=MS]");
     const params = b && !b.startsWith('--') ? JSON.parse(b) : {};
     const r = await runEngine(a, params);
-    const records = r.jobs || [];
+    const records = recordsOf(r);
     if (!records.length) {
       die(
         `the recipe returned no records, so there are no known values to match against` +
@@ -276,7 +277,7 @@ async function main() {
   if (cmd === 'peek' || cmd === 'raw') {
     if (!a) die(`Usage: node lab.js ${cmd} <target> '<params>'`);
     const r = await runEngine(a, b ? JSON.parse(b) : {}, cmd === 'raw');
-    const jobs = r.jobs || (r.article ? [r.article] : []);
+    const jobs = recordsOf(r);
     out({
       target: a,
       success: r.success,
@@ -405,7 +406,7 @@ async function main() {
     // site filters client-side and never reads ?s=. That is worse than a
     // broken recipe — it answers the wrong question without complaining.
     const [ra, rb] = [await runEngine(a, JSON.parse(b)), await runEngine(a, JSON.parse(c))];
-    const ids = r => JSON.stringify((r.jobs || []).map(j => j.href ?? j.title ?? '').slice(0, 25));
+    const ids = r => JSON.stringify(recordsOf(r).map(j => j.href ?? j.title ?? '').slice(0, 25));
     const inert = ra.count > 0 && ids(ra) === ids(rb);
     out({
       target: a,

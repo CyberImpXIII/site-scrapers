@@ -10,7 +10,65 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { signature, literalsOf, findRepeatedSequences, findSharedLiterals } = require('../audit');
+const {
+  signature,
+  literalsOf,
+  findRepeatedSequences,
+  findSharedLiterals,
+  acknowledgements,
+  waiverFor,
+} = require('../audit');
+
+// --- waiving a checked warning --------------------------------------------
+// A warning that was investigated and found not to apply must stop being
+// re-raised, or every later session pays to investigate it again. salesforce's
+// descendant :has() was verified against the live page and the verification
+// written into the recipe notes, and the warning kept firing regardless, so it
+// was re-checked twice more. These tests are about the waiver being EVIDENCE
+// rather than a mute button.
+
+test('a waiver records which rule, when, and why', () => {
+  const acks = acknowledgements(
+    'CONFIRMED WORKING end-to-end. AUDIT-VERIFIED[descendant-has] 2026-09-28: matches exactly 20, li do not nest here'
+  );
+  assert.deepEqual(acks.get('descendant-has'), {
+    date: '2026-09-28',
+    reason: 'matches exactly 20, li do not nest here',
+  });
+});
+
+test('a waiver without a date or a reason is not a waiver', () => {
+  // The date is what lets a stale waiver be seen as stale, and the reason is
+  // the only thing that makes it evidence. Without either it is just a string
+  // that silences a check.
+  assert.equal(acknowledgements('AUDIT-VERIFIED[descendant-has]').size, 0, 'no date, no reason');
+  assert.equal(acknowledgements('AUDIT-VERIFIED[descendant-has] 2026-09-28').size, 0, 'no reason');
+  assert.equal(acknowledgements('we checked the :has() and it is fine').size, 0, 'prose is not a waiver');
+});
+
+test('a waiver only silences the rule it names', () => {
+  const acks = acknowledgements('AUDIT-VERIFIED[descendant-has] 2026-09-28: counted, fine');
+  assert.ok(waiverFor('warn', 'descendant-has', acks), 'the named rule is waived');
+  assert.equal(waiverFor('warn', 'notes-claim-blocked', acks), null, 'a different rule is untouched');
+  assert.equal(waiverFor('warn', undefined, acks), null, 'a rule-less finding can never be waived');
+});
+
+test('an error can never be waived', () => {
+  // The severity distinction is the whole safety argument: a warn is "check
+  // this", which can be answered once; an error means something is broken
+  // right now, and no note should be able to make it stop saying so.
+  const acks = acknowledgements('AUDIT-VERIFIED[descendant-has] 2026-09-28: counted, fine');
+  assert.equal(waiverFor('error', 'descendant-has', acks), null);
+});
+
+test('several rules can be waived independently in one set of notes', () => {
+  const acks = acknowledgements(
+    'AUDIT-VERIFIED[descendant-has] 2026-09-28: counted\nlater text\nAUDIT-VERIFIED[other-rule] 2026-01-02: reason two'
+  );
+  assert.equal(acks.size, 2);
+  assert.equal(acks.get('other-rule').date, '2026-01-02');
+  assert.equal(acks.get('descendant-has').reason, 'counted', 'a reason stops at the newline, not at the next marker');
+});
 
 // --- signature(): same KIND of step, ignoring site-specific values ---------
 

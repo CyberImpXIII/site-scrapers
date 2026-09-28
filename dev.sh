@@ -17,6 +17,7 @@
 #   ./dev.sh verify <target> '<params>' ... # earn "working" for several recipes, one line each
 #   ./dev.sh inside <url> '<card_sel>' [--wait=MS] [--all]  # what is inside a card, as field candidates
 #   ./dev.sh apply <target> <file.json> '<params>'          # lab.js set, then peek, to see what it did
+#   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
 #   ./dev.sh health                         # every recipe's observed rate, flagging status disagreements
 #   ./dev.sh blocked                        # what is waiting on the user vs. waiting on a person each run
 #   ./dev.sh snap                           # save the current recipe list as a baseline
@@ -35,7 +36,7 @@ export NODE_NO_WARNINGS=1
 BASELINE="$DIR/data/.dev-baseline.json"
 cd "$DIR"
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 cmd="${1:-}"; shift || true
 
@@ -108,7 +109,16 @@ case "$cmd" in
     "$NODE_BIN" audit.js units | "$NODE_BIN" -e '
       let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
         const d=JSON.parse(raw);
-        for (const f of d.unitInvariants||[]) console.log(`${f.severity.toUpperCase().padEnd(5)} ${f.unit.padEnd(52)} ${f.problem}`);
+        for (const f of d.unitInvariants||[]) {
+          // A waived finding is one already checked against the live site, so
+          // it reads as settled rather than outstanding -- otherwise the next
+          // session re-investigates it, which is the whole reason waivers
+          // exist. The reason and the date are shown so a stale one is
+          // visible as stale rather than trusted forever.
+          const tag = f.waived ? "OK/W" : f.severity.toUpperCase();
+          console.log(`${tag.padEnd(5)} ${f.unit.padEnd(52)} ${f.problem}`);
+          if (f.waived) console.log(`      waived ${f.waived.on}: ${f.waived.reason}`);
+        }
         if (!(d.unitInvariants||[]).length) console.log("units: clean");
       });'
     ;;
@@ -172,6 +182,52 @@ case "$cmd" in
         for (const [k,v] of Object.entries(d.fieldCoverage||{})) console.log(`    ${k.padEnd(18)} ${v}`);
         const s=(d.samples||[])[0]; if (s) console.log(`    first: ${JSON.stringify(s).slice(0,220)}`);
       });'
+    ;;
+
+  waive)
+    # Record that an audit warning was checked against the live site and does
+    # not apply here, so the next session stops re-deriving it.
+    #
+    # This exists because writing the verification in prose did NOT work:
+    # salesforce's descendant :has() was checked, the result written into the
+    # recipe's notes, and `audit.js units` kept reporting it -- so it was
+    # re-investigated twice more, reaching the same answer each time. The
+    # waiver has to be in a form the audit itself reads.
+    #
+    # A subcommand rather than a hand-written `lab.js set`, because the notes
+    # field runs to thousands of characters and appending one line to it by
+    # hand means pasting the whole thing back through shell quoting -- which is
+    # how a usajobs.gov note silently became a no-op once already.
+    [ $# -ge 3 ] || usage
+    target="$1"; rule="$2"; reason="$3"
+    deffile="$(mktemp -t devwaive)"
+    "$NODE_BIN" -e '
+      const {openDb,getSite,parseSiteArg}=require("./db");
+      // node -e has no script path, so argv[1] is already the first argument.
+      const [,target,rule,reason,out]=process.argv;
+      const {hostname,pageType,recipeName}=parseSiteArg(target);
+      const site=getSite(openDb(),hostname,pageType,recipeName);
+      if(!site){console.error(`no recipe for ${target}`);process.exit(1);}
+      if(!/^[a-z0-9-]+$/.test(rule)){console.error(`rule must be a slug like descendant-has, got "${rule}"`);process.exit(1);}
+      if(reason.trim().length<10){console.error("a waiver needs a real reason -- it is the only evidence it was actually checked");process.exit(1);}
+      const notes=String(site.notes||"");
+      // Refuse a second waiver for the same rule rather than stacking them:
+      // two dates for one check makes the stale one indistinguishable.
+      if(new RegExp("AUDIT-VERIFIED\\["+rule+"\\]","i").test(notes)){
+        console.error(`${target} already records a waiver for [${rule}] -- edit the note instead of adding a second`);process.exit(2);
+      }
+      const line=`AUDIT-VERIFIED[${rule}] ${new Date().toISOString().slice(0,10)}: ${reason.replace(/\s+/g," ").trim()}`;
+      require("fs").writeFileSync(out,JSON.stringify({notes:`${notes}\n${line}`.trim(),note:`waive ${rule}: ${reason}`}));
+      console.log(line);
+    ' "$target" "$rule" "$reason" "$deffile" || { rm -f "$deffile"; exit 1; }
+    "$NODE_BIN" lab.js set "$target" "@$deffile" | "$NODE_BIN" -e '
+      let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
+        const d=JSON.parse(raw);
+        if (!d.success) { console.log(`WAIVE FAILED: ${d.error||JSON.stringify(d).slice(0,200)}`); process.exit(1); }
+        console.log(`recorded on ${process.argv[1]} -> ${d.version}${d.gate&&d.gate.rolledBack?" (ROLLED BACK)":""}`);
+      });' "$target"; rc=$?
+    rm -f "$deffile"
+    [ $rc -eq 0 ] || exit $rc
     ;;
 
   blocked)

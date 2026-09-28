@@ -148,7 +148,7 @@ test('identical records for different params is INERT', async () => {
     nav_template: 'https://liveaudit.test/jobs?q={{q}}',
     param_probe_values: JSON.stringify([{ q: 'sales' }, { q: 'engineer' }]),
   });
-  const same = { success: true, count: 30, jobs: [{ href: '/a' }, { href: '/b' }] };
+  const same = { success: true, count: 30, records: [{ href: '/a' }, { href: '/b' }] };
   const findings = await auditParameters(db, { run: async () => same });
   const f = find(findings, target);
   assert.equal(f.result, 'INERT');
@@ -163,7 +163,7 @@ test('different records for different params is ok', async () => {
   });
   let n = 0;
   const findings = await auditParameters(db, {
-    run: async () => ({ success: true, count: 2, jobs: [{ href: `/${n++}` }] }),
+    run: async () => ({ success: true, count: 2, records: [{ href: `/${n++}` }] }),
   });
   assert.equal(find(findings, target).result, 'ok');
 });
@@ -176,7 +176,7 @@ test('two empty runs are INCONCLUSIVE, not a pass and not a failure', async () =
     nav_template: 'https://liveaudit.test/jobs?q={{q}}',
     param_probe_values: JSON.stringify([{ q: 'zzz' }, { q: 'qqq' }]),
   });
-  const findings = await auditParameters(db, { run: async () => ({ success: true, count: 0, jobs: [] }) });
+  const findings = await auditParameters(db, { run: async () => ({ success: true, count: 0, records: [] }) });
   const f = find(findings, target);
   assert.equal(f.result, 'INCONCLUSIVE');
   assert.match(f.why, /pick probe values known to return records/);
@@ -187,7 +187,7 @@ test('a parameterised recipe with no probe values is UNVALIDATABLE', async () =>
     nav_params_schema: '{"q":"search terms"}',
     nav_template: 'https://liveaudit.test/jobs?q={{q}}',
   });
-  const findings = await auditParameters(db, { run: async () => ({ success: true, count: 5, jobs: [] }) });
+  const findings = await auditParameters(db, { run: async () => ({ success: true, count: 5, records: [] }) });
   const f = find(findings, target);
   assert.equal(f.result, 'UNVALIDATABLE');
   assert.match(f.fix, /param_probe_values/, 'it should name the command that fixes it');
@@ -195,7 +195,7 @@ test('a parameterised recipe with no probe values is UNVALIDATABLE', async () =>
 
 test('a recipe declaring no parameters is not swept', async () => {
   const target = fixture('p_noparams', { nav_params_schema: '{}' });
-  const findings = await auditParameters(db, { run: async () => ({ success: true, count: 5, jobs: [] }) });
+  const findings = await auditParameters(db, { run: async () => ({ success: true, count: 5, records: [] }) });
   assert.equal(find(findings, target), undefined, 'there is nothing to validate');
 });
 
