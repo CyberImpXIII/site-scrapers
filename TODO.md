@@ -47,11 +47,23 @@ so it is deterministic and you know in advance how much comes back.* A cap says
 Migrating four recipes meant reading 12–16 parts per site and deciding. Most of
 that decision is mechanically derivable.
 
-**1a and 1b are DONE** (2026-09-28, commit `90c1397`). `node lab.js match
-<target> '<params>'` finds the selector reproducing each known value, and
-`card_anatomy` now sorts framework utility classes into a tail via the
-`utility_class` probe-knowledge category. What remains of this section is 1c
-and 1d.
+**Section 1 is DONE** (2026-09-28). `node lab.js match <target> '<params>'`
+finds the selector reproducing each known value (1a); `card_anatomy` sorts
+framework utility classes into a tail via the `utility_class` category (1b);
+it proposes a field name from a known value shape, and declines rather than
+guessing, via `field_shape.<name>` (1c); and `repeated_structure` sorts
+header/footer/nav/aside and ad containers last via `ad_container` (1d).
+
+All four vocabularies are DATA in `lib/probeKnowledge.js`, so meeting a new
+framework or date format is a row rather than a release. **All three of the new
+ones rank rather than filter**, which is the one thing not to "simplify" later:
+a utility class is sometimes a card's only hook, and a site whose list really
+does live in an `<aside>` must still be reported. Both properties have tests
+asserting the thing is still present, separately from the tests asserting its
+position.
+
+The original wording of 1c and 1d is kept below, because the reasoning is worth
+more than the checkbox.
 
 ### 1c. Propose fields by shape — for NEW recipes
 
@@ -134,14 +146,52 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
   `salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing`) all
   returned records, so that status is now earned.
 
-  Still to run, **one at a time**:
+  `node audit.js params` was also run solo on 2026-09-28: **26 recipes, 11
+  `ok`, 0 genuine `INERT`, 9 `UNVALIDATABLE`, 5 false `INCONCLUSIVE`.** Both
+  non-`ok` groups turned out to be audit defects rather than recipe faults, and
+  both are now fixed — see section 5.
+
+  Still to run:
   ```
-  node audit.js params         # do declared parameters actually change the result
   node audit.js fixed-params   # does a hardcoded query param suppress results
   ```
-  Two at once produces browser-teardown errors that look exactly like broken
-  recipes — that is what the `INFRA` verdict is for. If you see `INFRA`,
-  re-run that recipe alone before concluding anything.
+  Never two at once: contention produces browser-teardown errors that look
+  exactly like broken recipes, which is what the `INFRA` verdict is for. If you
+  see `INFRA`, re-run that recipe alone before concluding anything.
+
+## 5. Nine recipes still can't have their parameters proven
+
+`node audit.js params` reports `UNVALIDATABLE` for these — they declare
+parameters but have no `param_probe_values`, so rule 5 is unenforced on them:
+
+- `indeed.com#listing` — blocked anyway, so this is moot until section 0 above.
+- `job-boards.greenhouse.io` (`#article`, `#action:describe_application_form`),
+  `jobs.ashbyhq.com` (both), `jobs.lever.co` (both) — the parameter is a `url`,
+  so two contrasting values are just two live postings. Those expire, which is
+  why nobody has added them; a pair of long-lived postings would fix six
+  recipes at once.
+- `linkedin.com#action:login` and `facebook.com#action:login` — the declared
+  parameter is `captureMode`. **Do not add probe values for these.** Validating
+  would mean running a login twice, and `captureMode: "all"` exists precisely
+  to read credentials out of a page. `audit.js` should exempt a login action's
+  `captureMode` instead of asking for it; until it does, the `UNVALIDATABLE`
+  on those two is correct and should stay.
+
+Two defects behind that same sweep are already fixed (2026-09-28):
+
+- **Article recipes were counted as zero.** `auditParameters` and
+  `auditFixedParams` read `r.count`, which an article run leaves at 0 while
+  putting its record in `article`. Every article recipe therefore looked like
+  it returned nothing on both runs — 5 false `INCONCLUSIVE`s, each of which
+  reads as "your probe URLs are dead". Both now use `countOf()` from
+  `lib/outputShape.js`, which is also what `auditWorking` had open-coded.
+- **`remoteok.com` was a false `INERT`.** Its probe tags were
+  `customer-support` and `support`, and the site redirects the second to the
+  first, so the two were synonyms for one filter. `INERT` claims the recipe
+  ignores its parameters and would have sent someone to re-derive a working
+  recipe. `auditParameters` now checks whether both runs ended on the same
+  final url and reports `INCONCLUSIVE` naming that url instead. Probe values
+  swapped to `customer-support` / `design`.
 - **`register.js` can now add a builtin** with `"builtin": true` plus a `note`.
   Nothing else has used that path yet; `probe_card_anatomy` was the first.
 

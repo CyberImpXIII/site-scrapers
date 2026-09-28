@@ -37,7 +37,7 @@ process.removeAllListeners('warning');
 
 const { openDb, listSites, getSite, listGenericActions } = require('./db');
 const { expandSteps, refKey, applyWith } = require('./lib/composeActions');
-const { recordsOf } = require('./lib/outputShape');
+const { recordsOf, countOf } = require('./lib/outputShape');
 
 const MIN_SEQUENCE = 2;   // a single shared step is not worth extracting
 const MIN_RECIPES = 2;    // "reused" means more than one caller
@@ -676,20 +676,39 @@ async function auditParameters(db, { run = defaultRunner() } = {}) {
 
     const [ra, rb] = [await run(target, probes[0]), await run(target, probes[1])];
     const ids = r => JSON.stringify(recordsOf(r).map(j => j.href ?? j.title ?? '').slice(0, 25));
-    const bothEmpty = (ra.count ?? 0) === 0 && (rb.count ?? 0) === 0;
+    // Counted through countOf, which handles the article case `r.count` alone
+    // misses — see lib/outputShape.js. Reading `count` here made every article
+    // recipe look like it returned nothing on both runs.
+    const n = countOf;
+    const bothEmpty = n(ra) === 0 && n(rb) === 0;
     const identical = ids(ra) === ids(rb);
+    // Two probe values that LANDED ON THE SAME PAGE say nothing about the
+    // parameter — the parameter was honoured, the values were synonyms. `url`
+    // is the final URL after redirects, so this is visible for free.
+    //
+    // Kept out of INERT deliberately, because the two demand opposite work.
+    // remoteok.com was reported INERT for tags `customer-support` and
+    // `support`: the site redirects the second to the first, so they are
+    // aliases for one filter. INERT says "the recipe ignores its parameters"
+    // and would have sent someone to re-derive a recipe that works. This is
+    // the same "don't let one bucket swallow the ambiguous cases" rule the
+    // INFRA verdict follows.
+    const sameTarget = identical && !bothEmpty && ra.url && rb.url && ra.url === rb.url;
 
     findings.push({
       recipe: target,
       declaredParams: declared,
-      a: { params: probes[0], url: ra.url, count: ra.count ?? 0 },
-      b: { params: probes[1], url: rb.url, count: rb.count ?? 0 },
-      result: bothEmpty ? 'INCONCLUSIVE' : identical ? 'INERT' : 'ok',
+      a: { params: probes[0], url: ra.url, count: n(ra) },
+      b: { params: probes[1], url: rb.url, count: n(rb) },
+      result: bothEmpty || sameTarget ? 'INCONCLUSIVE' : identical ? 'INERT' : 'ok',
       why: bothEmpty
         ? 'both probe runs returned nothing, so the comparison proves nothing — pick probe values known to return records'
-        : identical
-          ? 'both parameter sets returned the SAME records: the recipe is ignoring its parameters. Either find the real filter mechanism (a client-side search may need a ui_steps type step rather than a URL param) or drop the parameter from nav_params_schema so it stops promising what it cannot do.'
-          : 'parameters change the result set, as a caller would expect',
+        : sameTarget
+          ? `both parameter sets ended on the SAME url (${ra.url}), so they are synonyms for one filter rather than a contrast — ` +
+            'the parameter may well work. This is NOT evidence the recipe ignores it: pick two probe values that reach different pages.'
+          : identical
+            ? 'both parameter sets returned the SAME records: the recipe is ignoring its parameters. Either find the real filter mechanism (a client-side search may need a ui_steps type step rather than a URL param) or drop the parameter from nav_params_schema so it stops promising what it cannot do.'
+            : 'parameters change the result set, as a caller would expect',
     });
   }
   return findings;
@@ -750,7 +769,9 @@ async function auditWorking(db, { run = defaultRunner() } = {}) {
     }
 
     const r = await run(target, (Array.isArray(probes) && probes[0]) || {});
-    const count = r.count ?? (r.article ? 1 : 0);
+    // Was `r.count ?? (r.article ? 1 : 0)` — the same article special case
+    // auditParameters was missing, written out a second time. One accessor.
+    const count = countOf(r);
 
     // A browser that crashed or was torn down mid-run says nothing about the
     // recipe, and calling it a LIAR would send someone to "fix" something that
@@ -799,7 +820,9 @@ async function auditWorking(db, { run = defaultRunner() } = {}) {
 async function auditFixedParams(db, { run = defaultRunner() } = {}) {
   const countFor = async (target, params) => {
     const r = await run(target, params);
-    return r && typeof r === 'object' ? (r.count ?? 0) : null;
+    // Through countOf for the same reason auditParameters is: `count` is 0 on
+    // an article run that extracted its one record.
+    return r && typeof r === 'object' ? countOf(r) : null;
   };
 
 

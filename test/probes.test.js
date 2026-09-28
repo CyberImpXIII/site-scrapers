@@ -74,6 +74,44 @@ function pageFor(query) {
     ).join('');
     return `<html><head><meta charset="utf-8"></head><body><ul>${rows}</ul></body></html>`;
   }
+  if (query.get('page') === 'shapes') {
+    // One part per recognisable shape, plus two that must NOT be proposed:
+    // .place holds a plain string no vocabulary covers, and .mixed matches the
+    // relative-time shape in only some cards.
+    const rows = Array.from({ length: 6 }, (_, i) =>
+      `<li class="card">
+         <div class="pay">$${90 + i},000 - $${120 + i},000 a year</div>
+         <div class="age">${i + 1} days ago</div>
+         <div class="kind">${i % 2 ? 'Full-time' : 'Contract'}</div>
+         <div class="place">Sioux Falls, South Dakota</div>
+         <div class="mixed">${i < 3 ? `${i + 1} days ago` : `Team ${i}`}</div>
+       </li>`
+    ).join('');
+    return `<html><head><meta charset="utf-8"></head><body><ul>${rows}</ul></body></html>`;
+  }
+  if (query.get('page') === 'chrome') {
+    // workingnomads.com counted page chrome as cards. The footer columns and
+    // the sponsored rail here are deliberately given prose long enough to clear
+    // the avgTextLength floor that catches short nav lists, so they DO compete
+    // with the real list -- that is the whole failure being reproduced.
+    const prose = 'A block of text long enough to clear the average length threshold this probe uses.';
+    const footer = Array.from({ length: 5 }, (_, i) => `<div class="fcol"><a href="/f${i}">Footer column ${i}</a> ${prose}</div>`).join('');
+    const promos = Array.from({ length: 5 }, (_, i) => `<div class="promo"><a href="/p${i}">Promo ${i}</a> ${prose}</div>`).join('');
+    const real = Array.from({ length: 4 }, (_, i) => `<div class="posting"><a href="/job/${i}">Real Job ${i}</a> ${prose}</div>`).join('');
+    return `<html><head><meta charset="utf-8"></head><body>
+      <nav><a href="/">Home</a><a href="/x">X</a></nav>
+      <main><div id="list">${real}</div></main>
+      <aside class="sponsored-rail">${promos}</aside>
+      <footer><div id="fcols">${footer}</div></footer></body></html>`;
+  }
+  if (query.get('page') === 'aside-only') {
+    // The case that makes excluding chrome the wrong fix: the ONLY list on the
+    // page is inside an <aside>. Dropping chrome candidates would report no
+    // cards at all, which is a wrong answer by omission.
+    const prose = 'A block of text long enough to clear the average length threshold this probe uses.';
+    const rows = Array.from({ length: 5 }, (_, i) => `<div class="posting"><a href="/job/${i}">Real Job ${i}</a> ${prose}</div>`).join('');
+    return `<html><head><meta charset="utf-8"></head><body><aside><div id="list">${rows}</div></aside></body></html>`;
+  }
   if (query.get('page') === 'utility') {
     // builtin.com's real shape, which is what motivated ranking utility
     // classes down: the Bootstrap wrappers sorted ABOVE the two selectors that
@@ -237,6 +275,78 @@ test('card_anatomy reports the outermost element holding a text, not every wrapp
   const anat = byKind(result, 'card_anatomy');
   assert.ok(anat.parts.some(p => p.selector === 'div.ti'), 'the titled wrapper should be reported');
   assert.equal(anat.parts.filter(p => p.selector === 'span').length, 0, 'its bare inner span should not be');
+});
+
+test('card_anatomy proposes a field name only from a shape it was told about', async () => {
+  const result = await run('probe_shapes', [
+    { action: 'goto', url: `${baseUrl}?page=shapes` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  const parts = byKind(result, 'card_anatomy').parts;
+  const proposal = sel => (parts.find(p => p.selector === sel) || {}).proposedField;
+
+  assert.equal(proposal('div.pay'), 'salary', 'a currency range is a salary');
+  assert.equal(proposal('div.age'), 'posted_ago', 'a relative time is a posting age');
+  assert.equal(proposal('div.kind'), 'commitment', 'a closed employment-type enum');
+});
+
+test('card_anatomy proposes nothing rather than guessing', async () => {
+  // The limit that matters, and the reason this is safe to have at all. A
+  // probe cannot know what a novel field MEANS -- guessing is how a salary
+  // came to be reported as a location on cards with no location. Two ways it
+  // must decline: an unknown shape, and a known shape that only some cards
+  // match (one matching sample is a coincidence, not a field).
+  const result = await run('probe_shapes_decline', [
+    { action: 'goto', url: `${baseUrl}?page=shapes` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  const parts = byKind(result, 'card_anatomy').parts;
+  const part = sel => parts.find(p => p.selector === sel);
+
+  assert.ok(part('div.place'), 'the part is still reported');
+  assert.equal(part('div.place').proposedField, undefined, 'a place name matches no vocabulary, so no guess');
+  assert.ok(part('div.mixed'), 'the part is still reported');
+  assert.equal(
+    part('div.mixed').proposedField,
+    undefined,
+    'the relative-time shape holds for only 3 of 6 cards, which is not a field'
+  );
+});
+
+test('repeated_structure ranks page chrome below the real list', async () => {
+  // The footer columns (5) and sponsored promos (5) each outnumber the real
+  // postings (4) and carry the same prose, so before chrome was recognised the
+  // count*avgTextLength sort put them ABOVE the actual cards -- which is
+  // exactly how workingnomads.com came to count chrome as cards.
+  const result = await run('probe_chrome', [
+    { action: 'goto', url: `${baseUrl}?page=chrome` },
+    { action: 'run_generic_action', ref: 'probe_card_candidates' },
+  ]);
+  const cands = byKind(result, 'repeated_structure').candidates;
+  assert.ok(cands.length, 'expected candidates');
+  assert.equal(cands[0].childSelector, 'div.posting', 'the real list must rank first');
+  assert.equal(cands[0].chrome, undefined, 'and must not be flagged as chrome');
+
+  // Both kinds of chrome are recognised: a semantic <footer> and an <aside>
+  // whose class matches the ad vocabulary.
+  const flagged = cands.filter(c => c.chrome).map(c => c.childSelector);
+  assert.ok(flagged.includes('div.fcol'), 'footer columns are chrome');
+  assert.ok(flagged.includes('div.promo'), 'a sponsored rail is chrome');
+});
+
+test('a list that really is inside an aside is still reported', async () => {
+  // Why chrome is demoted rather than excluded. If the only repeated structure
+  // on the page sits in an <aside>, filtering it out would report nothing and
+  // send someone looking for a rendering bug that does not exist.
+  const result = await run('probe_aside', [
+    { action: 'goto', url: `${baseUrl}?page=aside-only` },
+    { action: 'run_generic_action', ref: 'probe_card_candidates' },
+  ]);
+  const cands = byKind(result, 'repeated_structure').candidates;
+  const posting = cands.find(c => c.childSelector === 'div.posting');
+  assert.ok(posting, 'the aside list must still be reported, not filtered away');
+  assert.equal(posting.count, 5);
+  assert.equal(posting.chrome, true, 'flagged, so the ranking is explainable');
 });
 
 test('card_anatomy ranks framework utility classes below semantic hooks', async () => {

@@ -155,6 +155,57 @@ test('identical records for different params is INERT', async () => {
   assert.match(f.why, /ignoring its parameters/);
 });
 
+test('two params that redirect to the same page is INCONCLUSIVE, not INERT', async () => {
+  // Real case: remoteok.com was reported INERT for tags `customer-support` and
+  // `support`, because the site redirects the second to the first. The two are
+  // synonyms for one filter, so identical records prove nothing -- but INERT
+  // says "the recipe ignores its parameters" and would have sent someone to
+  // re-derive a recipe that works. The verdicts demand opposite work, so they
+  // must not share a bucket.
+  const target = fixture('p_aliased', {
+    nav_params_schema: '{"tag":"a tag slug"}',
+    nav_template: 'https://liveaudit.test/remote-{{tag}}-jobs',
+    param_probe_values: JSON.stringify([{ tag: 'customer-support' }, { tag: 'support' }]),
+  });
+  const landed = {
+    success: true,
+    count: 50,
+    url: 'https://liveaudit.test/remote-customer-support-jobs',
+    records: [{ href: '/a' }, { href: '/b' }],
+  };
+  const f = find(await auditParameters(db, { run: async () => landed }), target);
+  assert.equal(f.result, 'INCONCLUSIVE');
+  assert.match(f.why, /synonyms for one filter/);
+  assert.doesNotMatch(f.why, /ignoring its parameters/, 'it must not read as a broken recipe');
+});
+
+test('identical records from DIFFERENT urls is still INERT', async () => {
+  // The other side of that boundary: when the two params really did reach
+  // different pages and still produced identical records, the parameter is
+  // being ignored and that IS the finding.
+  const target = fixture('p_inert_urls', {
+    nav_params_schema: '{"q":"search terms"}',
+    nav_template: 'https://liveaudit.test/jobs?q={{q}}',
+    param_probe_values: JSON.stringify([{ q: 'sales' }, { q: 'engineer' }]),
+  });
+  // Derived from the params, not a call counter: auditParameters sweeps every
+  // fixture this file has created, so a counter is not scoped to this target
+  // and its parity depends on test order.
+  const f = find(
+    await auditParameters(db, {
+      run: async (_t, params) => ({
+        success: true,
+        count: 30,
+        url: `https://liveaudit.test/jobs?q=${params.q}`,
+        records: [{ href: '/a' }, { href: '/b' }],
+      }),
+    }),
+    target
+  );
+  assert.equal(f.result, 'INERT');
+  assert.match(f.why, /ignoring its parameters/);
+});
+
 test('different records for different params is ok', async () => {
   const target = fixture('p_ok', {
     nav_params_schema: '{"q":"search terms"}',
@@ -166,6 +217,30 @@ test('different records for different params is ok', async () => {
     run: async () => ({ success: true, count: 2, records: [{ href: `/${n++}` }] }),
   });
   assert.equal(find(findings, target).result, 'ok');
+});
+
+test('an article recipe is counted by its record, not by count:0', async () => {
+  // An article run puts its one record in `article` and leaves `count` at 0.
+  // Reading `count` here made EVERY article recipe look like it returned
+  // nothing on both runs: five false INCONCLUSIVEs in one real sweep, each
+  // reading as "your probe URLs are dead" rather than "this audit measured the
+  // wrong field". auditWorking special-cased articles and this did not, which
+  // is why both now go through recordsOf().
+  // page_type is left alone deliberately: the defect is in how the RESULT is
+  // counted, not in the recipe, so the mocked run returning an article shape
+  // is the whole condition being reproduced.
+  const target = fixture('p_article', {
+    nav_params_schema: '{"url":"the page"}',
+    nav_template: 'https://liveaudit.test/job/{{url}}',
+    param_probe_values: JSON.stringify([{ url: 'a' }, { url: 'b' }]),
+  });
+  let n = 0;
+  const findings = await auditParameters(db, {
+    run: async () => ({ success: true, count: 0, article: { title: `Job ${n++}` } }),
+  });
+  const f = find(findings, target);
+  assert.equal(f.result, 'ok', 'two different articles is a working parameter, not an empty run');
+  assert.equal(f.a.count, 1, 'the extracted record is counted');
 });
 
 test('two empty runs are INCONCLUSIVE, not a pass and not a failure', async () => {
