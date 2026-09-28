@@ -448,6 +448,7 @@ async function auditParameters(db) {
 //
 // Verdicts:
 //   ok            records came back
+//   INFRA         the browser crashed or was torn down — says nothing about the recipe
 //   LIAR          claims working, returned nothing — status is wrong
 //   PARTIAL       timed out but still extracted records; usable, likely short timeout
 //   UNRUNNABLE    needs parameters and has no param_probe_values to supply them
@@ -514,18 +515,36 @@ async function auditWorking(db) {
 
     const r = await run(target, (Array.isArray(probes) && probes[0]) || {});
     const count = r.count ?? (r.article ? 1 : 0);
+
+    // A browser that crashed or was torn down mid-run says nothing about the
+    // recipe, and calling it a LIAR would send someone to "fix" something that
+    // works. Observed for real: running two sweeps at once produced "detached
+    // Frame", "Execution context was destroyed" and "Target closed" across five
+    // recipes that all returned records when run alone. These are Puppeteer/CDP
+    // failures, distinguishable by their wording and unrelated to selectors.
+    const INFRA_ERRORS =
+      /detached Frame|Execution context was destroyed|Target closed|Protocol error|Session closed|browser has disconnected|WebSocket is not open/i;
+    const infra = count === 0 && INFRA_ERRORS.test(String(r.error || ''));
+
     findings.push({
       recipe: target,
-      result: count > 0 ? (r.partialResults ? 'PARTIAL' : 'ok') : 'LIAR',
+      result: infra ? 'INFRA' : count > 0 ? (r.partialResults ? 'PARTIAL' : 'ok') : 'LIAR',
       records: count,
       timedOut: r.timedOut ?? null,
       error: r.error ?? null,
       failedStep: r.failedStep ? `step ${r.failedStep.index} ${r.failedStep.action} ${r.failedStep.selector ?? ''}` : null,
       waitingOn: r.failureContext?.matcher?.value ?? null,
       debugDir: r.debugDir ?? null,
-      ...(count === 0
-        ? { why: 'claims working but returned no records. Either fix it, or let verify.js set an honest status from a real run.' }
-        : {}),
+      ...(infra
+        ? {
+            why:
+              'the BROWSER failed, not the recipe — this says nothing about whether the recipe works. Almost always resource ' +
+              'contention: do not run two sweeps at once, or other browser work alongside one. Re-run this recipe alone before ' +
+              'concluding anything.',
+          }
+        : count === 0
+          ? { why: 'claims working but returned no records. Either fix it, or let verify.js set an honest status from a real run.' }
+          : {}),
       ...(r.partialResults ? { why: 'records came back but the wait expired first — raise ready_timeout_ms' } : {}),
     });
   }
