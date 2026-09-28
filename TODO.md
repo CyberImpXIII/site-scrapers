@@ -11,6 +11,52 @@ quietly skipping it — several of these are decisions, not chores.
 
 ## Waiting on Jacob — nothing else can move these
 
+**Should `href` be resolved to an absolute URL?** An output-contract change, so
+it is his call rather than one to make late in a session.
+
+`anchor_attribute` returns the raw attribute, so a recipe's `href` is absolute
+when the site writes it absolute (Greenhouse) and relative when it does not
+(Ashby: `/linear/c21af93e-…`). A caller cannot use `record.href` directly
+without knowing which site produced it, which is the kind of inconsistency that
+gets discovered by a broken fetch rather than by reading the docs.
+
+The fix is one line in `engine.js`'s extraction — resolve URL-bearing
+attributes against `document.baseURI`, which is what the DOM's own `el.href`
+property does. It would change the output of every recipe whose site uses
+relative links, so it needs: a decision that absolute is the contract, a sweep
+of the recipes it changes, and `test/efficiency.test.js`'s `'/job/1'` assertion
+updated to the absolute form.
+
+**Is a parameterised Workday-tenant recipe worth building?** The big unlock for
+the pro-audio and AV manufacturers, and it needs a design decision first.
+
+None of Sennheiser, Audio-Technica, Shure, Rode, Neumann, Genelec, ADAM Audio,
+PreSonus, Behringer, SSL, Blackmagic, Ross Video, Wheatstone, Riedel, Evertz,
+AJA, Atomos, Teradek, Sound Devices, Lectrosonics, Clear-Com or Biamp has a
+Greenhouse or Lever board — checked with `./dev.sh board`. They are on
+enterprise ATSes, mostly Workday, which is where the roles closest to Jacob's
+current AV/broadcast support work actually live.
+
+The obstacle is structural, not a matter of effort: the recipe DB is keyed by
+`(hostname, page_type, recipe_name)`, and every Workday tenant has its OWN
+hostname — `<tenant>.<wdN>.myworkdayjobs.com`, with a different `wdN` shard and
+a different career-site path per employer. So the one-recipe-per-ATS trick that
+worked for Greenhouse, Lever and Ashby cannot apply as-is. The options, none
+free:
+
+1. One registered recipe per tenant, all sharing the field definitions. Honest
+   and works today; `salesforce.wd12.myworkdayjobs.com#listing` is already this.
+   Costs a registration per employer and duplicates the definition N times,
+   which `audit.js repeats` exists to complain about.
+2. Allow a wildcard/templated hostname so one recipe covers
+   `*.myworkdayjobs.com` with tenant and site as params. The clean answer, but
+   it touches recipe lookup, `parseSiteArg`, and the uniqueness key.
+3. Treat it as an `article`-style recipe taking a full `url`, losing listing
+   extraction.
+
+Option 2 is the real fix and is a genuine feature, not a chore — hence it is
+here rather than done.
+
 **`indeed.com` needs one attended run.** It is the only recipe not `working`.
 
 ```
@@ -100,6 +146,43 @@ otherwise re-litigate:
 `records`, so re-adding the alias re-fails on the same assertion.
 
 ---
+
+## 2b. ATS board listings — DONE 2026-09-28, and what they cover
+
+Greenhouse, Lever and Ashby each had `#article` and
+`#action:describe_application_form` but no `#listing`, so a single posting could
+be read while a company's openings could not be enumerated. All three now have
+one, parameterised by company slug — one recipe per ATS, because the slug is the
+only thing that differs between employers.
+
+| target | verified on | also tested |
+|---|---|---|
+| `job-boards.greenhouse.io#listing` | splice | discord (49), universalaudio (5) |
+| `jobs.lever.co#listing` | palantir (321) | spotify (81) |
+| `jobs.ashbyhq.com#listing` | supabase (55) | linear (30) |
+
+`./dev.sh board <company> ...` finds a slug. It only checks Greenhouse, Lever
+and Breezy, because those are the only ones where a missing slug is
+distinguishable — Ashby serves a byte-identical shell for every slug, Recruitee
+redirects unknown slugs to its marketing site, and Workable echoes the slug back
+capitalised. An Ashby slug can only be confirmed by running the recipe.
+
+**Universal Audio is on Greenhouse** and is the one pro-audio maker found this
+way — 5 openings, one of them remote. Every other audio/AV manufacturer checked
+is on an enterprise ATS; see the Workday item at the top.
+
+Two things worth not rediscovering:
+
+- **A Greenhouse board can be fully custom.** `job-boards.greenhouse.io/figma`
+  matches nothing — `tr.job-post`, `table tr` and `.job-post` all return 0 —
+  because Figma replaced the hosted board with its own app (1.74MB against
+  splice's 39KB). Zero records means "custom board", not "wrong slug".
+- **The Ashby `commitment` field was wrong before it was right**, in the way
+  this repo keeps paying for. It read the last bullet-segment of the details
+  blob: correct on supabase's 3-segment blob (`Full time`), wrong on linear's
+  4-segment one, where it confidently reported `Remote` for all 30 records. It
+  matches the employment-type words themselves now. A regex anchored to `$` is
+  positional extraction wearing a different hat.
 
 ## 3. Fields left on the table
 
