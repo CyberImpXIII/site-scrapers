@@ -174,6 +174,25 @@ test('register.js rejects an unknown enum value by naming the valid ones', async
   assert.match(out.error, /needs-review/, 'the valid values have to be listed');
 });
 
+test('adding to the shared library needs a note, and says so in its own words', async () => {
+  // `builtin: true` is how the library GROWS. Without it a new action lands in
+  // the gitignored DB only and never reaches a clone, and the only other way in
+  // was hand-editing the generated read-only export — the one path the gate
+  // cannot see. So it goes through the same door as an edit, with the same note,
+  // and the refusal has to say which of the two it is refusing.
+  const def = {
+    kind: 'generic_action',
+    name: 'cli_test_never_registered',
+    builtin: true,
+    steps: [{ action: 'wait', ms: 1 }],
+  };
+  const { stdout } = await run('register.js', [JSON.stringify(def)]);
+  const out = parse(stdout);
+  assert.equal(out.success, false);
+  assert.match(out.error, /adding .* to the shared library needs a "note"/);
+  assert.doesNotMatch(out.error, /is a BUILTIN/, 'a new action is not being edited');
+});
+
 test('register.js reads a definition from a file path as well as a string', async () => {
   const { stdout } = await run('register.js', ['/no/such/file.json']);
   const out = parse(stdout);

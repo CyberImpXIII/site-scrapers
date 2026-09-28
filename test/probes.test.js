@@ -51,6 +51,27 @@ function pageFor(query) {
     ).join('');
     return `<html><head><meta charset="utf-8"></head><body><ul id="hits">${rows}</ul></body></html>`;
   }
+  if (query.get('page') === 'anatomy') {
+    // Built to exercise the three distinctions card_anatomy claims to make,
+    // because all three decide whether a child_text field returns data, null,
+    // or the same string on every card:
+    //   .co / .ti  present in EVERY card, text varies      -> real fields
+    //   .badge     present in only 2 of 6                  -> optional
+    //   .apply     present in every card, text identical   -> static label
+    //   .tag       TWO per card                            -> needs segment_index
+    // Plus an input carrying a value, which must never be reported.
+    const rows = Array.from({ length: 6 }, (_, i) =>
+      `<li class="card">
+         <div class="co">Company ${i}</div>
+         <div class="ti"><span>Engineer ${i}</span></div>
+         ${i < 2 ? '<div class="badge">Promoted</div>' : ''}
+         <div class="tag">Remote</div><div class="tag">Full-Time</div>
+         <a class="apply" href="/job/${i}">Apply</a>
+         <input class="save" name="note" value="prefilled-secret-value">
+       </li>`
+    ).join('');
+    return `<html><head><meta charset="utf-8"></head><body><ul>${rows}</ul></body></html>`;
+  }
   const cards = Array.from({ length: 6 }, (_, i) =>
     `<div class="job-card"><h3>Engineer ${i}</h3>
      <p>Acme Corp - Remote - Full Time. A description long enough to clear the average-length threshold.</p>
@@ -121,6 +142,77 @@ test('repeated_structure finds the cards and the line that identifies them', asy
   assert.equal(top.sharedLine, 'View job', 'the repeated line is the card_anchor_text candidate');
   // The two-link <nav> must not win: short text, below the length threshold.
   assert.ok(top.avgTextLength > 20);
+});
+
+// card_anatomy is what makes child_text CHOOSABLE. Without it, picking the
+// selector for a field is a guess followed by a full re-run, which is how four
+// recipes here ended up counting parts in a text blob instead — the extraction
+// style that drifts and reports a wrong value rather than failing.
+test('card_anatomy separates a field from an optional badge from a static label', async () => {
+  const result = await run('probe_anatomy', [
+    { action: 'goto', url: `${baseUrl}?page=anatomy` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  assert.equal(result.success, true);
+  const anat = byKind(result, 'card_anatomy');
+  assert.ok(anat, 'expected a card_anatomy probe result');
+  assert.equal(anat.cardCount, 6);
+  const part = s => anat.parts.find(p => p.selector === s);
+
+  // A field: in every card, different text each time.
+  assert.equal(part('div.co').everyCard, true);
+  assert.equal(part('div.co').varies, true);
+  assert.equal(part('div.co').maxPerCard, 1);
+
+  // An optional badge. Reported, but marked so it is not mistaken for a field
+  // or — the expensive mistake — used as a positional anchor.
+  assert.equal(part('div.badge').everyCard, false);
+  assert.equal(part('div.badge').presentIn, '2/6');
+
+  // A static label: in every card, always the same string. Not data.
+  assert.equal(part('a.apply').everyCard, true);
+  assert.equal(part('a.apply').varies, false);
+
+  // Two per card, so child_text needs a segment_index to say which one.
+  assert.equal(part('div.tag').maxPerCard, 2);
+});
+
+test('card_anatomy reports the outermost element holding a text, not every wrapper', async () => {
+  // div.ti wraps a bare <span> with the same text. Reporting both would make
+  // the output twice as long and offer a choice with no meaning; the outer one
+  // carries the semantic class, so that is the selector worth writing down.
+  const result = await run('probe_anatomy_wrap', [
+    { action: 'goto', url: `${baseUrl}?page=anatomy` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  const anat = byKind(result, 'card_anatomy');
+  assert.ok(anat.parts.some(p => p.selector === 'div.ti'), 'the titled wrapper should be reported');
+  assert.equal(anat.parts.filter(p => p.selector === 'span').length, 0, 'its bare inner span should not be');
+});
+
+test('card_anatomy never reports the value of a form control', async () => {
+  // Same rule as the forms probe: this output is written to disk and read back
+  // into a transcript, and a card is not guaranteed not to contain an input.
+  const result = await run('probe_anatomy_safe', [
+    { action: 'goto', url: `${baseUrl}?page=anatomy` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  assert.ok(
+    !JSON.stringify(byKind(result, 'card_anatomy')).includes('prefilled-secret-value'),
+    'a form value must never appear in probe output'
+  );
+});
+
+test('card_anatomy says so when the card selector matches nothing', async () => {
+  // Not an empty parts list, which reads as "this card has no content" — a
+  // wrong card_selector is a different problem with a different fix.
+  const result = await run('probe_anatomy_miss', [
+    { action: 'goto', url: `${baseUrl}?page=anatomy` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'div.nope' } },
+  ]);
+  const anat = byKind(result, 'card_anatomy');
+  assert.match(anat.error, /matched nothing/);
+  assert.equal(anat.cardCount, 0);
 });
 
 test('blockers tells a login wall apart from a working page', async () => {

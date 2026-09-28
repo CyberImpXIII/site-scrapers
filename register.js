@@ -373,15 +373,33 @@ function registerGenericAction(db, def) {
   // goes through the gate like everything else — audits, subaction and
   // dependent validation, the suites covering them, rollback on regression —
   // and the export is rewritten from the result so a clone still gets it.
+  //
+  // `"builtin": true` ADDS to that library. Without it the library could be
+  // changed but not grown: a new action registered here is a user action, which
+  // lives only in the gitignored DB and so never reaches a clone — and the only
+  // other way in was hand-editing the generated, read-only export, which is the
+  // one path the gate cannot see. Growing the library is as consequential as
+  // changing it, so it goes through the same door and needs the same note.
   const existing = getGenericAction(db, def.name);
-  const isBuiltin = existing?.source === 'builtin';
+  const isBuiltin = existing ? existing.source === 'builtin' : def.builtin === true;
   if (isBuiltin && !def.note) {
     console.log(JSON.stringify({
       success: false,
-      error: `"${def.name}" is a BUILTIN — part of the shared library that every recipe can reference. ` +
-        'Editing it is allowed but needs a "note" saying why: it gates the change, becomes the change_log ' +
-        'summary, and is the only record of why shared behaviour moved.',
+      error: existing
+        ? `"${def.name}" is a BUILTIN — part of the shared library that every recipe can reference. ` +
+          'Editing it is allowed but needs a "note" saying why: it gates the change, becomes the change_log ' +
+          'summary, and is the only record of why shared behaviour moved.'
+        : `adding "${def.name}" to the shared library needs a "note" saying why it exists and what it is for — ` +
+          'it becomes the change_log summary and the provenance stamped into lib/builtinActions.js.',
       dependents: require('./lib/gate').dependentsOf(db, def.name),
+    }));
+    process.exit(1);
+  }
+  if (existing && existing.source !== 'builtin' && def.builtin === true) {
+    console.log(JSON.stringify({
+      success: false,
+      error: `"${def.name}" already exists as a USER action. Promoting one to a builtin is not a registration — ` +
+        'it would silently publish something written for one machine to every clone. Register it under a library name instead.',
     }));
     process.exit(1);
   }
@@ -471,10 +489,11 @@ function registerGenericAction(db, def) {
         steps: stepsJson,
       });
       if (isBuiltin) {
-        // Keep it a builtin. The export is regenerated AFTER the gate returns,
-        // not here: guardedChange writes the change_log row after mutate(), so
-        // exporting inside mutate() stamped every action with the PREVIOUS
-        // change note -- the reason would always lag one edit behind.
+        // Keep it a builtin, or make a newly added one. The export is
+        // regenerated AFTER the gate returns, not here: guardedChange writes the
+        // change_log row after mutate(), so exporting inside mutate() stamped
+        // every action with the PREVIOUS change note -- the reason would always
+        // lag one edit behind.
         db.prepare("UPDATE generic_actions SET source = 'builtin' WHERE name = ?").run(def.name);
       }
     },

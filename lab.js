@@ -11,6 +11,7 @@
 // Usage:
 //   node lab.js probe <url>                       # what cards/forms/blockers are on this page
 //   node lab.js sel <url> '<css,css,...>' [--wait=MS]   # match counts for candidate selectors
+//   node lab.js inside <url> '<card_selector>' [--wait=MS]  # what is INSIDE a card, to pick child_text selectors
 //   node lab.js peek <target> '<params>'          # run a recipe, show samples + per-field null counts
 //   node lab.js raw <target> '<params>'           # same, but show each card's source text
 //   node lab.js set <target> '<json>'             # set card_selector / anchor / timeout / fields at once
@@ -102,8 +103,9 @@ async function main() {
   const [, , cmd, a, b, c] = process.argv;
   const db = openDb();
 
-  if (cmd === 'probe' || cmd === 'sel') {
-    if (!a) die(`Usage: node lab.js ${cmd} <url>${cmd === 'sel' ? " '<css,css>'" : ''}`);
+  if (cmd === 'probe' || cmd === 'sel' || cmd === 'inside') {
+    if (!a) die(`Usage: node lab.js ${cmd} <url>${cmd === 'sel' ? " '<css,css>'" : cmd === 'inside' ? " '<card_selector>'" : ''}`);
+    if (cmd === 'inside' && (!b || b.startsWith('--'))) die("Usage: node lab.js inside <url> '<card_selector>'");
     const tail =
       cmd === 'probe'
         ? [
@@ -111,7 +113,9 @@ async function main() {
             { action: 'run_generic_action', ref: 'diagnose_antibot' },
             { action: 'probe', kind: 'empty_state', label: 'empty' },
           ]
-        : [{ action: 'run_generic_action', ref: 'probe_selectors', with: { selectors: '{{sel}}' } }];
+        : cmd === 'inside'
+          ? [{ action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: '{{sel}}' } }]
+          : [{ action: 'run_generic_action', ref: 'probe_selectors', with: { selectors: '{{sel}}' } }];
     // The settle wait is a parameter because a fixed 5s lies about slow sites.
     // Probing a Workday tenant reported 0 matches for a selector its own recipe
     // uses successfully — the page simply had not rendered inside 5 seconds, and
@@ -151,6 +155,12 @@ async function main() {
       }
       if (p.kind === 'empty_state') out({ emptyState: { likelyCause: p.likelyCause, explicitEmptyMessage: p.explicitEmptyMessage, largestSiblingGroup: p.largestSiblingGroup, advice: p.advice } });
       if (p.kind === 'selectors') out({ selectors: p.matches });
+      if (p.kind === 'card_anatomy') {
+        out({
+          cardAnatomy: { cardCount: p.cardCount, cardsSampled: p.cardsSampled, parts: p.parts, error: p.error ?? null },
+          hint: p.hint,
+        });
+      }
       if (p.kind === 'forms') out({ forms: { fields: p.fields.length, required: p.requiredCount, fileUpload: p.fileUploadPresent, submits: p.submits } });
       if (p.kind === 'repeated_structure') {
         out({
@@ -453,7 +463,7 @@ async function main() {
     return;
   }
 
-  die(`Unknown command "${cmd ?? ''}". Use: probe | sel | peek | raw | set | params | new`);
+  die(`Unknown command "${cmd ?? ''}". Use: probe | sel | inside | peek | raw | set | params | history | adopt-history | new`);
 }
 
 main();
