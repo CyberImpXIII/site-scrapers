@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { expandSteps, applyWith, refKey, genericRefKey, stepsNeedHeaded } = require('../lib/composeActions');
 const { openDb, upsertSite, insertField, deleteSite } = require('../db');
+const { authorizeForTests } = require('../lib/writeGuard');
 const { openFailuresDb, signatureOf, matchFailures, recordFailure, deleteFailure } = require('../failuresDb');
 
 let db;
@@ -20,6 +21,7 @@ const created = [];
 const createdFailures = [];
 
 test.before(() => {
+  authorizeForTests();
   db = openDb();
   fdb = openFailuresDb();
 });

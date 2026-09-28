@@ -25,7 +25,7 @@ function withFreshDb(fn) {
   try {
     fs.mkdirSync(path.join(tmp, 'lib'), { recursive: true });
     fs.copyFileSync(path.join(REPO_ROOT, 'db.js'), path.join(tmp, 'db.js'));
-    for (const f of ['builtinActions.js']) {
+    for (const f of ['builtinActions.js', 'writeGuard.js']) {
       fs.copyFileSync(path.join(REPO_ROOT, 'lib', f), path.join(tmp, 'lib', f));
     }
     return fn(tmp);
@@ -60,6 +60,9 @@ test('re-seeding restores an edited builtin but leaves user actions alone', () =
 
     // Tamper with a builtin and add a user action, then reopen.
     const mutate = `
+      // Writes are guarded, and this subprocess is simulating a user
+      // registering an action, so it authorizes itself the way a test does.
+      require(${JSON.stringify(path.join(tmp, 'lib', 'writeGuard.js'))}).authorizeForTests('builtins test subprocess');
       const { openDb, upsertGenericAction } = require(${dbPath});
       const db = openDb();
       db.prepare('UPDATE generic_actions SET steps = ? WHERE name = ?').run('[{"action":"wait","ms":1}]', ${JSON.stringify(target)});

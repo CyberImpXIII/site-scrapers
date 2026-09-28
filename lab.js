@@ -210,6 +210,24 @@ async function main() {
       'card_selector', 'card_anchor_text', 'ready_timeout_ms', 'nav_template', 'nav_params_schema',
       'notes', 'content_selector', 'card_min_text_len', 'param_probe_values', 'status',
     ];
+    // Every recipe edit goes through the gate: offline audits before and
+    // after, a snapshot to roll back to, and a change_log row so an edit made
+    // OFF this path is detectable by its absence. Requires a `note` describing
+    // the change, which doubles as the log summary — an unexplained edit is
+    // what the gate exists to stop.
+    if (!def.note) {
+      die('a "note" is required: it describes the change, gates it, and becomes the change_log summary');
+    }
+    const { guardedChange } = require('./lib/gate');
+    const gated = guardedChange(db, {
+      target: `${hostname}#${pageType}:${recipeName}`,
+      summary: def.note,
+      scope: 'status' in def && Object.keys(def).length <= 2 ? 'status' : 'recipe',
+      siteId: site.id,
+      mutate: () => applyRecipeEdit(),
+    });
+
+    function applyRecipeEdit() {
     const setting = cols.filter(k => k in def);
     if (setting.length) {
       db.prepare(`UPDATE sites SET ${setting.map(k => `${k} = ?`).join(', ')} WHERE id = ?`)
@@ -229,18 +247,31 @@ async function main() {
       db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(site.id);
       def.fields.forEach((f, i) => insertField(db, site.id, f, i));
     }
-    const v = snapshotVersionIfChanged(db, site.id, { note: def.note || 'edited via lab.js' });
+    snapshotVersionIfChanged(db, site.id, { note: def.note });
+    return [...setting, ...(def.fields ? ['fields'] : [])];
+    }
+
     out({
-      success: true,
+      success: gated.ok,
       target: a,
-      changed: [...setting, ...(def.fields ? ['fields'] : [])],
-      version: v ? `v${v.major}.${v.minor}` : null,
-      // Re-read: `site` was fetched before the UPDATE, so reporting its
-      // status would echo the old value back and look like the write failed.
+      changed: gated.result,
+      version: gated.versionAfter,
+      // Re-read: `site` was fetched before the UPDATE, so reporting its status
+      // would echo the old value back and look like the write failed.
       status: getSite(db, hostname, pageType, recipeName).status,
       fields: getFields(db, site.id).map(f => f.field_name),
-      note: 'Status unchanged — run `node verify.js` to earn "working" from a real run.',
+      gate: {
+        findingsBefore: gated.findingsBefore,
+        findingsAfter: gated.findingsAfter,
+        introducedFindings: gated.introducedFindings,
+        rolledBack: gated.rolledBack,
+        ...(gated.rollbackNote ? { rollbackNote: gated.rollbackNote } : {}),
+      },
+      note: gated.ok
+        ? 'Gate passed. Status unchanged — run `node verify.js` to earn "working" from a real run.'
+        : 'GATE FAILED: this change introduced the findings above and was rolled back. Fix them, then retry.',
     });
+    if (!gated.ok) process.exit(1);
     return;
   }
 

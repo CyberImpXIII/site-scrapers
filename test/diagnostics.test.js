@@ -12,6 +12,7 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const { startFixtureServer } = require('./fixtures/listing_server');
 const { openDb, upsertSite, insertField, deleteSite } = require('../db');
+const { authorizeForTests } = require('../lib/writeGuard');
 const { DEBUG_DIR, listDebugCaptures } = require('../lib/debug');
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -23,6 +24,7 @@ let db;
 let siteId;
 
 test.before(async () => {
+  authorizeForTests();
   fixture = await startFixtureServer(CARD_COUNT);
   db = openDb();
   // card_anchor_text intentionally wrong — 'View job' never appears (the

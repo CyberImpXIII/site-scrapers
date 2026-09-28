@@ -20,6 +20,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const { openDb, upsertSite, insertField, deleteSite } = require('../db');
+const { authorizeForTests } = require('../lib/writeGuard');
 
 const REPO_ROOT = path.join(__dirname, '..');
 let server;
@@ -61,6 +62,7 @@ function pageFor(query) {
 }
 
 test.before(async () => {
+  authorizeForTests();
   server = await new Promise(resolve => {
     const s = http.createServer((req, res) => {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');

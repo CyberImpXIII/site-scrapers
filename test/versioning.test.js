@@ -31,6 +31,7 @@ const {
   deleteSite,
   definitionHasPassingRun,
 } = require('../db');
+const { authorizeForTests } = require('../lib/writeGuard');
 
 const HOSTNAME = '127.0.0.1';
 const RECIPE_NAME = 'versioning_fixture_test';
@@ -58,6 +59,7 @@ function register({ status = 'working', notes = 'Test-only fixture recipe for te
 }
 
 test.before(() => {
+  authorizeForTests();
   db = openDb();
   // A previous aborted run could have left the fixture behind; versioning is
   // cumulative, so start from a clean slate or the counts below drift.

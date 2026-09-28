@@ -46,6 +46,7 @@ const {
   definitionHasPassingRun,
 } = require('./db');
 const { decideVerdict } = require('./lib/verdict');
+const { authorizeAsync } = require('./lib/writeGuard');
 
 const REPO_ROOT = __dirname;
 
@@ -276,4 +277,6 @@ async function main() {
   process.exit(extracted ? 0 : 1);
 }
 
-main();
+// verify.js IS a sanctioned path: the status it writes was earned by a run it
+// just performed, which is the only way working/blocked can be reached.
+authorizeAsync('verify.js', main);

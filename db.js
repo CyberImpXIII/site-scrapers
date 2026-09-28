@@ -1,4 +1,5 @@
 const { DatabaseSync } = require('node:sqlite');
+const { assertAuthorized, authorize } = require('./lib/writeGuard');
 const path = require('path');
 const fs = require('fs');
 const { BUILTIN_ACTIONS } = require('./lib/builtinActions');
@@ -414,9 +415,11 @@ function openDb() {
   migrateGenericActionSourceColumn(db);
   migrateRunVersionColumn(db);
   migrateParamProbeColumn(db);
-  backfillBaselineVersions(db);
-  seedActionTypes(db);
-  seedBuiltinActions(db);
+  authorize('db.js one-time baseline backfill', () => backfillBaselineVersions(db));
+  authorize('db.js seeding from code', () => {
+    seedActionTypes(db);
+    seedBuiltinActions(db);
+  });
   return db;
 }
 
@@ -456,6 +459,7 @@ function listSites(db) {
 }
 
 function upsertSite(db, s) {
+  assertAuthorized('upsertSite');
   const now = new Date().toISOString();
   const pageType = s.page_type || 'listing';
   const recipeName = s.recipe_name || 'default';
@@ -627,6 +631,7 @@ function pruneVersions(db, siteId, keep = 5) {
 // from the current version — a no-op re-register shouldn't create history.
 // Returns the version row that is now current either way.
 function snapshotVersionIfChanged(db, siteId, { note } = {}) {
+  assertAuthorized('snapshotVersionIfChanged');
   const def = recipeDefinition(db, siteId);
   if (!def) return null;
   const serialized = JSON.stringify(def);
@@ -653,6 +658,7 @@ function snapshotVersionIfChanged(db, siteId, { note } = {}) {
 // (v1.2) while the thing that looked like a major version was scaffolding.
 // Exactly backwards, and it made "never drop a major version" false.
 function promoteVersion(db, siteId, { note } = {}) {
+  assertAuthorized('promoteVersion');
   const current = getCurrentVersion(db, siteId);
   if (!current) return null;
   // Already blessed and unedited since; promoting again would just
@@ -680,6 +686,7 @@ function promoteVersion(db, siteId, { note } = {}) {
 // minor rather than by rewinding history, so the failed attempt stays
 // visible instead of being quietly erased.
 function restoreVersion(db, siteId, major, minor) {
+  assertAuthorized('restoreVersion');
   const version = getVersion(db, siteId, major, minor);
   if (!version) return null;
   const def = JSON.parse(version.definition);
@@ -703,6 +710,7 @@ function restoreVersion(db, siteId, major, minor) {
 // works with or without it — DBs created before that was added keep the
 // plain reference, and SQLite cannot ALTER a constraint onto them.
 function deleteSite(db, siteId) {
+  assertAuthorized('deleteSite');
   db.prepare('DELETE FROM scrape_runs WHERE site_id = ?').run(siteId);
   db.prepare('DELETE FROM recipe_versions WHERE site_id = ?').run(siteId);
   db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(siteId);
@@ -759,6 +767,7 @@ function getActionType(db, name) {
 }
 
 function insertActionType(db, name, description) {
+  assertAuthorized('insertActionType');
   db.prepare('INSERT INTO action_types (name, description, created_at) VALUES (?,?,?)').run(
     name,
     description ?? null,
@@ -778,6 +787,7 @@ function getGenericAction(db, name) {
 }
 
 function upsertGenericAction(db, g) {
+  assertAuthorized('upsertGenericAction');
   const now = new Date().toISOString();
   const existing = getGenericAction(db, g.name);
   if (existing) {
@@ -794,6 +804,7 @@ function upsertGenericAction(db, g) {
 }
 
 function insertField(db, siteId, f, order) {
+  assertAuthorized('insertField');
   db.prepare(
     `INSERT INTO site_fields (site_id, field_name, extract_kind, segment_index, regex_pattern, attribute_name, example_value, field_order)
      VALUES (?,?,?,?,?,?,?,?)`

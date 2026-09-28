@@ -17,6 +17,7 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const { startFixtureServer, makePage } = require('./fixtures/listing_server');
 const { openDb, upsertSite, insertField, getSite, getEfficiencyStats, deleteSite } = require('../db');
+const { authorizeForTests } = require('../lib/writeGuard');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const RECIPE_NAME = 'efficiency_fixture_test';
@@ -27,6 +28,7 @@ let db;
 let siteId;
 
 test.before(async () => {
+  authorizeForTests();
   fixture = await startFixtureServer(CARD_COUNT);
   db = openDb();
   siteId = upsertSite(db, {

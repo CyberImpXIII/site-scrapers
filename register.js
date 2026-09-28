@@ -337,6 +337,7 @@ const {
   getSite,
 } = require('./db');
 const { checkUnresolvedRefs } = require('./lib/composeActions');
+const { authorize } = require('./lib/writeGuard');
 
 function registerGenericAction(db, def) {
   if (!def.name || !def.steps) {
@@ -648,4 +649,6 @@ function main() {
   }));
 }
 
-main();
+// register.js IS a sanctioned path: it runs the enum checks, the action-type
+// taxonomy check and the earned-status gate before writing.
+authorize('register.js', main);

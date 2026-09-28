@@ -13,6 +13,36 @@ two `action` recipes) — add `:recipe_name`, e.g. `example.com#action:login`
 vs `example.com#action:add_to_cart`. Omit it for the single/primary recipe of
 a page_type (implicit `recipe_name` = `default`).
 
+**Writes to the recipe DB are BLOCKED outside a sanctioned path.** Every
+definition-mutating function in `db.js` (`upsertSite`, `insertField`,
+`deleteSite`, `promoteVersion`, `restoreVersion`, `snapshotVersionIfChanged`,
+`insertActionType`, `upsertGenericAction`) refuses unless it is inside one.
+`logRun` is exempt — append-only telemetry, not a change. The sanctioned paths:
+
+| to do this | use |
+|---|---|
+| edit an existing recipe | `node lab.js set <target> '{..., "note": "why"}'` |
+| create a recipe | `node register.js '<json>'` |
+| set a status | `node verify.js <target> '<params>'` (earned by a run) |
+| write test fixtures | `authorizeForTests()` in the test's setup |
+
+**Do not reach for raw SQL or inline `node -e` to change the DB.** That path
+skips every check, and it is the specific thing this guard exists to stop — it
+is how a recipe once got `status: "blocked"` by hand, and how a status was set
+that `register.js` would have refused.
+
+`lab.js set` runs the offline audits **before and after** the change, and any
+finding that did not exist beforehand is treated as a regression this change
+caused: the recipe is rolled back to its previous version and the change is
+reported as failed. Pre-existing findings do not block, because refusing every
+edit until the whole library is clean would make the gate something to work
+around. A `note` is mandatory — it gates the change and becomes its
+`change_log` summary.
+
+Every gated change records a `change_log` row, so an edit made off-path is
+detectable by its absence: `node audit.js provenance` lists recipe versions
+with no change_log entry behind them.
+
 1. `node query.js site <hostname>[#page_type[:recipe_name]]` — check if known
    first. `node query.js sites` lists every registered recipe (all
    hostnames/page_types/recipe_names) if you're not sure what's there.

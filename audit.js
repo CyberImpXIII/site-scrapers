@@ -13,6 +13,7 @@
 //   node audit.js repeats        # step sequences shared by 2+ recipes and not yet extracted
 //   node audit.js literals       # the same literal string hard-coded in 2+ recipes
 //   node audit.js hardcoded      # generic actions carrying literals that should be parameters
+//   node audit.js provenance     # recipe versions with no change_log entry, i.e. edits made OFF the gate
 //   node audit.js units          # static invariants per component: unimplemented step types,
 //                                # unregistered probe kinds, undocumented or unread parameters,
 //                                # builtins that did not seed. Offline and instant.
@@ -254,6 +255,63 @@ function auditUnits(db) {
     }
   }
 
+  return findings;
+}
+
+// Recipe versions with no change_log entry behind them — i.e. edits that did
+// not go through the gate.
+//
+// The gate cannot technically prevent someone opening the DB and running raw
+// SQL; what it can do is make that visible. Every gated change writes a
+// change_log row, so a version that appeared without one was made off-path and
+// had no audits run against it. That is exactly how a status got set by hand
+// that register.js would have refused.
+//
+// Only versions created after the FIRST change_log entry are checkable —
+// everything older predates the mechanism and is not evidence of anything.
+function auditProvenance(db) {
+  require('./lib/gate').ensureChangeLog(db);
+  const first = db.prepare('SELECT MIN(changed_at) AS t FROM change_log').get()?.t;
+  if (!first) {
+    return [
+      {
+        severity: 'info',
+        note: 'no gated changes recorded yet, so there is no baseline to audit against. Provenance becomes checkable once changes start going through the gate.',
+      },
+    ];
+  }
+
+  // Every version a gated change produced, including one it rejected and rolled
+  // back — that intermediate is a real row and would otherwise read as an
+  // off-path edit, i.e. the gate accusing itself.
+  const logged = new Set();
+  for (const r of db.prepare('SELECT target, version_after, versions_created FROM change_log').all()) {
+    for (const label of [r.version_after, ...String(r.versions_created || '').split(',')]) {
+      if (label) logged.add(`${r.target}|${label.trim()}`);
+    }
+  }
+
+  const findings = [];
+  for (const s of listSites(db)) {
+    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
+    const target = `${s.hostname}#${s.page_type}:${s.recipe_name}`;
+    const versions = db
+      .prepare('SELECT major, minor, created_at, note FROM recipe_versions WHERE site_id = ? AND created_at > ? ORDER BY major, minor')
+      .all(site.id, first);
+    for (const v of versions) {
+      const label = `v${v.major}.${v.minor}`;
+      if (logged.has(`${target}|${label}`)) continue;
+      findings.push({
+        severity: 'warn',
+        unit: target,
+        problem: `${label} has no change_log entry`,
+        why:
+          'it was created outside the gate, so no audits ran against it. Recipe edits belong in `node lab.js set` ' +
+          '(which gates them); verify.js writes statuses from a run. Raw SQL against the DB bypasses both.',
+        versionNote: v.note,
+      });
+    }
+  }
   return findings;
 }
 
@@ -738,6 +796,7 @@ async function main() {
   if (which === 'all' || which === 'repeats') report.extractableSequences = findRepeatedSequences(recipes);
   if (which === 'all' || which === 'literals') report.literalsSharedAcrossRecipes = findSharedLiterals(recipes);
   if (which === 'all' || which === 'units') report.unitInvariants = auditUnits(db);
+  if (which === 'all' || which === 'provenance') report.provenance = auditProvenance(db);
   if (which === 'all' || which === 'hardcoded') report.literalsInsideGenericActions = findHardcodedInGenerics(db);
   // Only on request: this one runs live recipes, so it is slow and needs the
   // network, unlike the static checks above.
