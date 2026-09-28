@@ -451,13 +451,22 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         // probe could not be parameterised at all -- `with: {selectors:
         // "{{sel}}"}` arrived at the probe as the literal string "{{sel}}"
         // and came back as "invalid selector".
+        //
+        // EVERY string field, not a named list of them. The list was
+        // `selectors, label, record_nouns`, and it silently went stale twice:
+        // `min_group` was documented as a parameter of probe_card_candidates
+        // while never being substituted (it only worked because the probe
+        // coerces a NaN back to its default), and card_anatomy's card_selector
+        // arrived as the literal "{{card_selector}}". A probe field that has to
+        // be added to a list somewhere else is a field that will be forgotten.
+        // Non-strings pass through untouched, so a numeric field stays numeric.
         diagnostics.push(
-          await runProbe(page, {
-            ...step,
-            selectors: step.selectors === undefined ? undefined : substitute(String(step.selectors), params),
-            label: step.label === undefined ? undefined : substitute(String(step.label), params),
-            record_nouns: step.record_nouns === undefined ? undefined : substitute(String(step.record_nouns), params),
-          })
+          await runProbe(
+            page,
+            Object.fromEntries(
+              Object.entries(step).map(([k, v]) => [k, typeof v === 'string' ? substitute(v, params) : v])
+            )
+          )
         );
         break;
       }

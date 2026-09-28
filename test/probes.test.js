@@ -55,14 +55,16 @@ function pageFor(query) {
     // Built to exercise the three distinctions card_anatomy claims to make,
     // because all three decide whether a child_text field returns data, null,
     // or the same string on every card:
-    //   .co / .ti  present in EVERY card, text varies      -> real fields
-    //   .badge     present in only 2 of 6                  -> optional
-    //   .apply     present in every card, text identical   -> static label
-    //   .tag       TWO per card                            -> needs segment_index
+    //   company/.ti  present in EVERY card, text varies      -> real fields
+    //   .badge       present in only 2 of 6                  -> optional
+    //   .apply       present in every card, text identical   -> static label
+    //   .tag         TWO per card                            -> needs segment_index
+    // The company is an a[data-testid] inside a layout-class wrapper with the
+    // same text, which is ziprecruiter's real shape: the stable hook must win.
     // Plus an input carrying a value, which must never be reported.
     const rows = Array.from({ length: 6 }, (_, i) =>
       `<li class="card">
-         <div class="co">Company ${i}</div>
+         <div class="d-flex justify-between"><a data-testid="card-company" href="/c">Company ${i}</a></div>
          <div class="ti"><span>Engineer ${i}</span></div>
          ${i < 2 ? '<div class="badge">Promoted</div>' : ''}
          <div class="tag">Remote</div><div class="tag">Full-Time</div>
@@ -159,10 +161,13 @@ test('card_anatomy separates a field from an optional badge from a static label'
   assert.equal(anat.cardCount, 6);
   const part = s => anat.parts.find(p => p.selector === s);
 
-  // A field: in every card, different text each time.
-  assert.equal(part('div.co').everyCard, true);
-  assert.equal(part('div.co').varies, true);
-  assert.equal(part('div.co').maxPerCard, 1);
+  // A field: in every card, different text each time. Reported by its STABLE
+  // hook, not by the layout wrapper that holds the same text — the wrapper's
+  // classes are the site's grid system and will not survive a redesign.
+  assert.equal(part('a[data-testid="card-company"]').everyCard, true);
+  assert.equal(part('a[data-testid="card-company"]').varies, true);
+  assert.equal(part('a[data-testid="card-company"]').maxPerCard, 1);
+  assert.equal(part('div.d-flex.justify-between'), undefined, 'the wrapper must not shadow the hook');
 
   // An optional badge. Reported, but marked so it is not mistaken for a field
   // or — the expensive mistake — used as a positional anchor.
@@ -173,8 +178,37 @@ test('card_anatomy separates a field from an optional badge from a static label'
   assert.equal(part('a.apply').everyCard, true);
   assert.equal(part('a.apply').varies, false);
 
-  // Two per card, so child_text needs a segment_index to say which one.
+  // Two per card, so child_text needs a segment_index to say which one — and
+  // the probe has to say what each index HOLDS, or picking the index is a guess
+  // again and the probe stopped one step short of its own purpose.
   assert.equal(part('div.tag').maxPerCard, 2);
+  const tagPositions = part('div.tag').positions;
+  assert.equal(tagPositions.length, 2);
+  assert.deepEqual(tagPositions[0].samples.slice(0, 1), ['Remote']);
+  assert.deepEqual(tagPositions[1].samples.slice(0, 1), ['Full-Time']);
+  assert.equal(part('a[data-testid="card-company"]').positions, undefined, 'one match per card needs no position breakdown');
+});
+
+test('card_anatomy reports the index child_text will actually use', async () => {
+  // maxPerCard and the position indices must come from querySelectorAll on the
+  // PROPOSED selector, not from the probe's own filtered walk. They diverge
+  // whenever the walk skips an element the selector still matches, and a
+  // segment_index read off a filtered position then points at a different
+  // element at extraction time — a wrong value rather than a failure.
+  const result = await run('probe_anatomy_index', [
+    { action: 'goto', url: `${baseUrl}?page=anatomy` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  const anat = byKind(result, 'card_anatomy');
+  for (const p of anat.parts) {
+    assert.ok(p.maxPerCard >= 1, `${p.selector} should match at least once`);
+    for (const pos of p.positions || []) {
+      assert.ok(
+        pos.index < p.maxPerCard,
+        `${p.selector} reports index ${pos.index} but only ${p.maxPerCard} matches exist — segment_index would miss`
+      );
+    }
+  }
 });
 
 test('card_anatomy reports the outermost element holding a text, not every wrapper', async () => {
@@ -201,6 +235,26 @@ test('card_anatomy never reports the value of a form control', async () => {
     !JSON.stringify(byKind(result, 'card_anatomy')).includes('prefilled-secret-value'),
     'a form value must never appear in probe output'
   );
+});
+
+test('a probe field is substituted because it is a string, not because it is on a list', async () => {
+  // engine.js used to substitute three NAMED probe fields, and the list went
+  // stale twice: probe_card_candidates documented min_group as a parameter
+  // while never substituting it, and card_anatomy's card_selector arrived as
+  // the literal "{{card_selector}}". card_selector is deliberately a field the
+  // old list did not contain — if this passes, a future probe field needs no
+  // change anywhere else.
+  const result = await run(
+    'probe_anatomy_param',
+    [
+      { action: 'goto', url: `${baseUrl}?page=anatomy` },
+      { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: '{{cs}}' } },
+    ],
+    '{"noSession":true,"noDiagnostics":true,"cs":"li.card"}'
+  );
+  const anat = byKind(result, 'card_anatomy');
+  assert.equal(anat.error ?? null, null, `expected the placeholder to be filled, got ${anat.error}`);
+  assert.equal(anat.cardCount, 6);
 });
 
 test('card_anatomy says so when the card selector matches nothing', async () => {
