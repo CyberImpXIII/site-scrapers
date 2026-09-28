@@ -25,6 +25,43 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## 0. Found 2026-09-28 by reading live state, not in the original list
+
+### 0a. `hiringcafe.com#listing` now flags `DISAGREES` — decide if it is real
+
+`./dev.sh health` shows it `working` at 4/10. **Do not fix it yet.** Five of the
+six failures are a burst between 06:27 and 06:31 on 2026-09-28, three of them
+inside 41 seconds and two inside the same second — the parallel-contention
+signature rule 7 and `docs/lessons.md` both warn about. All five are
+`timed_out` with no error text. Before that burst it was 3/4.
+
+**One solo run decides it.** A repeat under parallel load is not evidence.
+
+### 0b. Three recipes are `working` with zero runs under their current definition
+
+`jobs.lever.co#action:describe_application_form`,
+`salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing` (whose last
+error is `Protocol error (Page.navigate): Target closed` — the INFRA
+signature). Per rule 3 status is earned, so these are assertions, not results.
+`node audit.js working` settles these and 0a in one sweep.
+
+### 0c. Stale builtin-editing instructions in two docs, one self-contradicting
+
+`lib/builtinActions.js` is mode 444 with a DO-NOT-EDIT header, and
+`docs/architecture.md:51` says a builtin is edited through `register.js`
+because the DB is the source of truth. But **`docs/architecture.md:95-99`**
+(same file, lower down) and **`README.md`'s "Where the built-in library lives"**
+both still say the file is authoritative, that you change a builtin by editing
+it, and that `register.js` *refuses* to register over a builtin name.
+
+That last claim is the damaging one: it tells a session the sanctioned path is
+closed when it is the only open one. Exactly the "stale notes are worse than
+none" failure in `docs/lessons.md`, and TODO 4's note that `register.js` can
+now add a builtin with `"builtin": true` is the same flip, recorded in a third
+place. Fix both doc sites; date the correction.
+
+---
+
 ## 1. Make the probes narrow the answer, not just bound it
 
 Jacob's framing, and it is the right one: *do as much procedurally as possible,
