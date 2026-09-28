@@ -25,10 +25,23 @@ Recipe types (`page_type`): `listing` (repeated cards, the default), `article`
 
 ## Rules
 
-**1. Check before assuming.** `node query.js site <target>` — `sites` lists
-everything. A `working` recipe → `./scrape.sh <target> '<json params>'`. Check
-the `success` field, not the exit code. A `success:false` run can still carry
-records: if `partialResults` is true, the wait expired but the data is there.
+**1. Check before assuming — ENFORCED.** `node query.js site <target>` — `sites`
+lists everything, and `./dev.sh known <hostname>` answers "is anything
+registered for this host" across every page_type. A `working` recipe →
+`./scrape.sh <target> '<json params>'`. Check the `success` field, not the exit
+code. A `success:false` run can still carry records: if `partialResults` is
+true, the wait expired but the data is there.
+
+**This engine is the primary way to read a web page here, not a fallback.** A
+`PreToolUse` hook (`.claude/hooks/prefer-recipes.sh`) refuses a WebFetch or a
+Claude-in-Chrome navigation to any host with a `working` recipe, because that
+path costs 8+ round trips (screenshots, an accessibility dump, chunked
+extractions) for data one Bash call returns. A recipe that is `broken`,
+`blocked` or `needs-review` does NOT block — there the browser may be the only
+path left. When you genuinely need one on a covered host (building a second
+recipe for it, confirming a wall, an attended handoff), open a window first:
+`./dev.sh browser-ok` (15 minutes, or pass minutes). For an UNKNOWN site, use
+the browser and then register what you learned.
 
 Extracted rows come back as **`records`** (renamed from `jobs` on 2026-09-28 —
 the engine is generic, so a product catalogue was arriving under `jobs` too).
@@ -57,9 +70,23 @@ verify.
 | `working` | a run extracted records from this exact definition |
 | `broken` | understood fault; ordinary work to fix |
 | `blocked` | **the site** needs a person every run. Recipe is fine — do not re-derive |
-| `blocked-attn` | **you** are stuck; the next step needs the user. Do NOT retry, that already failed. Requires `notes` saying what only they can supply |
+| `blocked-attn` | **you** are stuck; the next step needs the user. Do NOT retry, that already failed — a hook now blocks the retry. Requires `notes` saying what only they can supply |
 
 `./dev.sh blocked` lists what is waiting on the user.
+
+**Three of these rules are ENFORCED by hooks, not advised** — rules 1, 3 and 4.
+`node init.js` reports which are live. Each hook fails OPEN, because one that
+broke every call would be worse than the habit it corrects.
+
+| hook | blocks |
+|---|---|
+| `no-inline-blobs.sh` | `node -e`, `python3 -c`, heredocs feeding an interpreter (rule 4) |
+| `prefer-recipes.sh` | a browser/WebFetch call on a host that has a `working` recipe (rule 1) |
+| `troubleshooting.sh` | re-running a `blocked-attn` recipe without `--attended` (rule 3) |
+
+`troubleshooting.sh` also **prints this host's failure history** when you are
+about to run `lab.js set` or `register.js` — the `node failures.js match` step
+`docs/diagnosing.md` asks for first, done for you rather than demanded.
 
 **4. Never write an inline script blob. This one is ENFORCED, not advised.**
 A `PreToolUse` hook (`.claude/hooks/no-inline-blobs.sh`) blocks `node -e`,
@@ -118,6 +145,7 @@ audit.js    units | inline | repeats | literals | hardcoded | provenance  (offli
             params | working | fixed-params                              (LIVE, minutes)
 failures.js match | record | common | list | types | signatures | probe-knowledge
 dev.sh      check | test [n] | audit | run | verify | inside | apply | waive
+            known | failures | board | browser-ok
             health | blocked | snap | new | clean
 init.js     first-run setup after a clone
 ```

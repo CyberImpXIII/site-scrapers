@@ -19,6 +19,9 @@
 #   ./dev.sh apply <target> <file.json> '<params>'          # lab.js set, then peek, to see what it did
 #   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
 #   ./dev.sh board <company> ...            # which ATS hosts each company's job board (one cheap HTTP check each)
+#   ./dev.sh known <hostname>               # every recipe registered for a hostname, as "target<TAB>status"
+#   ./dev.sh failures <hostname>            # what has broken here before, one line each, best match first
+#   ./dev.sh browser-ok [minutes]           # allow interactive browsing of a covered site for N minutes (default 15)
 #   ./dev.sh health                         # every recipe's observed rate, flagging status disagreements
 #   ./dev.sh blocked                        # what is waiting on the user vs. waiting on a person each run
 #   ./dev.sh snap                           # save the current recipe list as a baseline
@@ -37,7 +40,11 @@ export NODE_NO_WARNINGS=1
 BASELINE="$DIR/data/.dev-baseline.json"
 cd "$DIR"
 
-usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+# Where `browser-ok` writes its marker. Under data/, which is gitignored, so an
+# override never travels to anyone else's clone.
+BROWSER_OK="$DIR/data/.browser-ok"
 
 cmd="${1:-}"; shift || true
 
@@ -183,6 +190,67 @@ case "$cmd" in
         for (const [k,v] of Object.entries(d.fieldCoverage||{})) console.log(`    ${k.padEnd(18)} ${v}`);
         const s=(d.samples||[])[0]; if (s) console.log(`    first: ${JSON.stringify(s).slice(0,220)}`);
       });'
+    ;;
+
+  known)
+    # Every recipe registered for a hostname, as "target<TAB>status".
+    #
+    # `query.js site <host>` answers for ONE page_type (listing by default), so
+    # it cannot answer "is anything registered for this host" -- a host with
+    # only an article recipe reads as unknown. Both PreToolUse hooks need
+    # exactly that question, and a jq program duplicated into two hook scripts
+    # is the thing this file exists to prevent.
+    #
+    # Silent with no match, so a caller can test it with `[ -n "$(...)" ]`.
+    [ $# -ge 1 ] || usage
+    "$NODE_BIN" -e '
+      const {openDb,listSites}=require("./db");
+      const host=String(process.argv[1]||"").replace(/^www\./,"").toLowerCase();
+      if(!host) process.exit(0);
+      for(const s of listSites(openDb())){
+        const h=String(s.hostname||"").replace(/^www\./,"").toLowerCase();
+        // Suffix match so a recipe on the bare domain also answers for a
+        // subdomain the caller happened to be given, but "notglassdoor.com"
+        // never matches "glassdoor.com".
+        if(h===host||host.endsWith("."+h)||h.endsWith("."+host)){
+          console.log(`${s.hostname}#${s.page_type}:${s.recipe_name}\t${s.status}`);
+        }
+      }
+    ' "$1" 2>/dev/null
+    ;;
+
+  failures)
+    # What has broken on this host before, one line each. docs/diagnosing.md
+    # opens by telling you to check this before re-deriving anything, and the
+    # troubleshooting hook prints it for you when you are about to edit a
+    # recipe -- so it has to be a line-oriented summary, not the raw JSON.
+    #
+    # Silent with no match, so a caller can test it with `[ -n "$(...)" ]`.
+    [ $# -ge 1 ] || usage
+    "$NODE_BIN" failures.js match "$1" 2>/dev/null | jq -r '
+      .matches[]? |
+      "  score=\(.score) [\(.failure_type)] \(.hostname) (seen \(.occurrences)x) -> \(.resolution // "NO RESOLUTION RECORDED")"
+    ' 2>/dev/null
+    ;;
+
+  browser-ok)
+    # Deliberately allow interactive browsing of a site that already has a
+    # working recipe, for a few minutes.
+    #
+    # The prefer-recipes hook blocks that by default, because reaching for a
+    # browser on a covered site is the expensive habit this whole project
+    # exists to replace. But there are real reasons to need one -- BUILDING a
+    # second recipe for the same host, confirming a wall, an attended handoff --
+    # and a block with no way past it would be worse than the habit.
+    #
+    # Time-limited rather than a permanent flag: an override that outlives the
+    # reason for it is just the hook switched off.
+    mins="${1:-15}"
+    case "$mins" in ''|*[!0-9]*) echo "minutes must be a number"; exit 1 ;; esac
+    mkdir -p "$DIR/data"
+    date +%s > "$BROWSER_OK"
+    echo "interactive browsing allowed for ${mins}m (marker: data/.browser-ok)"
+    echo "$mins" >> "$BROWSER_OK"
     ;;
 
   board)

@@ -820,6 +820,38 @@ automatically for next time. Verified end-to-end (including parallel-session
 isolation and the `noSession` opt-out) against a local test server before
 relying on it against a real site.
 
+## Enforced, not advised
+
+Three of this project's rules are `PreToolUse` hooks in `.claude/hooks/` rather
+than prose, each because prose had already failed:
+
+| hook | blocks | escape hatch |
+|---|---|---|
+| `no-inline-blobs.sh` | `node -e`, `python3 -c`, heredocs feeding an interpreter | write the script to a file, or add a `dev.sh` subcommand |
+| `prefer-recipes.sh` | WebFetch / Claude-in-Chrome navigation to a host with a `working` recipe | `./dev.sh browser-ok` opens a 15-minute window |
+| `troubleshooting.sh` | re-running a `blocked-attn` recipe | `--attended`, which is the sanctioned next step and is never blocked |
+
+`prefer-recipes.sh` is the one that makes the engine the *primary* way to read a
+page rather than an optimisation you have to remember: the "Why this saves
+tokens" numbers below only materialise if the recipe actually gets used, and
+opening a browser is the reflex. It is narrow on purpose — a `broken`, `blocked`
+or `needs-review` recipe does not block, because there the browser may be the
+only path left, and an unknown site does not block at all.
+
+`troubleshooting.sh` has a second, non-blocking half: when you are about to run
+`lab.js set` or `register.js`, it prints what has broken on that host before —
+the `node failures.js match` step "Diagnosing a recipe" asks for first, done for
+you instead of demanded.
+
+All three **fail open**. Each has a test beside it
+(`bash .claude/hooks/test-<name>.sh`), and `node init.js` reports which are
+live — a guard you believe in but that is not running is worse than none.
+
+Each hook exists in two copies, here and in `../.claude/hooks/`, because a hook
+only fires when Claude Code's project dir is the one holding it. Copies rather
+than symlinks: a missing hook command exits non-zero, which is read as a block,
+so a dangling link would refuse every matching call. Keep them in step.
+
 ## Workflow (for Claude to follow)
 
 1. **Before assuming a site needs interactive discovery**, run

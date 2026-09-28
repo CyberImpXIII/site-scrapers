@@ -6,7 +6,25 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/no-inline-blobs.sh"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/no-inline-blobs.sh",
+            "statusMessage": "checking for inline script blobs"
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/troubleshooting.sh",
+            "timeout": 20,
+            "statusMessage": "checking recipe status and failure history"
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|mcp__claude-in-chrome__(navigate|tabs_create_mcp)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/prefer-recipes.sh",
+            "timeout": 20,
+            "statusMessage": "checking for an existing recipe"
           }
         ]
       }
