@@ -314,10 +314,17 @@ Collected pages and the final page are merged and de-duplicated by `href`
 
 ### Where the built-in library lives
 
-The built-in generic actions are defined in **`lib/builtinActions.js`** and
-seeded into the `generic_actions` table every time the DB opens. The split
-is deliberate, and it's the same one the `action_types` taxonomy already
-uses.
+The built-in generic actions live in the `generic_actions` table, and
+**`lib/builtinActions.js` is a generated, read-only export of it** — seeded
+back into the DB every time the DB opens, so a fresh clone gets the library.
+The split is deliberate, and it's the same one the `action_types` taxonomy
+already uses.
+
+**The DB is the source of truth; the file is the export.** That direction was
+flipped deliberately (2026-09-28 doc correction — the code flipped earlier).
+The file used to be authoritative, which meant a text editor could change
+shared library behaviour with no audit, no dependent check and no rollback.
+Now every change goes through the gate — see `docs/architecture.md`.
 
 The DB earns its keep for *site knowledge*: per-site recipes are numerous,
 discovered empirically, fixed by one-row updates, and carry job-search
@@ -335,12 +342,22 @@ Seeding them *into* the DB keeps everything downstream unchanged:
 
 - Re-seeding upserts **only** rows marked `source: 'builtin'`, so anything
   you register by hand is never touched.
-- The flip side: editing a builtin's row in the DB is pointless — the next
-  open overwrites it. `register.js` therefore **refuses** to register over a
-  builtin name rather than letting the change silently revert later. To
-  customize one, register it under a different name (that copy is
-  `source: 'user'`); to change the builtin itself, edit
-  `lib/builtinActions.js` — which is the point of it being code.
+- **Change a builtin through `register.js`**, with a `note` saying why —
+  it gates the change (audits before and after, validation of the subactions
+  it pulls in *and* the dependents it could break, the suites covering them,
+  rollback on regression) and rewrites the export from the result:
+  ```
+  node register.js '{"kind":"generic_action","name":"dismiss_overlay","steps":[...],"note":"why"}'
+  ```
+- **Add to the library** with `"builtin": true` plus a `note`. Without that
+  flag a newly registered action is a *user* action: it lives only in the
+  gitignored DB and never reaches a clone.
+- Promoting an existing user action to a builtin is refused — it would
+  silently publish something written for one machine to every clone.
+  Register it under a library name instead.
+- Editing `lib/builtinActions.js` by hand is the one path the gate cannot
+  see, so the file is written **mode 444 with a DO-NOT-EDIT header**, and
+  `test/guard.test.js` fails on the drift until the next export overwrites it.
 
 ### Overlays and optional steps
 
@@ -419,22 +436,41 @@ screenshot.
 a result to the output JSON's `diagnostics` array, and cannot fail the run:
 `runProbe` swallows its own errors into an `error` field, because
 diagnostics run when things are already broken, often against a half-dead
-page. Four kinds:
+page. The kinds (`Object.keys(PROBE_KINDS)` in `lib/probes.js` is the list
+that cannot go stale):
 
 | kind | answers |
 |---|---|
 | `blockers` | CAPTCHA, bot-check, login wall, consent overlay, scroll lock, near-empty body |
+| `antibot` | which anti-bot service is present, and whether it is actually blocking |
+| `empty_state` | is this "no results for that query" or "the page never rendered"? |
 | `repeated_structure` | which containers hold repeated cards, with counts, link counts and the repeated line that makes a good `card_anchor_text` |
+| `card_anatomy` | what is INSIDE a card, so a `child_text` selector can be chosen |
+| `card_match` | given values the recipe already produces, WHICH selector yields each one |
 | `forms` | field selectors, types, labels, required — for action recipes |
 | `selectors` | for each candidate selector: match count, visible count, text sample |
 
-Four generic actions wrap them: **`diagnose_page`** (all three page
-sweeps), **`probe_card_candidates`**, **`diagnose_blockers`**, and
-**`probe_selectors`** (takes `with: {"selectors": "a, b, c"}`).
+Generic actions wrap them: **`diagnose_page`** (the three page sweeps),
+**`diagnose_antibot`**, **`probe_card_candidates`**, **`probe_card_anatomy`**,
+**`probe_card_match`**, **`diagnose_blockers`**, and **`probe_selectors`**
+(takes `with: {"selectors": "a, b, c"}`).
 
 ```json
 {"action":"run_generic_action","ref":"probe_card_candidates"}
 ```
+
+`card_anatomy` and `card_match` are the two halves of choosing a field
+selector, and which one you want depends on whether you already have the
+answer. Building a recipe from nothing, `card_anatomy` reports the parts and
+you choose. **Migrating one that already works, `card_match` does the
+choosing** — the values exist, so "which selector holds this value in every
+card" is a search with a checkable result. It filters inside the page against
+those values, so only matching elements ever cross out: a few hundred bytes
+against `card_anatomy`'s ~15KB, and the result is provably right because it
+is validated against output that already existed. `node lab.js match` drives
+it. It reports `selector: null` when no element's text equals the value —
+meaning the value is derived and the current extract kind should stay —
+rather than proposing the nearest thing.
 
 `repeated_structure` is the one that earns its keep: getting
 `card_selector` / `card_anchor_text` wrong is the most common reason a new

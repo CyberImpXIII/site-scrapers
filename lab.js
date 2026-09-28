@@ -12,6 +12,7 @@
 //   node lab.js probe <url>                       # what cards/forms/blockers are on this page
 //   node lab.js sel <url> '<css,css,...>' [--wait=MS]   # match counts for candidate selectors
 //   node lab.js inside <url> '<card_selector>' [--wait=MS]  # what is INSIDE a card, to pick child_text selectors
+//   node lab.js match <target> '<params>' [--wait=MS]  # which selector yields each field's KNOWN value in every card
 //   node lab.js peek <target> '<params>'          # run a recipe, show samples + per-field null counts
 //   node lab.js raw <target> '<params>'           # same, but show each card's source text
 //   node lab.js set <target> '<json>'             # set card_selector / anchor / timeout / fields at once
@@ -178,6 +179,97 @@ async function main() {
         });
       }
     }
+    return;
+  }
+
+  // The migration question, answered as a search instead of a judgement.
+  //
+  // `inside` reports every part of a card and leaves you to decide which is
+  // the title; for a recipe that ALREADY WORKS that decision is redundant,
+  // because the values are known — so the real question is only "which
+  // selector yields this exact value in every card". That is checkable, so it
+  // is done here rather than read off a 15KB anatomy dump. Two runs: one to
+  // learn the values, one to find the selectors that reproduce them.
+  if (cmd === 'match') {
+    if (!a) die("Usage: node lab.js match <target> '<params>' [--wait=MS]");
+    const params = b && !b.startsWith('--') ? JSON.parse(b) : {};
+    const r = await runEngine(a, params);
+    const records = r.jobs || [];
+    if (!records.length) {
+      die(
+        `the recipe returned no records, so there are no known values to match against` +
+          `${r.error ? `: ${r.error}` : ''}. Fix the run first, or use \`node lab.js inside\` to choose selectors from scratch.`
+      );
+    }
+    if (!r.url) die('the run did not report a final URL, so the page cannot be re-opened to search it');
+
+    const { hostname, pageType, recipeName } = parseSiteArg(a);
+    const site = getSite(db, hostname, pageType, recipeName);
+    if (!site) die(`no recipe registered for ${a}`);
+    if (!site.card_selector) {
+      die(
+        `${a} has no card_selector — this matches selectors INSIDE a card, so it needs to know what a card is. ` +
+          'Run `node lab.js probe <url>` to find one first.'
+      );
+    }
+
+    // A value hundreds of characters long is a description blob, not a hook,
+    // and sending it would bloat the payload for a field that can only come
+    // back null. Dropped explicitly rather than silently, so the output never
+    // implies a field was searched for when it wasn't.
+    const MAX_MATCHABLE_VALUE = 300;
+    const expected = {};
+    const tooLong = [];
+    for (const key of [...new Set(records.flatMap(j => Object.keys(j)))]) {
+      if (key === '_raw') continue;
+      const values = records.map(j => (typeof j[key] === 'string' ? j[key] : null));
+      const strings = values.filter(v => v !== null && v.trim());
+      if (!strings.length) continue;
+      if (strings.some(v => v.length > MAX_MATCHABLE_VALUE)) {
+        tooLong.push(key);
+        continue;
+      }
+      expected[key] = values;
+    }
+    if (!Object.keys(expected).length) {
+      die(`every field is non-string or longer than ${MAX_MATCHABLE_VALUE} chars, so there is nothing matchable`);
+    }
+
+    const settleMs = Number((process.argv.find(x => x.startsWith('--wait=')) || '').slice('--wait='.length));
+    const wait = Number.isFinite(settleMs) && settleMs > 0 ? settleMs : 5000;
+    ensureProber(db, [
+      { action: 'goto', url: '{{url}}' },
+      { action: 'run_generic_action', ref: 'dismiss_overlay' },
+      { action: 'wait', ms: wait },
+      {
+        action: 'run_generic_action',
+        ref: 'probe_card_match',
+        with: { card_selector: '{{sel}}', expected: '{{expected}}' },
+      },
+    ]);
+    const p = await runEngine(`${PROBER}#action:default`, {
+      url: r.url,
+      sel: site.card_selector,
+      expected: JSON.stringify(expected),
+      noSession: true,
+      noDiagnostics: true,
+    });
+    if (!p.success) die(`prober run failed: ${p.error}`);
+    const probe = (p.diagnostics || []).find(d => d.kind === 'card_match');
+    if (!probe) die('the card_match probe did not report — check that probe_card_match is registered');
+    if (probe.error) die(`card_match: ${probe.error}`);
+
+    out({
+      target: a,
+      cardSelector: site.card_selector,
+      mode: probe.mode,
+      cardCount: probe.cardCount,
+      cardsSampled: probe.cardsSampled,
+      recordsGiven: probe.recordsGiven,
+      ...(tooLong.length ? { notMatchable: { fields: tooLong, why: `values longer than ${MAX_MATCHABLE_VALUE} chars` } } : {}),
+      fields: probe.fields,
+      hint: probe.hint,
+    });
     return;
   }
 
@@ -463,7 +555,7 @@ async function main() {
     return;
   }
 
-  die(`Unknown command "${cmd ?? ''}". Use: probe | sel | inside | peek | raw | set | params | history | adopt-history | new`);
+  die(`Unknown command "${cmd ?? ''}". Use: probe | sel | inside | match | peek | raw | set | params | history | adopt-history | new`);
 }
 
 main();

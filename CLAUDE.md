@@ -106,8 +106,8 @@ for read-only lookups.
 ```
 query.js    sites | site | runs | versions | diff | restore | promote | health
             generic-actions | expand | sessions | clear-session | debug-captures
-lab.js      probe | sel | inside | peek | raw | set | params | history | adopt-history | new
-            (probe/sel/inside take --wait=MS; the 5s default is too short for slow SPAs)
+lab.js      probe | sel | inside | match | peek | raw | set | params | history | adopt-history | new
+            (probe/sel/inside/match take --wait=MS; the 5s default is too short for slow SPAs)
 verify.js   <target> '<params>' [--dry] [--attended]
 audit.js    units | inline | repeats | literals | hardcoded | provenance  (offline)
             params | working | fixed-params                              (LIVE, minutes)

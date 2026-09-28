@@ -74,6 +74,21 @@ function pageFor(query) {
     ).join('');
     return `<html><head><meta charset="utf-8"></head><body><ul>${rows}</ul></body></html>`;
   }
+  if (query.get('page') === 'utility') {
+    // builtin.com's real shape, which is what motivated ranking utility
+    // classes down: the Bootstrap wrappers sorted ABOVE the two selectors that
+    // were actually usable (div.left-side-tile-item-2 and -3). Each div holds
+    // its own distinct text so all three survive the wrapper-chain collapse
+    // and the ORDER is what is being tested.
+    const rows = Array.from({ length: 6 }, (_, i) =>
+      `<li class="card">
+         <div class="d-flex align-items-start">Utility Held ${i}</div>
+         <div class="col-12 col-lg-7">Layout Text ${i}</div>
+         <div class="left-side-tile-item-2">Semantic Title ${i}</div>
+       </li>`
+    ).join('');
+    return `<html><head><meta charset="utf-8"></head><body><ul>${rows}</ul></body></html>`;
+  }
   const cards = Array.from({ length: 6 }, (_, i) =>
     `<div class="job-card"><h3>Engineer ${i}</h3>
      <p>Acme Corp - Remote - Full Time. A description long enough to clear the average-length threshold.</p>
@@ -222,6 +237,164 @@ test('card_anatomy reports the outermost element holding a text, not every wrapp
   const anat = byKind(result, 'card_anatomy');
   assert.ok(anat.parts.some(p => p.selector === 'div.ti'), 'the titled wrapper should be reported');
   assert.equal(anat.parts.filter(p => p.selector === 'span').length, 0, 'its bare inner span should not be');
+});
+
+test('card_anatomy ranks framework utility classes below semantic hooks', async () => {
+  const result = await run('probe_anatomy_utility', [
+    { action: 'goto', url: `${baseUrl}?page=utility` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  const parts = byKind(result, 'card_anatomy').parts;
+  const at = sel => parts.findIndex(p => p.selector === sel);
+
+  // All three are present in every card and vary, so before the utility
+  // vocabulary existed the tie-break was arbitrary and Bootstrap won by
+  // accident of insertion order.
+  assert.ok(at('div.left-side-tile-item-2') >= 0, 'the semantic hook must be reported');
+  assert.ok(at('div.d-flex.align-items-start') >= 0, 'the utility part must STILL be reported');
+  assert.ok(at('div.col-12.col-lg-7') >= 0, 'the layout part must STILL be reported');
+
+  assert.ok(
+    at('div.left-side-tile-item-2') < at('div.d-flex.align-items-start') &&
+      at('div.left-side-tile-item-2') < at('div.col-12.col-lg-7'),
+    'the semantic hook must sort above both utility parts'
+  );
+  assert.equal(parts[at('div.d-flex.align-items-start')].utility, true);
+  assert.equal(parts[at('div.col-12.col-lg-7')].utility, true);
+  assert.equal(parts[at('div.left-side-tile-item-2')].utility, undefined, 'a semantic hook is not flagged');
+});
+
+test('a utility class is ranked down, never dropped', async () => {
+  // The property that keeps this safe to be broad about. On builtin.com
+  // div.d-flex.align-items-start is the ONLY hook for four fields, so a
+  // vocabulary that FILTERED would have left them unextractable. Asserted
+  // separately from the ordering because it is a different promise: over-
+  // matching may cost a part its position and must never cost it its row.
+  const result = await run('probe_anatomy_keep', [
+    { action: 'goto', url: `${baseUrl}?page=utility` },
+    { action: 'run_generic_action', ref: 'probe_card_anatomy', with: { card_selector: 'li.card' } },
+  ]);
+  const parts = byKind(result, 'card_anatomy').parts;
+  const utility = parts.filter(p => p.utility);
+  assert.equal(utility.length, 2, 'both utility parts survive');
+  for (const p of utility) {
+    assert.equal(p.everyCard, true, 'and keep their real presentIn, not a downgraded one');
+    assert.equal(p.varies, true, 'and are still reported as carrying per-card data');
+  }
+});
+
+// card_match answers the MIGRATION question: the values are already known, so
+// the only thing left is which selector reproduces them. Every assertion below
+// is about it giving a checkable answer rather than a plausible one.
+
+// The values the anatomy fixture's own cards hold, in DOM order.
+const anatomyExpected = JSON.stringify({
+  company: Array.from({ length: 6 }, (_, i) => `Company ${i}`),
+  title: Array.from({ length: 6 }, (_, i) => `Engineer ${i}`),
+});
+
+const matchSteps = (expected = anatomyExpected) => [
+  { action: 'goto', url: `${baseUrl}?page=anatomy` },
+  {
+    action: 'run_generic_action',
+    ref: 'probe_card_match',
+    with: { card_selector: 'li.card', expected },
+  },
+];
+
+test('card_match finds the selector that reproduces each known value', async () => {
+  const m = byKind(await run('probe_match_basic', matchSteps()), 'card_match');
+  assert.ok(m, 'expected a card_match probe result');
+  assert.equal(m.error, undefined, `probe errored: ${m.error}`);
+  assert.equal(m.mode, 'aligned', '6 cards and 6 records should compare positionally');
+
+  // The stable hook must win over the layout-class wrapper holding the same
+  // text -- this is ziprecruiter's real shape, and picking the wrapper is what
+  // breaks on the site's next redesign.
+  assert.equal(m.fields.company.selector, 'a[data-testid="card-company"]');
+  assert.equal(m.fields.company.everyCard, true);
+  assert.equal(m.fields.company.varies, true);
+
+  // div.ti wraps a bare <span> with the same text. Both reproduce the value,
+  // so the tier order decides: a semantic class beats a bare tag, even though
+  // the bare tag is the shorter string.
+  assert.equal(m.fields.title.selector, 'div.ti');
+  assert.equal(m.fields.title.matchedIn, '6/6');
+});
+
+test('card_match returns null rather than a guess when no element holds the value', async () => {
+  // The single most important property. A derived value -- a regex capture, a
+  // substring, an href -- is not any element's text, and proposing the closest
+  // thing would be exactly the confidently-wrong output this project keeps
+  // paying for. `docs/lessons.md`: prefer null over a guess.
+  const m = byKind(
+    await run(
+      'probe_match_null',
+      matchSteps(JSON.stringify({ salary: Array.from({ length: 6 }, (_, i) => `$${i}00k`) }))
+    ),
+    'card_match'
+  );
+  assert.equal(m.fields.salary.selector, null);
+  assert.equal(m.fields.salary.matchedIn, '0/6');
+  assert.match(m.fields.salary.note, /DERIVED/);
+});
+
+test('card_match reports the index when its selector matches more than once per card', async () => {
+  // Two div.tag per card ("Remote", "Full-Time"). A selector without the index
+  // would extract whichever came first, which is the positional drift
+  // child_text exists to end -- so the index is the part that must be right.
+  const m = byKind(
+    await run('probe_match_index', matchSteps(JSON.stringify({ commitment: Array(6).fill('Full-Time') }))),
+    'card_match'
+  );
+  assert.equal(m.fields.commitment.selector, 'div.tag');
+  assert.equal(m.fields.commitment.matchesPerCard, 2);
+  assert.equal(m.fields.commitment.index, 1, 'Full-Time is the SECOND tag, not the first');
+  // Identical on every card, so it is a label the layout happens to repeat,
+  // not per-card data -- proposing it as a field would be a wrong answer.
+  assert.equal(m.fields.commitment.varies, false);
+});
+
+test('card_match scores an optional field against the cards that could have matched', async () => {
+  // .badge is on 2 of 6 cards. The two records that have it are matched
+  // correctly, and the four nulls are not failures -- reporting 2/6 would make
+  // a correct selector for an optional field look broken.
+  const m = byKind(
+    await run(
+      'probe_match_optional',
+      matchSteps(JSON.stringify({ badge: ['Promoted', 'Promoted', null, null, null, null] }))
+    ),
+    'card_match'
+  );
+  assert.equal(m.fields.badge.selector, 'div.badge');
+  assert.equal(m.fields.badge.matchedIn, '2/2', 'scored against eligible cards, not all cards');
+  assert.equal(m.fields.badge.everyCard, true);
+});
+
+test('card_match falls back to set mode when cards and records disagree', async () => {
+  // The page is re-opened to search it, so it can hold different cards than
+  // the run that produced the values. Comparing card i to record i then
+  // compares a card against ANOTHER card's value. It has to say so.
+  const m = byKind(
+    await run('probe_match_setmode', matchSteps(JSON.stringify({ title: ['Engineer 1', 'Engineer 3'] }))),
+    'card_match'
+  );
+  assert.equal(m.mode, 'set', '2 records against 6 cards cannot be aligned');
+  assert.match(m.hint, /could not be matched to records positionally/);
+});
+
+test('card_match never reports the value of a form control', async () => {
+  // Same rule as every other probe. The input's value is deliberately fed in
+  // as an expected value, which is the one way it could be echoed back.
+  const m = byKind(
+    await run(
+      'probe_match_safe',
+      matchSteps(JSON.stringify({ sneaky: Array(6).fill('prefilled-secret-value') }))
+    ),
+    'card_match'
+  );
+  assert.ok(!JSON.stringify(m).includes('prefilled-secret-value'), 'a form value must never appear in probe output');
+  assert.equal(m.fields.sneaky.selector, null);
 });
 
 test('card_anatomy never reports the value of a form control', async () => {

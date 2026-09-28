@@ -360,13 +360,7 @@ function registerGenericAction(db, def) {
     process.exit(1);
   }
 
-  // Refuse to write over a builtin. The row would update and appear to
-  // work, then be silently reverted by the next openDb() re-seed from
-  // lib/builtinActions.js — a change that vanishes later is worse than one
-  // rejected now. Customizing a builtin means forking it under a new name;
-  // changing the builtin itself means editing lib/builtinActions.js, which
-  // is the point of it living in code.
-  // A builtin CAN now be edited here, because the DB is the source of truth and
+  // A builtin CAN be edited here, because the DB is the source of truth and
   // lib/builtinActions.js is a generated export of it. That used to be refused:
   // the file was authoritative, so a DB edit silently reverted on the next
   // open. Flipping the direction means a change to shared library behaviour
@@ -772,7 +766,9 @@ function main() {
         success: false,
         error: 'a generic action this recipe references is itself broken, so the recipe would fail at run time inside code it does not own',
         brokenReferencedActions: actionFindings,
-        hint: 'fix the action (lib/builtinActions.js for a builtin) before registering a recipe that depends on it',
+        hint: 'fix the action with `node register.js \'{"kind":"generic_action","name":"...","steps":[...],"note":"why"}\' ' +
+          '(add "builtin": true if it is one) before registering a recipe that depends on it — ' +
+          'lib/builtinActions.js is a generated read-only export, not the place to edit it',
       }));
       process.exit(1);
     }

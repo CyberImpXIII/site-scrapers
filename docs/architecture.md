@@ -91,12 +91,12 @@ of reusable, named "macros" not tied to any site (a heuristic generic login,
 dismissing a cookie-consent banner, an infinite-scroll "load more" loop).
 Pull one into any recipe with `{"action":"run_generic_action","ref":"generic_login"}`
 — same inline-execution/expansion/cycle-detection machinery as `run_action`,
-just keyed by name instead of hostname. The built-in ones are defined in
-**`lib/builtinActions.js`** and re-seeded into the DB on every open — they're
-library behavior, so they live in code (version-controlled, in a fresh clone)
-rather than only in the gitignored DB. To change a builtin, edit that file;
-`register.js` refuses to register over a builtin name, since the row would
-silently revert on the next open. Register your OWN with `node register.js`
+just keyed by name instead of hostname. The built-in ones are re-seeded into
+the DB on every open from **`lib/builtinActions.js`**, which is the generated
+*export* of the table, not its source — see "A builtin is edited through
+`register.js`" above. Change one with `node register.js`, passing
+`"builtin": true` and a `note`; the file is written read-only precisely so
+editing it by hand is visible. Register your OWN with `node register.js`
 using `{"kind":"generic_action","name":...,"steps":[...]}` instead of the
 usual hostname/page_type shape (see register.js's header comment for the
 full example); user-registered actions are never touched by re-seeding. Browse the library with `node query.js generic-actions`
