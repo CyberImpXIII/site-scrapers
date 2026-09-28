@@ -156,6 +156,7 @@ parameterised generic action it references. Two consequences, both enforceable:
 | `repeats` | step sequences shared by 2+ recipes that no action covers yet — the next actions worth creating |
 | `literals` | the same literal hard-coded in 2+ recipes, i.e. copy-paste hiding a parameter |
 | `hardcoded` | literals inside generic actions, to judge universal vs smuggled site knowledge |
+| `units` | static per-component invariants — offline and instant, run it freely |
 | `params` | **live**: do recipes that declare parameters actually honour them |
 | `working` | **live**: does every recipe claiming `working` actually return records *now* |
 
@@ -175,6 +176,15 @@ recipe needs a real posting URL, and a guessed one proves nothing.
 Run it after adding recipes. A finding in `inline` or `literals` is a
 defect; a finding in `hardcoded` is a judgement call the tool surfaces rather
 than decides.
+
+`units` catches the mistakes that produce no error and no wrong answer, just a
+quiet dead end: a step type no `engine.js` case implements (it does nothing at
+run time), a `probe` kind referenced but never registered, a parameter a schema
+documents that no step reads (passing it via `with` has no effect), a
+placeholder no schema documents (a caller cannot discover it), or a builtin
+that did not seed — in which case edits to `lib/builtinActions.js` are silently
+ignored. It is offline, so there is no reason not to run it before committing.
+An `error` there means something is already broken and nobody has noticed.
 
 For `action` recipes specifically, prefer keeping them within the small
 `action_types` taxonomy (`node query.js action-types`) rather than inventing
