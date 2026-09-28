@@ -536,8 +536,28 @@ function listSites(db) {
     .all();
 }
 
-function upsertSite(db, s) {
+// Columns that are TEXT holding JSON. A caller naturally writes
+// `"param_probe_values": [{...}, {...}]`, and node:sqlite cannot bind an array,
+// so it has to be serialised somewhere.
+//
+// Here rather than in each CLI, because it was only in one: `lab.js set` did
+// this and `register.js` did not, so registering a recipe with the documented
+// array form died on a raw stack trace — "Provided value cannot be bound to
+// SQLite parameter 9" — with nothing naming the column or the fix. Two CLIs
+// writing the same table needed the same coercion, which makes it the table's
+// job.
+const JSON_TEXT_COLUMNS = ['param_probe_values', 'nav_params_schema', 'pagination_config'];
+function serialiseJsonColumns(s) {
+  const out = { ...s };
+  for (const k of JSON_TEXT_COLUMNS) {
+    if (out[k] !== undefined && out[k] !== null && typeof out[k] !== 'string') out[k] = JSON.stringify(out[k]);
+  }
+  return out;
+}
+
+function upsertSite(db, site) {
   assertAuthorized('upsertSite');
+  const s = serialiseJsonColumns(site);
   const now = new Date().toISOString();
   const pageType = s.page_type || 'listing';
   const recipeName = s.recipe_name || 'default';

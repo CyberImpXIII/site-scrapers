@@ -18,6 +18,7 @@
 #   ./dev.sh inside <url> '<card_sel>' [--wait=MS] [--all]  # what is inside a card, as field candidates
 #   ./dev.sh apply <target> <file.json> '<params>'          # lab.js set, then peek, to see what it did
 #   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
+#   ./dev.sh board <company> ...            # which ATS hosts each company's job board (one cheap HTTP check each)
 #   ./dev.sh health                         # every recipe's observed rate, flagging status disagreements
 #   ./dev.sh blocked                        # what is waiting on the user vs. waiting on a person each run
 #   ./dev.sh snap                           # save the current recipe list as a baseline
@@ -36,7 +37,7 @@ export NODE_NO_WARNINGS=1
 BASELINE="$DIR/data/.dev-baseline.json"
 cd "$DIR"
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 cmd="${1:-}"; shift || true
 
@@ -182,6 +183,63 @@ case "$cmd" in
         for (const [k,v] of Object.entries(d.fieldCoverage||{})) console.log(`    ${k.padEnd(18)} ${v}`);
         const s=(d.samples||[])[0]; if (s) console.log(`    first: ${JSON.stringify(s).slice(0,220)}`);
       });'
+    ;;
+
+  board)
+    # Which ATS hosts a company's job board. The ATS listing recipes are
+    # parameterised by company slug, so the only thing needed to point one at a
+    # new employer is the slug -- and the slug is a guess until something
+    # confirms it.
+    #
+    # Written after guessing one wrong: a bad slug costs a full browser run that
+    # fails with an unhelpful error, where an HTTP status answers it in well
+    # under a second. Read-only GETs against public careers pages.
+    #
+    # A 200 alone is worthless here, which the first version of this got wrong:
+    # Ashby, Workable and Recruitee all answer 200 for a slug that does not
+    # exist, so five pro-audio companies came back "hosted on all three" --
+    # confidently wrong output, which is worse than no helper. It reports the
+    # TITLE and byte size as evidence instead, and marks the ones whose title
+    # reads like a not-found page. Still a candidate rather than proof: only a
+    # recipe run settles it.
+    [ $# -ge 1 ] || usage
+    for company in "$@"; do
+      slug="$(printf '%s' "$company" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//')"
+      hit=0
+      # Only platforms where a missing slug is DISTINGUISHABLE from a real one.
+      # Deliberately dropped after measuring, because including them made every
+      # answer a false positive:
+      #   jobs.ashbyhq.com  - client-rendered, serves a byte-identical 9193-byte
+      #                       shell titled "Jobs" for every slug, real or not
+      #   <slug>.recruitee.com - any unknown slug redirects to Recruitee's own
+      #                       marketing site, so every company "has" a board
+      #   apply.workable.com - echoes the slug back capitalised as
+      #                       "<Slug> - Current Openings", so figma (which is on
+      #                       Greenhouse) reads as a Workable customer
+      # Those three need a real page read, not a URL probe. A helper that
+      # answers "yes" for everything is worse than not having one.
+      for url in \
+        "https://job-boards.greenhouse.io/$slug" \
+        "https://boards.greenhouse.io/$slug" \
+        "https://jobs.lever.co/$slug" \
+        "https://$slug.breezy.hr"
+      do
+        body="$(curl -sL -m 15 "$url" 2>/dev/null)"
+        [ -n "$body" ] || continue
+        title="$(printf '%s' "$body" | tr '\n' ' ' | sed -n 's/.*<title[^>]*>\([^<]*\)<\/title>.*/\1/Ip' | sed 's/^ *//; s/ *$//' | cut -c1-58)"
+        bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
+        # A not-found page names itself in the title far more reliably than in
+        # the status code. Anchored to title text only -- a real board can
+        # easily contain the string "404" somewhere in its markup.
+        case "$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')" in
+          *"not found"*|*404*|*"no longer"*|*"doesn't exist"*|*"does not exist"*|*"page not"*)
+            printf '  %-46s SOFT-404  %s\n' "$url" "$title"; continue ;;
+        esac
+        printf '%-22s %-46s %7s  %s\n' "$slug" "$url" "$bytes" "${title:-<no title>}"
+        hit=1
+      done
+      [ "$hit" = "1" ] || printf '%-22s no candidate board found\n' "$slug"
+    done
     ;;
 
   waive)

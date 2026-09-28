@@ -80,6 +80,56 @@ test('extracts all fixture cards correctly', async () => {
   assert.equal(json.records[0].href, '/job/1');
 });
 
+test('a result far larger than the pipe buffer arrives intact', async () => {
+  // engine.js used to `console.log(json)` and then `process.exit()`. Writes to a
+  // PIPE are asynchronous and process.exit does not wait for them, so the output
+  // was cut at the pipe buffer. Observed on a 321-posting Lever board: the JSON
+  // ended mid-string at byte 65532 and verify.js reported "Unterminated string
+  // in JSON", which reads as a broken recipe rather than a lost write.
+  //
+  // Both conditions are needed, which is why it survived: writes to a TTY are
+  // synchronous, so it never happened interactively, and a small result fits the
+  // buffer. It took a big result AND a pipe -- `scrape.sh <big board> | jq`, or
+  // any CLI here reading a child's stdout.
+  //
+  // This test reads the child's stdout through a pipe, which is the condition,
+  // and uses enough cards to clear 64KB comfortably.
+  // Sized from a measurement, not a guess: these fixture records are ~50 bytes
+  // each, so 600 cards produced only 30KB and the assertion below correctly
+  // refused to call that a test of anything.
+  const BIG = 2000;
+  const big = await startFixtureServer(BIG);
+  const name = 'efficiency_bigpipe_test';
+  const id = upsertSite(db, {
+    hostname: '127.0.0.1',
+    page_type: 'listing',
+    recipe_name: name,
+    status: 'working',
+    nav_method: 'url_param',
+    nav_template: big.url,
+    card_anchor_text: 'View job',
+    card_min_text_len: 20,
+    ready_timeout_ms: 20000,
+    notes: 'Test-only fixture recipe for test/efficiency.test.js. Safe to delete if found stray.',
+  });
+  insertField(db, id, { field_name: 'title', extract_kind: 'positional_segment', segment_index: 1 }, 0);
+  insertField(db, id, { field_name: 'href', extract_kind: 'anchor_attribute', attribute_name: 'href' }, 1);
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ['engine.js', `127.0.0.1#listing:${name}`, '{"noSession":true}'],
+      { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+    );
+    assert.ok(stdout.length > 65536, `the payload must exceed the pipe buffer to test anything (got ${stdout.length})`);
+    const json = JSON.parse(stdout); // threw "Unterminated string in JSON" before the fix
+    assert.equal(json.count, BIG, 'every record survived the write');
+    assert.equal(json.records.length, BIG);
+  } finally {
+    deleteSite(db, id);
+    big.server.close();
+  }
+});
+
 test('records are emitted once, under the generic key only', async () => {
   // The rename's actual guarantee. `jobs` was domain vocabulary in a generic
   // contract, and the fix has to be a RENAME rather than an addition: emitting

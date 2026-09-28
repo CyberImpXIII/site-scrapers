@@ -81,6 +81,28 @@ function toStr(val) {
 
 // For ui_steps (selectors, typed text, literal goto URLs): substitute raw.
 // Encoding typed-into-a-form text or a CSS selector would be wrong.
+// Print the result, then exit only once stdout has actually flushed.
+//
+// `console.log(x); process.exit(code)` TRUNCATES when stdout is a pipe. Writes
+// to a pipe are asynchronous, process.exit does not wait for them, and the
+// write is cut at the pipe buffer. Observed on a 321-posting Lever board: the
+// JSON ended mid-string at byte 65532 and every reader got "Unterminated string
+// in JSON", which reads as a broken recipe rather than a lost write.
+//
+// It hid for so long because both conditions are needed. Writes to a TTY are
+// synchronous, so it never happens interactively, and a small result fits the
+// buffer, so it never happens on a normal-sized board. It needs a large result
+// AND a pipe — `./scrape.sh <big board> | jq`, or verify.js/audit.js reading a
+// child's stdout, which is exactly where the data matters most.
+//
+// The callback form is used rather than setting process.exitCode, because the
+// browser may still hold handles that would keep the event loop alive and turn
+// a clean exit into a hang.
+function emitAndExit(payload, code) {
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  process.stdout.write(`${text}\n`, () => process.exit(code));
+}
+
 function substitute(template, params) {
   if (typeof template !== 'string') return template;
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
@@ -748,8 +770,7 @@ async function main() {
   const includeRaw = rest.includes('--raw');
 
   if (!hostnameArg) {
-    console.log(JSON.stringify({ success: false, documented: false, error: 'Usage: node engine.js <hostname> \'<json params>\'' }));
-    process.exit(1);
+    emitAndExit(JSON.stringify({ success: false, documented: false, error: 'Usage: node engine.js <hostname> \'<json params>\'' }), 1);
   }
 
   let hostnamePart = hostnameArg;
@@ -765,8 +786,7 @@ async function main() {
     try {
       params = JSON.parse(paramsArg);
     } catch (e) {
-      console.log(JSON.stringify({ success: false, documented: false, error: `Bad JSON in params: ${e.message}` }));
-      process.exit(1);
+      emitAndExit(JSON.stringify({ success: false, documented: false, error: `Bad JSON in params: ${e.message}` }), 1);
     }
   }
 
@@ -774,12 +794,11 @@ async function main() {
   const site = getSite(db, hostname, pageType, recipeName);
 
   if (!site) {
-    console.log(JSON.stringify({
+    emitAndExit({
       success: false,
       documented: false,
       error: `No site documented for "${hostname}#${pageType}:${recipeName}". Fall back to interactive browser tools, then run register.js.`,
-    }));
-    process.exit(1);
+    }, 1);
   }
 
   // Refusing to run a recipe that isn't blessed is the useful default: it
@@ -789,7 +808,7 @@ async function main() {
   // status. `allowUnverified` is that escape hatch, and it is how verify.js
   // exercises a candidate. Deliberate per call, never a recipe setting.
   if (site.status !== 'working' && !params.allowUnverified) {
-    console.log(JSON.stringify({
+    emitAndExit({
       success: false,
       documented: true,
       status: site.status,
@@ -807,8 +826,7 @@ async function main() {
               'produced this state. Surface it to the user and move on to other work.'
             : `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
               'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
-    }));
-    process.exit(1);
+    }, 1);
   }
 
   const fields = getFields(db, site.id);
@@ -840,8 +858,7 @@ async function main() {
     try {
       expandedSteps = expandSteps(db, JSON.parse(site.nav_template), site.hostname, new Set([refKey(siteMeta)]));
     } catch (e) {
-      console.log(JSON.stringify({ success: false, documented: true, error: e.message }));
-      process.exit(1);
+      emitAndExit(JSON.stringify({ success: false, documented: true, error: e.message }), 1);
     }
   }
   // pagination_method 'steps': pagination_config is a ui_steps array (usually
@@ -852,8 +869,7 @@ async function main() {
     try {
       paginationSteps = expandSteps(db, JSON.parse(site.pagination_config), site.hostname, new Set([refKey(siteMeta)]));
     } catch (e) {
-      console.log(JSON.stringify({ success: false, documented: true, error: `pagination_config: ${e.message}` }));
-      process.exit(1);
+      emitAndExit(JSON.stringify({ success: false, documented: true, error: `pagination_config: ${e.message}` }), 1);
     }
   }
   // `attended` forces a visible window and gives the person time to clear
@@ -940,8 +956,7 @@ async function main() {
       }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
     } catch (e) {
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
-      console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }));
-      process.exit(1);
+      emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
     }
 
     const success = !articleOutcome.timedOut && articleOutcome.blobLen > 0;
@@ -986,8 +1001,7 @@ async function main() {
       outputChars: outputJson.length,
     });
 
-    console.log(outputJson);
-    process.exit(success ? 0 : 1);
+    emitAndExit(outputJson, success ? 0 : 1);
   }
 
   let outcome;
@@ -1087,8 +1101,7 @@ async function main() {
     }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
-    console.log(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }));
-    process.exit(1);
+    emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
   }
 
   const success = !outcome.timedOut && outcome.jobs.length > 0;
@@ -1172,8 +1185,7 @@ async function main() {
     outputChars: outputJson.length,
   });
 
-  console.log(outputJson);
-  process.exit(success ? 0 : 1);
+  emitAndExit(outputJson, success ? 0 : 1);
 }
 
 // Only run when invoked as a CLI. Requiring this file used to execute the
