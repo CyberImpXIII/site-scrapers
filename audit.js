@@ -186,6 +186,18 @@ function auditUnits(db) {
     const row = generics.find(g => g.name === b.name);
     if (!row) {
       add('error', `generic:${b.name}`, 'defined in lib/builtinActions.js but absent from the DB', 'seeding did not take');
+    } else if (row.steps !== JSON.stringify(b.steps)) {
+      // The code file is the source of truth, so a difference means the DB is
+      // not running what the file says. Almost always: seeding REFUSED the
+      // edit because it would not validate, and the previous version is still
+      // in use — a rejection that would otherwise only appear as a warning on
+      // one run and then be lost.
+      add(
+        'error',
+        `generic:${b.name}`,
+        'lib/builtinActions.js differs from the seeded row',
+        'the edit was most likely rejected by seeding as invalid, so the DB is still running the previous version — run `node -e "require(\'./db\').openDb()"` and read the warning'
+      );
     } else if (row.source !== 'builtin') {
       add('error', `generic:${b.name}`, `is in the DB with source="${row.source}"`, 're-seeding will not update it, so edits to the code file are silently ignored');
     }

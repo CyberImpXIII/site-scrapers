@@ -291,6 +291,42 @@ function seedBuiltinActions(db) {
   });
   if (stale.length === 0) return;
 
+  // Editing lib/builtinActions.js is the one write path the gate cannot cover:
+  // a text editor needs no authorization, and the next openDb() would seed
+  // whatever was written. So the CHECK moves here, to the point where code
+  // becomes data. A builtin that would not survive validation is not written,
+  // which means a broken edit cannot reach the DB and cannot reach a run.
+  //
+  // Rejected rather than thrown: a bad builtin must not take down every
+  // command in the project, including the ones you would use to diagnose it.
+  // The previous good row stays in place, and `audit.js units` reports the
+  // mismatch between the code file and the DB, so the rejection is visible
+  // rather than silent.
+  const rejected = [];
+  const writable = stale.filter(a => {
+    let problems = [];
+    try {
+      problems = require('./lib/gate').validateGenericAction(db, a.name, a.steps);
+    } catch {
+      return true; // gate unavailable (partial copy in a test) — do not block seeding
+    }
+    if (problems.length) {
+      rejected.push({ name: a.name, problems });
+      return false;
+    }
+    return true;
+  });
+  if (rejected.length) {
+    for (const r of rejected) {
+      process.emitWarning(
+        `builtin generic action "${r.name}" was NOT seeded — it would not validate: ${r.problems.join('; ')}. ` +
+          'Fix lib/builtinActions.js; the previously seeded version is still in use.',
+        'BuiltinActionRejected'
+      );
+    }
+  }
+  if (writable.length === 0) return;
+
   const now = new Date().toISOString();
   const upsert = db.prepare(
     `INSERT INTO generic_actions (name, description, action_type, nav_params_schema, source, steps, created_at, updated_at)
@@ -303,7 +339,7 @@ function seedBuiltinActions(db) {
        steps=excluded.steps,
        updated_at=excluded.updated_at`
   );
-  for (const a of stale) {
+  for (const a of writable) {
     upsert.run(a.name, a.description ?? null, a.action_type ?? null, a.nav_params_schema ?? null, JSON.stringify(a.steps), now, now);
   }
 }

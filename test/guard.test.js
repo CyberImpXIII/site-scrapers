@@ -334,3 +334,54 @@ test('every builtin action passes its own validation', () => {
     assert.deepEqual(validateGenericAction(db, g.name, row.steps), [], `${g.name} should be clean`);
   }
 });
+
+// --- The library's source file is validated, not just the seeded rows ------
+// Editing lib/builtinActions.js is the one write path the gate cannot cover: a
+// text editor needs no authorization. Seeding refuses a broken builtin at run
+// time, but that is a warning on one run. This catches it at commit time.
+
+test('every builtin in the SOURCE FILE validates, before it is ever seeded', () => {
+  const { validateGenericAction } = require('../lib/gate');
+  const { BUILTIN_ACTIONS } = require('../lib/builtinActions');
+  const { openDb } = require('../db');
+  const db = openDb();
+  for (const a of BUILTIN_ACTIONS) {
+    assert.deepEqual(
+      validateGenericAction(db, a.name, a.steps),
+      [],
+      `${a.name} in lib/builtinActions.js would be REFUSED by seeding — the DB would silently keep the previous version`
+    );
+  }
+});
+
+test('the seeded rows match the source file', () => {
+  // If these diverge, the DB is not running what the file says, which is the
+  // symptom of a rejected edit.
+  const { BUILTIN_ACTIONS } = require('../lib/builtinActions');
+  const { openDb, getGenericAction } = require('../db');
+  const db = openDb();
+  for (const a of BUILTIN_ACTIONS) {
+    const row = getGenericAction(db, a.name);
+    assert.ok(row, `${a.name} should be seeded`);
+    assert.equal(row.steps, JSON.stringify(a.steps), `${a.name}: the DB is running different steps from the source file`);
+  }
+});
+
+test('a builtin declaring a parameter must actually use it', () => {
+  // A documented parameter no step reads is a promise to callers that nothing
+  // honours — found for real on probe_card_candidates, which documented
+  // min_group while hardcoding 3.
+  const { BUILTIN_ACTIONS } = require('../lib/builtinActions');
+  for (const a of BUILTIN_ACTIONS) {
+    let schema = {};
+    try {
+      schema = JSON.parse(a.nav_params_schema || '{}');
+    } catch {
+      assert.fail(`${a.name}: nav_params_schema is not valid JSON`);
+    }
+    const body = JSON.stringify(a.steps);
+    for (const param of Object.keys(schema)) {
+      assert.ok(body.includes(`{{${param}}}`), `${a.name} documents "${param}" but no step references {{${param}}}`);
+    }
+  }
+});
