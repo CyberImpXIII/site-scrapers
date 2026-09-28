@@ -101,8 +101,8 @@ if [ "$runs" = true ] && [ "$status" = "blocked-attn" ] \
     echo "determined without them. Retrying is what produced this state."
     echo
     echo "Read what they need to supply:"
-    echo "  node query.js site ${target}      # the notes say what is needed"
-    echo "  ./dev.sh blocked                  # everything waiting on the user"
+    echo "  node query.js site ${target}   # the notes say what is needed"
+    echo "  ./dev.sh blocked   # everything waiting on the user"
     echo
     echo "The sanctioned next step, which this hook allows, is an ATTENDED run —"
     echo "it opens a real window so a person can clear whatever is in the way:"
