@@ -95,6 +95,26 @@ field's value. Output caps had the same shape: enforced only inside
 `page.evaluate`, so they depended on that code being reached. Both are now
 enforced on the Node side from an explicit allowlist.
 
+## A rule you have read is not a constraint
+
+`CLAUDE.md` rule 4 has said "never write an inline script blob" for a long time.
+The session that wrote that rule then hand-authored the same ~100-character `jq`
+filter **four times in a row** while migrating four recipes, and chained
+`test && audit && git status` by hand three times — a sequence the same file
+tells you to run before every commit.
+
+Neither was ignorance; both were read and agreed with. Repetition just does not
+feel expensive in the moment, and each individual instance looks too small to
+stop for. That is the whole failure mode.
+
+Rule 4 is now enforced by a `PreToolUse` hook rather than stated, and the
+repeated sequences are `dev.sh check` and `dev.sh inside`. The general lesson is
+the one this project keeps relearning: **make the wrong thing impossible, not
+discouraged** — the same reasoning as the write guard, the validation gate and
+the read-only generated export. If you catch yourself typing something for the
+second time, that is the signal, and the destination is already decided (a
+`dev.sh` subcommand, a CLI, or a script file).
+
 ## Things that are deliberately NOT done
 
 Each of these was considered and rejected for a stated reason. Don't quietly

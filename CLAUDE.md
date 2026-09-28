@@ -14,6 +14,7 @@ start that kind of work, not preemptively.**
 | logins, sessions, or a step a person must do | `docs/handoffs.md` |
 | what has already gone wrong on a site | `node failures.js match <hostname>` |
 | **anything, if you have time to read one thing** | `docs/lessons.md` — mistakes already paid for once, and decisions deliberately NOT taken |
+| starting fresh and wondering what to pick up | `TODO.md` — what is not done yet, and what is waiting on Jacob |
 
 Recipe types (`page_type`): `listing` (repeated cards, the default), `article`
 (one detail page), `action` (a parameterised automation). Address one as
@@ -55,9 +56,28 @@ verify.
 
 `./dev.sh blocked` lists what is waiting on the user.
 
-**4. Never write an inline script blob.** No `node -e`, no `python3 -c`, no
-heredocs. Use `jq` for JSON, the **Edit** tool for files, the CLIs for their own
-data. If nothing fits, write the helper first and call it.
+**4. Never write an inline script blob. This one is ENFORCED, not advised.**
+A `PreToolUse` hook (`.claude/hooks/no-inline-blobs.sh`) blocks `node -e`,
+`python3 -c` and heredocs feeding an interpreter, and warns on a jq program long
+enough to be a script.
+
+It is a hook because it was already a rule and that was not enough: the session
+that wrote this rule then hand-authored the same 100-character jq filter four
+times in a row. A blob costs full tokens on every rewrite, risks a fresh quoting
+bug every time (it has already caused a silent no-op and a mangled commit
+message here), and leaves nothing behind.
+
+**The destination is always one of three, so you never have to invent one:**
+
+| what you are doing | where it goes |
+|---|---|
+| a read or check you will repeat | a `./dev.sh` subcommand |
+| anything touching the DB | the CLIs — never raw SQL |
+| a genuine one-off | a script file, then run the file |
+
+Use `jq` for short JSON filters and the **Edit** tool for files. If a jq
+expression is long enough to need thought, it is a `dev.sh` subcommand you have
+not written yet.
 
 **5. Prove a parameter does something.** A recipe that accepts a param and
 ignores it answers the wrong question silently — worse than failing. Give every
@@ -86,18 +106,25 @@ for read-only lookups.
 ```
 query.js    sites | site | runs | versions | diff | restore | promote | health
             generic-actions | expand | sessions | clear-session | debug-captures
-lab.js      probe | sel | peek | raw | set | params | history | adopt-history | new
-            (probe/sel take --wait=MS; the 5s default is too short for slow SPAs)
+lab.js      probe | sel | inside | peek | raw | set | params | history | adopt-history | new
+            (probe/sel/inside take --wait=MS; the 5s default is too short for slow SPAs)
 verify.js   <target> '<params>' [--dry] [--attended]
 audit.js    units | inline | repeats | literals | hardcoded | provenance  (offline)
             params | working | fixed-params                              (LIVE, minutes)
 failures.js match | record | common | list | types | signatures | probe-knowledge
-dev.sh      test [n] | run | verify | health | blocked | snap | new | clean
+dev.sh      check | test [n] | audit | run | verify | inside | apply
+            health | blocked | snap | new | clean
 init.js     first-run setup after a clone
 ```
 
-**Before committing:** `./dev.sh test` (~40s) and `node audit.js units`
-(instant). An `error` from `units` means something is already broken.
+`dev.sh` is the **human-readable layer** over those CLIs — they emit JSON by
+contract (`test/cli.test.js` calls it "the jq contract"), `dev.sh` emits lines.
+Reach for `dev.sh inside` rather than piping `lab.js inside` through jq, and if
+the summary you want is not there, add it rather than filtering inline.
+
+**Before committing: `./dev.sh check`** — suite, offline audit and working tree
+in one command, exiting non-zero if the suite fails. An `error` from the audit
+means something is already broken.
 
 ---
 
