@@ -50,6 +50,19 @@ type the engine lacks, no unregistered probe kind. It then runs the test suites
 covering those actions, found by searching the test files for their names rather
 than from a map that would drift.
 
+**Editing a generic action is validated in BOTH directions**, because an action
+is library code: changing it changes everything that references it.
+`dismiss_overlay` alone is depended on by another action and seven recipes.
+Registering or editing one through `register.js` checks the SUBACTIONS it pulls
+in (each resolves, expands, and is runnable; a self-reference is caught before
+it can expand forever) and the DEPENDENTS it could break — found transitively,
+so a recipe that reaches the changed action only through another action still
+counts. It runs the suites covering all of them, and rolls the action back to
+its previous row if the change introduces a finding. A builtin cannot be
+registered over at all, since the next open would silently revert it; to change
+one, edit `lib/builtinActions.js`, which is a code change and runs the full
+suite.
+
 `register.js` applies the same check before writing anything, and REFUSES a new
 recipe whose referenced action is itself broken. A reference to an action that
 does not exist yet stays a warning — building bottom-up is legitimate — but a

@@ -396,21 +396,86 @@ function registerGenericAction(db, def) {
   // checked yet (checkUnresolvedRefs skips those, doesn't flag them).
   const unresolvedReferences = checkUnresolvedRefs(db, parsedSteps, null);
 
-  const genericActionId = upsertGenericAction(db, {
-    name: def.name,
-    description: def.description,
-    action_type: def.action_type,
-    nav_params_schema: def.nav_params_schema,
-    steps: stepsJson,
+  // A generic action is library code: a change to it is a change to every
+  // recipe and action that references it. dismiss_overlay alone is depended on
+  // by another action and seven recipes, so the blast radius is validated in
+  // both directions -- the SUBACTIONS it pulls in, and the DEPENDENTS it would
+  // break. The action is a single row with no version history, so the gate is
+  // given an explicit snapshot/restore pair to roll back with.
+  const { guardedChange, validateGenericAction, dependentsOf, testFilesFor } = require('./lib/gate');
+  const existingRow = getGenericAction(db, def.name);
+  const dependents = dependentsOf(db, def.name);
+
+  let genericActionId;
+  const gated = guardedChange(db, {
+    target: `generic:${def.name}`,
+    summary: def.note || `register generic action ${def.name}`,
+    scope: 'generic_action',
+    snapshot: () => (existingRow ? { ...existingRow } : { absent: true, name: def.name }),
+    restore: snap => {
+      if (snap.absent) {
+        db.prepare('DELETE FROM generic_actions WHERE name = ?').run(snap.name);
+      } else {
+        upsertGenericAction(db, {
+          name: snap.name,
+          description: snap.description,
+          action_type: snap.action_type,
+          nav_params_schema: snap.nav_params_schema,
+          steps: snap.steps,
+        });
+      }
+    },
+    // The action itself plus everything downstream of it: a change that leaves
+    // this action valid but breaks a dependent is still a broken change.
+    extraFindings: () => {
+      const row = getGenericAction(db, def.name);
+      const out = row ? validateGenericAction(db, def.name, row.steps) : [];
+      for (const name of dependents.actions) {
+        const dep = getGenericAction(db, name);
+        if (dep) out.push(...validateGenericAction(db, name, dep.steps));
+      }
+      return out;
+    },
+    extraTestFiles: () =>
+      testFilesFor({ generic: [def.name, ...dependents.actions], site: dependents.recipes }),
+    mutate: () => {
+      genericActionId = upsertGenericAction(db, {
+        name: def.name,
+        description: def.description,
+        action_type: def.action_type,
+        nav_params_schema: def.nav_params_schema,
+        steps: stepsJson,
+      });
+    },
   });
 
   console.log(JSON.stringify({
-    success: true,
+    success: gated.ok,
     kind: 'generic_action',
     name: def.name,
     genericActionId,
     unresolvedReferences,
+    subactions: (() => {
+      try {
+        return require('./lib/gate').referencedActions(JSON.parse(stepsJson)).generic;
+      } catch {
+        return [];
+      }
+    })(),
+    dependents,
+    gate: {
+      findingsBefore: gated.findingsBefore,
+      findingsAfter: gated.findingsAfter,
+      introducedFindings: gated.introducedFindings,
+      tests: gated.actionTests,
+      rolledBack: gated.rolledBack,
+      ...(gated.rollbackNote ? { rollbackNote: gated.rollbackNote } : {}),
+    },
+    ...(gated.ok
+      ? {}
+      : { error: 'this change introduced the findings above and was rolled back — fix them, then retry' }),
   }));
+  if (!gated.ok) process.exit(1);
 }
 
 function main() {

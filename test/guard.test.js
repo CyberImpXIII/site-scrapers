@@ -264,3 +264,73 @@ test('with no references, only the machinery suites are selected', () => {
   const files = testFilesFor({ generic: [], site: [] }).map(f => f.split('/').pop()).sort();
   assert.deepEqual(files, ['builtins.test.js', 'compose.test.js']);
 });
+
+// --- Generic actions are validated in both directions ---------------------
+// A generic action is library code: changing it changes every recipe and
+// action that references it. dismiss_overlay alone is depended on by another
+// action and seven recipes. Validating only what an action PULLS IN checks the
+// safe direction and misses the one where damage spreads.
+
+test('dependents are found transitively, through other actions and into recipes', () => {
+  const { dependentsOf } = require('../lib/gate');
+  const { openDb } = require('../db');
+  const deps = dependentsOf(openDb(), 'dismiss_overlay');
+  assert.ok(deps.actions.includes('open_apply_form'), 'an action referencing it is a dependent');
+  assert.ok(deps.recipes.length > 0, 'so is every recipe that reaches it');
+  assert.ok(
+    deps.recipes.some(r => r.includes('#action:describe_application_form')),
+    'including recipes that reach it only THROUGH open_apply_form'
+  );
+});
+
+test('an action nothing references has no dependents', () => {
+  const { dependentsOf } = require('../lib/gate');
+  const { openDb } = require('../db');
+  assert.deepEqual(dependentsOf(openDb(), 'no_such_action_exists'), { actions: [], recipes: [] });
+});
+
+test('a generic action is validated as a unit: its own steps and its subactions', () => {
+  const { validateGenericAction } = require('../lib/gate');
+  const { openDb } = require('../db');
+  const db = openDb();
+
+  assert.deepEqual(validateGenericAction(db, 'candidate', [{ action: 'wait', ms: 10 }]), [],
+    'a well-formed action produces no findings');
+
+  const badStep = validateGenericAction(db, 'candidate', [{ action: 'no_such_step' }]);
+  assert.match(badStep.join(' '), /not implemented by engine\.js/);
+
+  const badProbe = validateGenericAction(db, 'candidate', [{ action: 'probe', kind: 'no_such_kind' }]);
+  assert.match(badProbe.join(' '), /probe kind "no_such_kind" is not registered/);
+
+  const badSub = validateGenericAction(db, 'candidate', [{ action: 'run_generic_action', ref: 'nope_not_real' }]);
+  assert.match(badSub.join(' '), /referenced but does not exist/);
+});
+
+test('a self-referencing action is caught before it can expand forever', () => {
+  const { validateGenericAction } = require('../lib/gate');
+  const { openDb } = require('../db');
+  const findings = validateGenericAction(openDb(), 'loopy', [{ action: 'run_generic_action', ref: 'loopy' }]);
+  assert.match(findings.join(' '), /references itself/);
+});
+
+test('a nested subaction inside a repeat is validated too', () => {
+  const { validateGenericAction } = require('../lib/gate');
+  const { openDb } = require('../db');
+  const findings = validateGenericAction(openDb(), 'candidate', [
+    { action: 'repeat', times: 1, steps: [{ action: 'probe', kind: 'still_not_a_kind' }] },
+  ]);
+  assert.match(findings.join(' '), /still_not_a_kind/, 'depth must not hide a broken step');
+});
+
+test('every builtin action passes its own validation', () => {
+  // If the shipped library does not pass, every gated change inherits its
+  // findings and the gate becomes noise people learn to ignore.
+  const { validateGenericAction } = require('../lib/gate');
+  const { openDb, listGenericActions, getGenericAction } = require('../db');
+  const db = openDb();
+  for (const g of listGenericActions(db)) {
+    const row = getGenericAction(db, g.name);
+    assert.deepEqual(validateGenericAction(db, g.name, row.steps), [], `${g.name} should be clean`);
+  }
+});
