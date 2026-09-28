@@ -41,6 +41,21 @@ const { expandSteps, refKey, applyWith } = require('./lib/composeActions');
 const MIN_SEQUENCE = 2;   // a single shared step is not worth extracting
 const MIN_RECIPES = 2;    // "reused" means more than one caller
 
+// Every sweep here is "list the recipes, then load each one", and the two steps
+// are not atomic. A live sweep runs for MINUTES, so a recipe can be deleted or
+// renamed out from under it — after which getSite returns undefined and the
+// whole sweep dies on `site.hostname`, discarding every result gathered so far.
+// Yielding only rows that still exist makes that structural rather than six
+// separate places remembering to check.
+function* eachRecipe(db, filter = () => true) {
+  for (const s of listSites(db)) {
+    if (!filter(s)) continue;
+    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
+    if (!site) continue; // deleted or renamed mid-sweep
+    yield { s, site, target: `${site.hostname}#${site.page_type}:${site.recipe_name}` };
+  }
+}
+
 function out(o) {
   console.log(JSON.stringify(o, null, 2));
 }
@@ -243,9 +258,7 @@ function auditUnits(db) {
   }
 
   // --- Mistakes this project actually made, now checkable offline ---------
-  for (const s of listSites(db)) {
-    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
-    const unit = `${s.hostname}#${s.page_type}:${s.recipe_name}`;
+  for (const { site, target: unit } of eachRecipe(db)) {
     const notes = String(site.notes || '');
 
     // A descendant :has() also matches every ANCESTOR wrapper. It over-matched
@@ -340,9 +353,7 @@ function auditProvenance(db) {
   }
 
   const findings = [];
-  for (const s of listSites(db)) {
-    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
-    const target = `${s.hostname}#${s.page_type}:${s.recipe_name}`;
+  for (const { site, target } of eachRecipe(db)) {
     const versions = db
       .prepare('SELECT major, minor, created_at, note FROM recipe_versions WHERE site_id = ? AND created_at > ? ORDER BY major, minor')
       .all(site.id, first);
@@ -405,8 +416,7 @@ function unfillablePlaceholders(navTemplate, probeSet) {
 
 function recipesWithSteps(db) {
   const rows = [];
-  for (const s of listSites(db)) {
-    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
+  for (const { site, target: key } of eachRecipe(db)) {
     if (site.nav_method !== 'ui_steps' || !site.nav_template) continue;
     let raw;
     try {
@@ -414,7 +424,6 @@ function recipesWithSteps(db) {
     } catch {
       continue;
     }
-    const key = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
     let expanded = raw;
     try {
       // refKey takes camelCase, but a DB row is snake_case — passing the row
@@ -588,9 +597,7 @@ function defaultRunner() {
 async function auditParameters(db, { run = defaultRunner() } = {}) {
 
   const findings = [];
-  for (const s of listSites(db)) {
-    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
-    const target = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
+  for (const { site, target } of eachRecipe(db)) {
     let schema = {};
     try {
       schema = JSON.parse(site.nav_params_schema || '{}');
@@ -660,12 +667,8 @@ async function auditParameters(db, { run = defaultRunner() } = {}) {
 async function auditWorking(db, { run = defaultRunner() } = {}) {
 
   const findings = [];
-  for (const s of listSites(db)) {
-    if (s.status !== 'working') continue;
-    if (/\.internal$/.test(s.hostname)) continue; // tool scaffolding, not a recipe
-    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
-    const target = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
-
+  // `.internal` hostnames are tool scaffolding, not recipes.
+  for (const { site, target } of eachRecipe(db, s => s.status === 'working' && !/\.internal$/.test(s.hostname))) {
     let schema = {};
     try {
       schema = JSON.parse(site.nav_params_schema || '{}');
@@ -755,9 +758,7 @@ async function auditFixedParams(db, { run = defaultRunner() } = {}) {
 
 
   const findings = [];
-  for (const s of listSites(db)) {
-    if (!['working', 'needs-review', 'broken'].includes(s.status)) continue;
-    const site = getSite(db, s.hostname, s.page_type, s.recipe_name);
+  for (const { site, target } of eachRecipe(db, s => ['working', 'needs-review', 'broken'].includes(s.status))) {
     if (site.nav_method !== 'url_param') continue;
     const fixed = fixedQueryParams(site.nav_template);
     if (!fixed.length) continue;
@@ -771,7 +772,6 @@ async function auditFixedParams(db, { run = defaultRunner() } = {}) {
     const params = (Array.isArray(probes) && probes[0]) || {};
     if (unfillablePlaceholders(site.nav_template, params).length) continue; // cannot exercise it
 
-    const target = `${site.hostname}#${site.page_type}:${site.recipe_name}`;
     const baseline = await countFor(target, params);
     if (baseline === null) continue;
 
