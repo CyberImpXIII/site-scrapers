@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS site_fields (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER NOT NULL REFERENCES sites(id),
   field_name TEXT NOT NULL,
-  extract_kind TEXT NOT NULL,        -- 'positional_segment' | 'regex_anywhere' | 'anchor_attribute' | 'ancestor_first_line' (listing) | 'title_regex' | 'full_blob'
+  extract_kind TEXT NOT NULL,        -- 'positional_segment' | 'regex_anywhere' | 'anchor_attribute' | 'child_text' | 'ancestor_first_line' (listing) | 'title_regex' | 'full_blob'
   segment_index INTEGER,             -- for positional_segment: index into blob.split(' | ')
   regex_pattern TEXT,                -- for regex_anywhere: JS regex source; capture group 1 used if present, else whole match
   attribute_name TEXT,               -- for anchor_attribute: e.g. 'href'

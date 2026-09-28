@@ -599,6 +599,33 @@ async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen
               if (found) attrEl = found;
             }
             record[f.field_name] = attrEl.getAttribute(f.attribute_name);
+          } else if (f.extract_kind === 'child_text') {
+            // The text of a named element INSIDE the card. regex_pattern is a
+            // CSS selector, same repurposing as anchor_attribute, and
+            // segment_index optionally picks the nth match (default 0).
+            //
+            // This exists because positional_segment assumes every card has the
+            // same shape, and cards routinely do not: an optional company
+            // rating, a sponsored badge, a missing location. Every field after
+            // the variable part shifts by one, silently, and the record looks
+            // plausible while being wrong — a job's location reported as "2 Days
+            // Ago", or a salary string reported as a location. That has happened
+            // on four sites (builtin.com, nodesk.co, wellfound.com,
+            // ziprecruiter.com), and a regex workaround only ever patched the
+            // symptom on one field at a time.
+            //
+            // Addressing an element directly is immune to the whole class: a
+            // missing element yields null rather than shifting its neighbours.
+            try {
+              const matches = card.querySelectorAll(f.regex_pattern);
+              const idx = f.segment_index == null ? 0 : f.segment_index < 0 ? matches.length + f.segment_index : f.segment_index;
+              const el = matches[idx];
+              record[f.field_name] = el ? el.innerText.trim().replace(/\s+/g, ' ') || null : null;
+            } catch {
+              // A malformed selector yields null like any other miss, rather
+              // than taking down every remaining field on the card.
+              record[f.field_name] = null;
+            }
           } else if (f.extract_kind === 'ancestor_first_line') {
             // For sites that group several job cards under one header (e.g.
             // wellfound.com lists each company once, with its jobs beneath):

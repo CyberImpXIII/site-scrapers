@@ -82,6 +82,21 @@
 // first <a> is then used as the anchor for anchor_attribute fields, e.g.
 // "card_selector": "[data-testid='job-card']".
 //
+// child_text (listing only): the text of a named element INSIDE the card.
+//   regex_pattern is a CSS selector; segment_index optionally picks the nth
+//   match (default 0, negative counts from the end).
+// {"field_name":"title","extract_kind":"child_text","regex_pattern":"h2"}
+//
+//   PREFER THIS OVER positional_segment whenever a card's shape varies.
+//   positional_segment splits the card's text on " | " and takes the Nth piece,
+//   which assumes every card has the same parts. Cards routinely do not: an
+//   optional company rating, a sponsored badge, a missing location. Everything
+//   after the variable part shifts by one, silently, and the record stays
+//   plausible while being wrong — a location reported as "2 Days Ago", or a
+//   salary string reported as a location. That happened on four sites before
+//   this kind existed. Addressing the element directly is immune: a missing
+//   element yields null instead of shifting its neighbours.
+//
 // ancestor_first_line (listing only): for layouts that group several cards
 // under one header (e.g. a company name with its jobs listed beneath it).
 // regex_pattern is a CSS selector for the group container; the value is the
