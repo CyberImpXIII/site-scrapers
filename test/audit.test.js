@@ -190,3 +190,60 @@ test('a ui_steps template is scanned the same way', () => {
   assert.deepEqual(unfillablePlaceholders(steps, null), ['search']);
   assert.deepEqual(unfillablePlaceholders(steps, { search: 'qa' }), []);
 });
+
+// --- fixedQueryParams / templateWithout ------------------------------------
+// The audit for hardcoded query parameters that suppress results. usajobs.gov
+// carried rmi=true, which returned 0 cards where removing it returned 25 — and
+// it survived a full investigation that ruled out selectors, walls and
+// rendering, because a suppressing parameter is invisible to every other
+// check. It is not a parameter, so audit.js params ignores it.
+
+const { fixedQueryParams, templateWithout } = require('../audit');
+
+test('a placeholder value is a parameter, not a hardcoded one', () => {
+  assert.deepEqual(fixedQueryParams('https://x.test/s?k={{keyword}}'), [],
+    'k={{keyword}} is supplied by the caller — nothing hardcoded to blame');
+});
+
+test('a literal value is reported as hardcoded', () => {
+  assert.deepEqual(
+    fixedQueryParams('https://www.usajobs.gov/search/results/?k={{keyword}}&rmi=true'),
+    [{ key: 'rmi', value: 'true' }],
+    'this is the exact parameter that suppressed every usajobs.gov result'
+  );
+});
+
+test('several hardcoded parameters are all reported', () => {
+  assert.deepEqual(
+    fixedQueryParams('https://x.test/s?q={{q}}&remote=1&sort=date'),
+    [{ key: 'remote', value: '1' }, { key: 'sort', value: 'date' }]
+  );
+});
+
+test('a template with no query string has nothing to report', () => {
+  assert.deepEqual(fixedQueryParams('https://x.test/role/r/{{role}}'), []);
+  assert.deepEqual(fixedQueryParams(''), []);
+  assert.deepEqual(fixedQueryParams(null), []);
+});
+
+test('a valueless flag is not treated as hardcoded', () => {
+  // "?debug" with no value cannot be A/B tested meaningfully.
+  assert.deepEqual(fixedQueryParams('https://x.test/s?q={{q}}&debug'), []);
+});
+
+test('templateWithout removes exactly one parameter and keeps the rest', () => {
+  const t = 'https://www.usajobs.gov/search/results/?k={{keyword}}&rmi=true';
+  assert.equal(templateWithout(t, 'rmi'), 'https://www.usajobs.gov/search/results/?k={{keyword}}');
+  assert.equal(templateWithout(t, 'k'), 'https://www.usajobs.gov/search/results/?rmi=true');
+});
+
+test('templateWithout drops the "?" when the last parameter goes', () => {
+  assert.equal(templateWithout('https://x.test/s?only=1', 'only'), 'https://x.test/s',
+    'leaving a trailing "?" would change the URL for no reason');
+});
+
+test('templateWithout leaves a template it cannot find the parameter in alone', () => {
+  const t = 'https://x.test/s?q={{q}}';
+  assert.equal(templateWithout(t, 'nope'), t);
+  assert.equal(templateWithout('https://x.test/plain', 'q'), 'https://x.test/plain');
+});

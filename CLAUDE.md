@@ -159,6 +159,7 @@ parameterised generic action it references. Two consequences, both enforceable:
 | `units` | static per-component invariants — offline and instant, run it freely |
 | `params` | **live**: do recipes that declare parameters actually honour them |
 | `working` | **live**: does every recipe claiming `working` actually return records *now* |
+| `fixed-params` | **live**: does a HARDCODED query param in a nav_template suppress results |
 
 `audit.js working` is the check that `status` is telling the truth. `dev.sh
 health` answers the same question from run *history*, which goes stale exactly
@@ -185,6 +186,15 @@ placeholder no schema documents (a caller cannot discover it), or a builtin
 that did not seed — in which case edits to `lib/builtinActions.js` are silently
 ignored. It is offline, so there is no reason not to run it before committing.
 An `error` there means something is already broken and nobody has noticed.
+
+`fixed-params` covers the blind spot between the other two: a value baked into
+a `nav_template` is not a parameter, so `params` ignores it, and a bad one
+fails in a way that looks like anything else. usajobs.gov carried `rmi=true`,
+which returned 0 records where removing it returned 25 — and it survived a
+full investigation that ruled out selectors, walls and rendering before a
+human simply looked at the page and said the search had no results. The audit
+runs each recipe with and without each hardcoded value and flags any whose
+removal unlocks results.
 
 For `action` recipes specifically, prefer keeping them within the small
 `action_types` taxonomy (`node query.js action-types`) rather than inventing
