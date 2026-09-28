@@ -13,6 +13,9 @@
 //   node audit.js repeats        # step sequences shared by 2+ recipes and not yet extracted
 //   node audit.js literals       # the same literal string hard-coded in 2+ recipes
 //   node audit.js hardcoded      # generic actions carrying literals that should be parameters
+//   node audit.js units          # static invariants per component: unimplemented step types,
+//                                # unregistered probe kinds, undocumented or unread parameters,
+//                                # builtins that did not seed. Offline and instant.
 //   node audit.js params         # LIVE: do recipes that declare parameters actually honour them?
 //   node audit.js working        # LIVE: does every recipe claiming "working" actually return records now?
 //
@@ -68,6 +71,128 @@ function literalsOf(step) {
     if (typeof v === 'string' && v.length > 2 && !/^\{\{[^}]*\}\}$/.test(v)) out.push({ field: k, value: v });
   }
   return out;
+}
+
+// Static invariant checks on individual components — the pieces the live
+// audits cannot reach because they are about internal consistency rather than
+// about what a site returns. All offline and instant: no browser, no network.
+//
+// These catch the class of mistake that produces no error and no wrong answer,
+// just a quiet dead end: a probe kind referenced by a generic action but never
+// registered, a step type used in a recipe that the engine does not implement,
+// a parameter documented in a schema that the steps never read, a failure type
+// nothing can ever match.
+function auditUnits(db) {
+  const findings = [];
+  const add = (severity, unit, problem, why) => findings.push({ severity, unit, problem, why });
+
+  const { PROBE_KINDS } = require('./lib/probes');
+  const { BUILTIN_ACTIONS } = require('./lib/builtinActions');
+  const generics = listGenericActions(db).map(g => require('./db').getGenericAction(db, g.name));
+
+  // Step types the engine actually implements, read from its source rather
+  // than duplicated here — a hand-maintained copy would drift and then this
+  // audit would report phantom problems.
+  const engineSrc = require('fs').readFileSync(require('path').join(__dirname, 'engine.js'), 'utf8');
+  // camelCase too: waitForSelector and scroll_bottom are both real step types,
+  // and a lowercase-only pattern reported the former as unimplemented.
+  const implemented = new Set([...engineSrc.matchAll(/case '([A-Za-z_]+)':/g)].map(m => m[1]));
+
+  const allSteps = [];
+  for (const g of generics) {
+    let steps;
+    try {
+      steps = JSON.parse(g.steps);
+    } catch {
+      add('error', `generic:${g.name}`, 'steps are not valid JSON', 'the action can never run');
+      continue;
+    }
+    const walk = list => {
+      for (const s of list) {
+        allSteps.push({ owner: `generic:${g.name}`, step: s, schema: g.nav_params_schema });
+        if (Array.isArray(s.steps)) walk(s.steps);
+      }
+    };
+    walk(steps);
+  }
+  for (const r of recipesWithSteps(db)) {
+    const site = getSite(db, ...r.key.split(/[#:]/));
+    const walk = list => {
+      for (const s of list) {
+        allSteps.push({ owner: r.key, step: s, schema: site?.nav_params_schema });
+        if (Array.isArray(s.steps)) walk(s.steps);
+      }
+    };
+    walk(r.raw);
+  }
+
+  for (const { owner, step } of allSteps) {
+    if (!step.action) {
+      add('error', owner, 'a step has no action', 'the engine will fall through and do nothing');
+      continue;
+    }
+    if (!implemented.has(step.action) && !['run_action', 'run_generic_action'].includes(step.action)) {
+      add('error', owner, `step action "${step.action}" is not implemented by engine.js`, 'it silently does nothing at run time');
+    }
+    if (step.action === 'probe' && step.kind && !PROBE_KINDS[step.kind]) {
+      add(
+        'error',
+        owner,
+        `probe kind "${step.kind}" is not registered`,
+        `runProbe returns an error object instead of a result; known kinds: ${Object.keys(PROBE_KINDS).join(', ')}`
+      );
+    }
+  }
+
+  // A parameter a generic action documents but no step reads is a promise to
+  // callers that nothing honours.
+  for (const g of generics) {
+    let schema = {};
+    try {
+      schema = JSON.parse(g.nav_params_schema || '{}');
+    } catch {
+      add('warn', `generic:${g.name}`, 'nav_params_schema is not valid JSON', 'callers cannot discover its parameters');
+      continue;
+    }
+    const body = g.steps || '';
+    for (const name of Object.keys(schema)) {
+      if (!body.includes(`{{${name}}}`)) {
+        add(
+          'warn',
+          `generic:${g.name}`,
+          `documents parameter "${name}" but no step references {{${name}}}`,
+          'passing it via `with` would have no effect'
+        );
+      }
+    }
+    // And the reverse: a placeholder with no documentation is undiscoverable.
+    for (const m of body.matchAll(/\{\{(\w+)\}\}/g)) {
+      if (!(m[1] in schema)) {
+        add(
+          'warn',
+          `generic:${g.name}`,
+          `uses {{${m[1]}}} but nav_params_schema does not document it`,
+          'a caller has no way to know the parameter exists'
+        );
+      }
+    }
+  }
+
+  // Every builtin must survive the round trip into the DB, or edits to
+  // lib/builtinActions.js silently do not take effect.
+  for (const b of BUILTIN_ACTIONS) {
+    const row = generics.find(g => g.name === b.name);
+    if (!row) {
+      add('error', `generic:${b.name}`, 'defined in lib/builtinActions.js but absent from the DB', 'seeding did not take');
+    } else if (row.source !== 'builtin') {
+      add('error', `generic:${b.name}`, `is in the DB with source="${row.source}"`, 're-seeding will not update it, so edits to the code file are silently ignored');
+    }
+    if (!b.description || b.description.length < 40) {
+      add('warn', `generic:${b.name}`, 'has little or no description', 'the library is only discoverable through these');
+    }
+  }
+
+  return findings;
 }
 
 // Which template placeholders a probe param-set cannot fill. Pure and
@@ -416,6 +541,7 @@ async function main() {
   if (which === 'all' || which === 'inline') report.inlinedGenericActions = findInlineDuplicates(db, recipes);
   if (which === 'all' || which === 'repeats') report.extractableSequences = findRepeatedSequences(recipes);
   if (which === 'all' || which === 'literals') report.literalsSharedAcrossRecipes = findSharedLiterals(recipes);
+  if (which === 'all' || which === 'units') report.unitInvariants = auditUnits(db);
   if (which === 'all' || which === 'hardcoded') report.literalsInsideGenericActions = findHardcodedInGenerics(db);
   // Only on request: this one runs live recipes, so it is slow and needs the
   // network, unlike the static checks above.

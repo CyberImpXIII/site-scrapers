@@ -87,10 +87,23 @@ function substitute(template, params) {
 // landing inside a URL query string (and may be whole JSON objects, e.g.
 // hiring.cafe's ?searchState=<encoded JSON>).
 function buildUrl(navTemplate, params) {
-  return navTemplate.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-    const val = params[key];
-    return val === undefined ? '' : encodeURIComponent(toStr(val));
-  });
+  // A missing param used to substitute to an empty string, producing a
+  // valid-LOOKING but wrong URL: wellfound.com's /role/r/{{role}} became
+  // /role/r/ and returned nothing, which reads as "the recipe broke" rather
+  // than "you forgot an argument". That cost a wrong diagnosis twice — once by
+  // hand and once inside audit.js, which reported a recipe verified at 39
+  // records as a liar. Failing here names the actual problem.
+  const missing = [...new Set([...navTemplate.matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]))].filter(
+    key => params[key] === undefined || params[key] === null
+  );
+  if (missing.length) {
+    throw new Error(
+      `Missing required param${missing.length > 1 ? 's' : ''} for nav_template: ${missing.join(', ')}. ` +
+        `The template is "${navTemplate}" — check nav_params_schema (\`node query.js site <target>\`) for what each one expects. ` +
+        'Pass an empty string explicitly if a blank value is genuinely intended.'
+    );
+  }
+  return navTemplate.replace(/\{\{(\w+)\}\}/g, (_, key) => encodeURIComponent(toStr(params[key])));
 }
 
 // Reads values back out of the page right after a handoff resolves — the
