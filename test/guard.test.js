@@ -206,3 +206,61 @@ test('a guarded change rejects a regression and rolls it back', () => {
     deleteSite(db, id);
   }
 });
+
+// --- Referenced actions are part of a change's scope ----------------------
+// A composed recipe is not self-contained: most of what it runs lives in the
+// actions it references. Validating the recipe without them is partial, and a
+// failure inside a referenced action is the hardest kind to attribute — it
+// happens in code the recipe did not write.
+
+test('referenced actions are found at any depth, including inside a repeat', () => {
+  const { referencedActions } = require('../lib/gate');
+  const refs = referencedActions([
+    { action: 'goto', url: 'x' },
+    { action: 'run_generic_action', ref: 'dismiss_overlay' },
+    { action: 'repeat', times: 1, steps: [{ action: 'run_generic_action', ref: 'describe_form' }] },
+    { action: 'run_action', ref: 'other.com#action:login' },
+  ]);
+  assert.deepEqual(refs.generic.sort(), ['describe_form', 'dismiss_overlay']);
+  assert.deepEqual(refs.site, ['other.com#action:login']);
+});
+
+test('a step list referencing nothing yields no scope', () => {
+  const { referencedActions } = require('../lib/gate');
+  assert.deepEqual(referencedActions([{ action: 'goto', url: 'x' }]), { generic: [], site: [] });
+  assert.deepEqual(referencedActions(null), { generic: [], site: [] });
+});
+
+test('a reference to a non-existent action is an error, not a warning', () => {
+  const { validateReferencedActions } = require('../lib/gate');
+  const { openDb } = require('../db');
+  const findings = validateReferencedActions(openDb(), { generic: ['definitely_not_an_action'], site: [] }, 'x.test');
+  assert.equal(findings.length, 1);
+  assert.match(findings[0], /^error\|generic:definitely_not_an_action\|referenced but does not exist/);
+});
+
+test('a healthy referenced action produces no findings', () => {
+  const { validateReferencedActions } = require('../lib/gate');
+  const { openDb } = require('../db');
+  assert.deepEqual(
+    validateReferencedActions(openDb(), { generic: ['dismiss_overlay', 'describe_form'], site: [] }, 'x.test'),
+    [],
+    'the builtin library must be clean, or every gated change inherits its findings'
+  );
+});
+
+test('the suites covering a referenced action are discovered by name, not a map', () => {
+  // A hand-maintained map would drift the moment a test was renamed, and then
+  // this would quietly run nothing.
+  const { testFilesFor } = require('../lib/gate');
+  const files = testFilesFor({ generic: ['dismiss_overlay'], site: [] }).map(f => f.split('/').pop());
+  assert.ok(files.includes('compose.test.js'), 'composition always applies to a reference');
+  assert.ok(files.includes('builtins.test.js'), 'so does seeding');
+  assert.ok(files.includes('steps.test.js'), 'and the suite that actually exercises dismiss_overlay');
+});
+
+test('with no references, only the machinery suites are selected', () => {
+  const { testFilesFor } = require('../lib/gate');
+  const files = testFilesFor({ generic: [], site: [] }).map(f => f.split('/').pop()).sort();
+  assert.deepEqual(files, ['builtins.test.js', 'compose.test.js']);
+});

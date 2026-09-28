@@ -623,6 +623,53 @@ function main() {
     );
   }
 
+  // A dangling reference is a WARNING (building bottom-up is legitimate), but a
+  // reference to an action that exists and is BROKEN is not: the recipe would
+  // fail at run time inside code it did not write, which is the hardest kind of
+  // failure to attribute. Validated before writing anything, and the suites
+  // covering those actions are run too — most of what a composed recipe
+  // actually does lives in the actions it pulls in.
+  let referencedActions = { generic: [], site: [] };
+  let actionFindings = [];
+  let actionTests = null;
+  if (def.nav_method === 'ui_steps') {
+    const { referencedActions: findRefs, validateReferencedActions, testFilesFor, runTestFiles } = require('./lib/gate');
+    try {
+      referencedActions = findRefs(JSON.parse(def.nav_template));
+    } catch {
+      /* malformed nav_template is surfaced elsewhere */
+    }
+    // Only actions that actually resolve are validated; a not-yet-created one
+    // is already covered by unresolvedReferences as a warning.
+    const existing = {
+      generic: referencedActions.generic.filter(n => getGenericAction(db, n)),
+      site: [],
+    };
+    actionFindings = validateReferencedActions(db, existing, def.hostname).filter(f => f.startsWith('error|'));
+    if (actionFindings.length) {
+      console.log(JSON.stringify({
+        success: false,
+        error: 'a generic action this recipe references is itself broken, so the recipe would fail at run time inside code it does not own',
+        brokenReferencedActions: actionFindings,
+        hint: 'fix the action (lib/builtinActions.js for a builtin) before registering a recipe that depends on it',
+      }));
+      process.exit(1);
+    }
+    if (existing.generic.length) {
+      actionTests = runTestFiles(testFilesFor(existing));
+      if (actionTests.failed > 0) {
+        console.log(JSON.stringify({
+          success: false,
+          error: `${actionTests.failed} test(s) covering the generic actions this recipe references are failing`,
+          failures: actionTests.failures.slice(0, 5),
+          files: actionTests.files,
+          hint: 'those actions are what this recipe would actually run — fix them first, or the recipe inherits their breakage',
+        }));
+        process.exit(1);
+      }
+    }
+  }
+
   const siteId = upsertSite(db, def);
 
   (def.fields || []).forEach((f, i) => insertField(db, siteId, f, i));
@@ -644,6 +691,8 @@ function main() {
     siteId,
     fieldsRegistered: (def.fields || []).length,
     unresolvedReferences,
+    referencedActions: referencedActions.generic.length ? referencedActions.generic : undefined,
+    actionTests: actionTests ? { passed: actionTests.passed, failed: actionTests.failed, files: actionTests.files } : undefined,
     version: version ? `v${version.major}.${version.minor}` : null,
     promotedStable: promoted ? `v${promoted.major}.${promoted.minor}` : null,
   }));

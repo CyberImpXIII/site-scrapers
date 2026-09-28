@@ -264,6 +264,11 @@ async function main() {
         findingsBefore: gated.findingsBefore,
         findingsAfter: gated.findingsAfter,
         introducedFindings: gated.introducedFindings,
+        // Which reusable actions this recipe pulls in, and the suites that
+        // cover them — a recipe referencing dismiss_overlay depends on that
+        // action's behaviour, so validating one without the other is partial.
+        referencedActions: gated.referencedActions,
+        actionTests: gated.actionTests,
         rolledBack: gated.rolledBack,
         ...(gated.rollbackNote ? { rollbackNote: gated.rollbackNote } : {}),
       },

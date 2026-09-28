@@ -39,6 +39,22 @@ edit until the whole library is clean would make the gate something to work
 around. A `note` is mandatory — it gates the change and becomes its
 `change_log` summary.
 
+**A change is validated against the actions it references, not just the recipe.**
+A composed recipe is mostly not its own steps — most of what it runs lives in
+the generic actions it pulls in, and a failure there is the hardest kind to
+attribute because it happens in code the recipe did not write. So when a change
+(or a new registration) references `run_generic_action` / `run_action`, the gate
+also checks that each reference resolves, that it expands (which is what catches
+a cycle or a dangling ref), and that what it expands to is runnable — no step
+type the engine lacks, no unregistered probe kind. It then runs the test suites
+covering those actions, found by searching the test files for their names rather
+than from a map that would drift.
+
+`register.js` applies the same check before writing anything, and REFUSES a new
+recipe whose referenced action is itself broken. A reference to an action that
+does not exist yet stays a warning — building bottom-up is legitimate — but a
+reference to one that exists and is broken is not.
+
 Every gated change records a `change_log` row, so an edit made off-path is
 detectable by its absence: `node audit.js provenance` lists recipe versions
 with no change_log entry behind them.
