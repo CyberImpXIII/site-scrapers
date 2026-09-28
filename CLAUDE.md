@@ -58,10 +58,23 @@ in (each resolves, expands, and is runnable; a self-reference is caught before
 it can expand forever) and the DEPENDENTS it could break — found transitively,
 so a recipe that reaches the changed action only through another action still
 counts. It runs the suites covering all of them, and rolls the action back to
-its previous row if the change introduces a finding. A builtin cannot be
-registered over at all, since the next open would silently revert it; to change
-one, edit `lib/builtinActions.js`, which is a code change and runs the full
-suite.
+its previous row if the change introduces a finding. **A builtin is edited through `register.js` too, not by editing the file.** The
+DB is the source of truth and `lib/builtinActions.js` is a GENERATED export of
+it — written read-only, with a DO-NOT-EDIT header. That flip is what closes the
+last ungated path: the file used to be authoritative, so a text editor could
+change shared library behaviour with no audit, no dependent check and no
+rollback. Editing a builtin requires a `note`, since it is the only record of
+why shared behaviour moved.
+
+The file still exists rather than the library living only in the DB, because
+`data/*.db` is gitignored: it is how a clone gets the library, and how a change
+to shared behaviour stays reviewable in a diff. A binary DB would be neither.
+
+Seeding (`openDb()`) is the remaining code→DB direction, for clones and for a
+pulled change, and it validates: a builtin that would not run is **not seeded**
+and the previous version stays in use, and one whose change breaks a dependent
+is **reverted**, both with a process warning naming the problem. `./dev.sh test`
+catches the same drift at commit time.
 
 `register.js` applies the same check before writing anything, and REFUSES a new
 recipe whose referenced action is itself broken. A reference to an action that

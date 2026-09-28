@@ -351,13 +351,22 @@ function registerGenericAction(db, def) {
   // rejected now. Customizing a builtin means forking it under a new name;
   // changing the builtin itself means editing lib/builtinActions.js, which
   // is the point of it living in code.
+  // A builtin CAN now be edited here, because the DB is the source of truth and
+  // lib/builtinActions.js is a generated export of it. That used to be refused:
+  // the file was authoritative, so a DB edit silently reverted on the next
+  // open. Flipping the direction means a change to shared library behaviour
+  // goes through the gate like everything else — audits, subaction and
+  // dependent validation, the suites covering them, rollback on regression —
+  // and the export is rewritten from the result so a clone still gets it.
   const existing = getGenericAction(db, def.name);
-  if (existing && existing.source === 'builtin') {
+  const isBuiltin = existing?.source === 'builtin';
+  if (isBuiltin && !def.note) {
     console.log(JSON.stringify({
       success: false,
-      error: `"${def.name}" is a builtin generic action, owned by lib/builtinActions.js and re-seeded on every DB open — ` +
-        'registering over it would be silently reverted. Either register your version under a different name, or edit ' +
-        'lib/builtinActions.js if the builtin itself should change.',
+      error: `"${def.name}" is a BUILTIN — part of the shared library that every recipe can reference. ` +
+        'Editing it is allowed but needs a "note" saying why: it gates the change, becomes the change_log ' +
+        'summary, and is the only record of why shared behaviour moved.',
+      dependents: require('./lib/gate').dependentsOf(db, def.name),
     }));
     process.exit(1);
   }
@@ -446,6 +455,13 @@ function registerGenericAction(db, def) {
         nav_params_schema: def.nav_params_schema,
         steps: stepsJson,
       });
+      if (isBuiltin) {
+        // Keep it a builtin, and rewrite the export so the file and the DB
+        // agree. Skipping this would leave the change invisible to a clone and
+        // make the next open re-seed the OLD steps over it.
+        db.prepare("UPDATE generic_actions SET source = 'builtin' WHERE name = ?").run(def.name);
+        require('./lib/exportBuiltins').exportBuiltins(db);
+      }
     },
   });
 

@@ -385,3 +385,61 @@ test('a builtin declaring a parameter must actually use it', () => {
     }
   }
 });
+
+// --- The library's authority runs DB -> file, not file -> DB ---------------
+// lib/builtinActions.js was hand-edited and authoritative, which made it the
+// one write path the gate could not cover: a text editor needs no
+// authorization. The DB is now the source of truth and the file is a generated
+// export, so a change to shared behaviour goes through the gate and the file is
+// rewritten from the result. The file still exists because data/*.db is
+// gitignored — it is how a clone gets the library, and how a change to shared
+// behaviour stays reviewable in a diff.
+
+test('the committed export matches the DB', () => {
+  const { exportIsCurrent } = require('../lib/exportBuiltins');
+  const { openDb } = require('../db');
+  const state = exportIsCurrent(openDb());
+  assert.equal(state.current, true, `lib/builtinActions.js has drifted from the DB: ${state.reason}`);
+});
+
+test('the export carries a DO-NOT-EDIT header naming the gated path', () => {
+  // A generated file with no warning gets hand-edited, and the next export
+  // silently discards the edit.
+  const src = require('fs').readFileSync(require('../lib/exportBuiltins').TARGET, 'utf8');
+  assert.match(src, /GENERATED FILE/);
+  assert.match(src, /DO NOT EDIT/i);
+  assert.match(src, /register\.js/, 'it has to say what to use instead');
+});
+
+test('exporting an empty library is refused', () => {
+  // The export is the only place a fresh clone can get the library, so writing
+  // an empty one would erase it rather than merely be wrong.
+  const { exportBuiltins } = require('../lib/exportBuiltins');
+  const emptyDb = { prepare: () => ({ all: () => [] }) };
+  assert.throws(() => exportBuiltins(emptyDb), /refusing to export an empty builtin library/);
+});
+
+test('exportIsCurrent reports WHAT drifted, not just that something did', () => {
+  const { exportIsCurrent } = require('../lib/exportBuiltins');
+  const fake = {
+    prepare: () => ({
+      all: () => [
+        { name: 'dismiss_overlay', description: 'x', action_type: null, nav_params_schema: '{}', steps: '[{"action":"wait","ms":1}]' },
+      ],
+    }),
+  };
+  const state = exportIsCurrent(fake);
+  assert.equal(state.current, false);
+  assert.ok(state.reason && state.reason.length > 10, 'a bare "false" gives nobody anything to act on');
+});
+
+test('the generated export is written read-only', () => {
+  // Turns "do not hand-edit" from a comment into something the filesystem
+  // refuses. Not a security boundary — `chmod +w` defeats it instantly, and git
+  // does not preserve the bit, so a fresh clone gets a writable file. It raises
+  // the cost of the ACCIDENT, which is the case that actually happens.
+  const fs = require('fs');
+  const { TARGET } = require('../lib/exportBuiltins');
+  const mode = fs.statSync(TARGET).mode & 0o777;
+  assert.equal(mode & 0o222, 0, `expected no write bits on the generated export, got ${mode.toString(8)}`);
+});

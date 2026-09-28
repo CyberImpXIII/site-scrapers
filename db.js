@@ -328,6 +328,16 @@ function seedBuiltinActions(db) {
   if (writable.length === 0) return;
 
   const now = new Date().toISOString();
+  // Snapshotted before writing so a builtin whose change breaks a DEPENDENT can
+  // be put back. Validating the incoming action alone is not enough: a change
+  // can be perfectly valid in isolation and still break an action or recipe that
+  // references it, and seeding is the one path where that would otherwise land
+  // unchecked (a hand-edit to the export skips the gate, which does check
+  // dependents). Only runs when a builtin actually changed, so the steady state
+  // is unaffected.
+  const priorRows = new Map(
+    writable.map(a => [a.name, existing.get(a.name) ? { ...existing.get(a.name) } : null])
+  );
   const upsert = db.prepare(
     `INSERT INTO generic_actions (name, description, action_type, nav_params_schema, source, steps, created_at, updated_at)
      VALUES (?,?,?,?,'builtin',?,?,?)
@@ -341,6 +351,38 @@ function seedBuiltinActions(db) {
   );
   for (const a of writable) {
     upsert.run(a.name, a.description ?? null, a.action_type ?? null, a.nav_params_schema ?? null, JSON.stringify(a.steps), now, now);
+  }
+
+  // Now that the new steps are in place, check what DEPENDS on each changed
+  // builtin. A change valid on its own can still break something that
+  // references it, and reverting the one builtin is better than leaving the
+  // library in a state where a recipe fails inside code it does not own.
+  let gate;
+  try {
+    gate = require('./lib/gate');
+  } catch {
+    return; // partial copy (a test) — the isolation check is not available
+  }
+  for (const a of writable) {
+    const deps = gate.dependentsOf(db, a.name);
+    const broken = [];
+    for (const name of deps.actions) {
+      const dep = db.prepare('SELECT steps FROM generic_actions WHERE name = ?').get(name);
+      if (dep) broken.push(...gate.validateGenericAction(db, name, dep.steps));
+    }
+    if (!broken.length) continue;
+
+    const prior = priorRows.get(a.name);
+    if (prior) {
+      upsert.run(prior.name, prior.description, prior.action_type, prior.nav_params_schema, prior.steps, now, now);
+    } else {
+      db.prepare('DELETE FROM generic_actions WHERE name = ?').run(a.name);
+    }
+    process.emitWarning(
+      `builtin "${a.name}" was REVERTED: the version in lib/builtinActions.js breaks something that depends on it — ` +
+        `${broken.join('; ')}. Edit it through \`node register.js\` instead, which validates dependents before writing.`,
+      'BuiltinActionReverted'
+    );
   }
 }
 
