@@ -25,18 +25,6 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
-## 0. Raise `glassdoor.com`'s `ready_timeout_ms`
-
-The one non-`ok` result in the 2026-09-28 `node audit.js working` sweep:
-`PARTIAL` — 30 records came back but the wait for
-`li[data-test="jobListing"]` expired first, so the run is logged as a failure
-while carrying the data. The audit's own `why` says to raise the timeout.
-
-Do it with `node lab.js set glassdoor.com '{"ready_timeout_ms":…,"note":"…"}'`
-and confirm with one solo run. Nothing else is wrong with the recipe.
-
----
-
 ## 1. Make the probes narrow the answer, not just bound it
 
 Jacob's framing, and it is the right one: *do as much procedurally as possible,
@@ -145,6 +133,11 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
   (`jobs.lever.co#action:describe_application_form`,
   `salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing`) all
   returned records, so that status is now earned.
+
+  The one `PARTIAL` (glassdoor) is fixed: `ready_timeout_ms` 30000 → 50000, and
+  it now runs `success=true` at 30 records. Extraction was never the problem —
+  same just-past-the-deadline race already recorded on builtin.com,
+  weworkremotely.com and the Workday tenant.
 
   `node audit.js params` was also run solo on 2026-09-28: **26 recipes, 11
   `ok`, 0 genuine `INERT`, 9 `UNVALIDATABLE`, 5 false `INCONCLUSIVE`.** Both
