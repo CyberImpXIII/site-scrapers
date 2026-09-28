@@ -279,6 +279,23 @@ function isPartial(timedOut, extractedCount) {
 // step attempted regardless of which one was running.
 const progress = { current: null, activeRuns: 0, concurrentDetected: false };
 
+// How long page.goto is allowed, derived from the recipe's own ready_timeout_ms.
+//
+// Puppeteer's 30s default was hardcoded at every navigation, which silently
+// contradicted the one knob a recipe has for saying "this site is slow": a
+// recipe could declare ready_timeout_ms 60000 and still die at 30 seconds while
+// navigating, reported as "Navigation timeout of 30000 ms exceeded" with
+// failedStep null — an error naming neither the recipe nor a step.
+//
+// Floored at 30s so this can only ever LENGTHEN a navigation. A recipe with a
+// short ready_timeout_ms is saying its content appears quickly, not that the
+// page must arrive quickly, and shortening navigation on that basis would break
+// working recipes to fix none.
+const DEFAULT_NAV_TIMEOUT_MS = 30000;
+function navTimeoutFor(readyTimeoutMs) {
+  return Math.max(DEFAULT_NAV_TIMEOUT_MS, Number(readyTimeoutMs) || 0);
+}
+
 function describeStep(step, index, total, path) {
   return {
     index,
@@ -324,7 +341,8 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
       case 'goto': {
         const targetUrl = substitute(step.url, params);
         try {
-          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          // siteMeta may be absent in a bare step-list test, hence the fallback.
+          await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: siteMeta?.navTimeoutMs ?? 30000 });
         } catch (e) {
           // A server-side redirect (e.g. an already-authenticated session
           // redirecting straight past a login page) can race Puppeteer's
@@ -371,7 +389,9 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
           // step can run against the old page (or interrupt the load).
           const isLink = await el.evaluate(e => e.tagName === 'A' && !!e.href && !/#$/.test(e.href));
           const nav = isLink
-            ? page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null)
+            ? page
+                .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: siteMeta?.navTimeoutMs ?? 30000 })
+                .catch(() => null)
             : null;
           // Present but hidden (e.g. LinkedIn's "See more jobs" before it's
           // revealed): click it directly. A mouse click would first scroll
@@ -797,7 +817,20 @@ async function main() {
   const currentVersion = getCurrentVersion(db, site.id);
   const versionId = currentVersion ? currentVersion.id : null;
   const versionLabel = currentVersion ? `v${currentVersion.major}.${currentVersion.minor}` : null;
-  const siteMeta = { hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name };
+  // A recipe that sets ready_timeout_ms is SAYING this site is slow, and it was
+  // being contradicted one line later: every page.goto had a hardcoded 30s cap,
+  // so builtin.com could declare 60000 and still die at 30 seconds during
+  // navigation — reported as "Navigation timeout of 30000 ms exceeded" with
+  // failedStep null, which names neither the recipe nor a step and reads like
+  // the site is down. There was no knob to raise, so the advice "raise the goto
+  // timeout" could not be acted on at all.
+  //
+  // Derived rather than a new column: one timeout per recipe is one thing to get
+  // right, and a second would mostly be forgotten. The floor means this can only
+  // ever lengthen a navigation, never shorten one, so no existing recipe changes
+  // behaviour.
+  const navTimeoutMs = navTimeoutFor(site.ready_timeout_ms);
+  const siteMeta = { hostname: site.hostname, pageType: site.page_type, recipeName: site.recipe_name, navTimeoutMs };
 
   // run_action references are expanded to a flat step list up front, before
   // any browser launches, so a dangling reference or a reference cycle
@@ -865,7 +898,7 @@ async function main() {
         if (site.nav_method === 'direct_url') {
           const url = substitute(site.nav_template, params);
           if (!url) throw new Error(`Missing param for nav_template "${site.nav_template}" (expected e.g. {"url": "..."})`);
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeoutMs });
         } else if (site.nav_method === 'ui_steps') {
           ({ captures, diagnostics: probeResults } = await runUiSteps(page, expandedSteps, params, siteMeta));
         } else {
@@ -999,7 +1032,7 @@ async function main() {
       let probeResults = [];
       if (site.nav_method === 'url_param') {
         const url = buildUrl(site.nav_template, params);
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeoutMs });
       } else if (site.nav_method === 'ui_steps') {
         ({ captures, diagnostics: probeResults } = await runUiSteps(page, expandedSteps, params, siteMeta, hooks));
       } else {
@@ -1134,4 +1167,4 @@ async function main() {
 // situation the CLI can't produce on its own.
 if (require.main === module) main();
 
-module.exports = { runUiSteps, progress, describeStep, isPartial };
+module.exports = { runUiSteps, progress, describeStep, isPartial, navTimeoutFor, DEFAULT_NAV_TIMEOUT_MS };

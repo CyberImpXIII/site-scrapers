@@ -74,6 +74,26 @@ was destroyed" and "Target closed" across five recipes that all returned records
 when run alone. A false `LIAR` verdict sends someone to fix something that
 works. The audits now report `INFRA` for this; re-run alone before believing it.
 
+**A navigation timeout is the ambiguous case, and is deliberately NOT `INFRA`.**
+`weworkremotely.com` failed 4 of 4 runs with "Navigation timeout of 30000 ms
+exceeded" and `failedStep: null` — every one of them alongside 4 parallel engine
+processes. Run alone, the same two param sets returned 27 and 25 records.
+
+So it behaves like contention, but unlike "detached Frame" it is also exactly
+what a dead URL, a site outage or a genuinely broken recipe looks like. Adding
+it to `INFRA_ERRORS` would make `INFRA` a catch-all that hides real breakage —
+`test/live-audits.test.js` asserts that boundary on purpose. **The rule is
+procedural instead: a repeat under parallel load is not evidence about the
+recipe. Re-run alone first, and only raise `ready_timeout_ms` if the solo run
+also fails.**
+
+That case also exposed a second cause worth knowing: `page.goto` had a hardcoded
+30s timeout at every call site, so a recipe could declare `ready_timeout_ms`
+60000 and still be cut off at 30 seconds *while navigating*. The navigation
+timeout now derives from `ready_timeout_ms` (floored at 30s, so it can only
+lengthen). If you see a timeout whose number does not match the recipe's own
+setting, that mismatch is the finding.
+
 ## Tests that pass for the wrong reason
 
 - `authorizeForTests()` sets a permanent global flag, so once any test file
