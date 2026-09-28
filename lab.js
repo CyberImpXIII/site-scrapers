@@ -10,7 +10,7 @@
 //
 // Usage:
 //   node lab.js probe <url>                       # what cards/forms/blockers are on this page
-//   node lab.js sel <url> '<css,css,...>'         # match counts for candidate selectors
+//   node lab.js sel <url> '<css,css,...>' [--wait=MS]   # match counts for candidate selectors
 //   node lab.js peek <target> '<params>'          # run a recipe, show samples + per-field null counts
 //   node lab.js raw <target> '<params>'           # same, but show each card's source text
 //   node lab.js set <target> '<json>'             # set card_selector / anchor / timeout / fields at once
@@ -112,13 +112,28 @@ async function main() {
             { action: 'probe', kind: 'empty_state', label: 'empty' },
           ]
         : [{ action: 'run_generic_action', ref: 'probe_selectors', with: { selectors: '{{sel}}' } }];
+    // The settle wait is a parameter because a fixed 5s lies about slow sites.
+    // Probing a Workday tenant reported 0 matches for a selector its own recipe
+    // uses successfully — the page simply had not rendered inside 5 seconds, and
+    // the probe reported that as "the selector matches nothing", which is the
+    // wrong conclusion and the expensive kind. If a recipe needs a large
+    // ready_timeout_ms, pass a comparable wait here.
+    const settleMs = Number(
+      (process.argv.find(x => x.startsWith('--wait=')) || '').slice('--wait='.length)
+    );
+    const wait = Number.isFinite(settleMs) && settleMs > 0 ? settleMs : 5000;
     ensureProber(db, [
       { action: 'goto', url: '{{url}}' },
       { action: 'run_generic_action', ref: 'dismiss_overlay' },
-      { action: 'wait', ms: 5000 },
+      { action: 'wait', ms: wait },
       ...tail,
     ]);
-    const r = await runEngine(`${PROBER}#action:default`, { url: a, sel: b || '', noSession: true, noDiagnostics: true });
+    const r = await runEngine(`${PROBER}#action:default`, {
+      url: a,
+      sel: (b && !b.startsWith('--') ? b : '') || '',
+      noSession: true,
+      noDiagnostics: true,
+    });
     if (!r.success) die(`prober run failed: ${r.error}`);
     for (const p of r.diagnostics || []) {
       if (p.kind === 'blockers') out({ blockers: { blocked: p.blocked, flags: p.flags, bodyTextLength: p.bodyTextLength, title: p.title } });
