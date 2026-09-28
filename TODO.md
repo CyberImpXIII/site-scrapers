@@ -78,6 +78,11 @@ Found while gating the hook layer, under the "Gate the seams" directive in
 they are worth writing down rather than leaving to be rediscovered. None is
 currently checked.
 
+The last three were noticed mid-session, called "worth noting", and then not
+written down until Jacob asked whether anything had been left out — which is
+its own lesson: **an item flagged in conversation and not written to this file
+does not exist.** Write it here when you see it, not at the end.
+
 - **Probe-knowledge categories are consumed by string.** `lib/probes.js` reads
   `probeKnowledge('card_anatomy', 'utility_class')`,
   `probeKnowledgeGrouped('card_anatomy', 'field_shape')`,
@@ -96,6 +101,25 @@ currently checked.
   audit rule actually emits. A waiver for a misspelled or retired id sits in the
   notes forever, waiving nothing, and reads as though the finding was handled.
   Wanted: an `audit.js` rule flagging a waiver whose id no rule emits.
+- **`lib/gate.js` treats a severity DOWNGRADE as a new finding.** It
+  fingerprints findings as `severity|unit|problem` and flags anything in
+  `after` that was not in `before`. So a change that improves a finding from
+  `error` to `warn` produces a string that was not there previously, counts as
+  `introducedFindings`, and gets **rolled back for making things better**. Not
+  hypothetical — it is why `dev.sh waive` attaches a waiver without touching
+  severity, which is a workaround rather than a fix. Wanted: compare on
+  `unit|problem` and only count a finding as introduced when its severity got
+  *worse*. Flagged mid-session and then not recorded, which is why it is here.
+- **`lab.js probe` reports `prober run failed: undefined`** when the underlying
+  run fails without setting `error` — hit for real on a 404 board slug. The one
+  thing the message must carry is why, and it carries the word "undefined".
+  Wanted: fall back to the run's `failedStep`, `timedOut` or final URL, and say
+  "the page did not load" rather than printing a missing field.
+- **`register.js` takes a bare path; `lab.js set` requires `@path`.** Two CLIs
+  in the same repo reading a JSON file two different ways, which cost one
+  failed call this session (`register.js @file.json` → "Bad JSON: Unexpected
+  token '@'"). Wanted: accept both spellings in both, or reject the wrong one
+  with a message naming the right one.
 - **The four `CLAUDE.md` copies** are kept in sync by a prose instruction
   ("Keeping these rules in sync"), which is exactly the arrangement that had
   already drifted for the hooks. Wanted: a check that the shared sections agree

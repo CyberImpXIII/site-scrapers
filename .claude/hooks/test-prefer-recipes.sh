@@ -54,6 +54,22 @@ else
 fi
 
 echo "must ALLOW (exit 0):"
+# A recipe on a SUBDOMAIN must not block its parent. jobs.lever.co having a
+# recipe made this refuse lever.co/about -- Lever's marketing site, nothing to
+# do with the job board. A false positive in a blocking hook is worse than a
+# miss, because it gets the hook switched off.
+sub=$(pick 'map(select(.status == "working" and (.hostname | contains(".") and (split(".") | length) > 2))) | .[0].hostname // empty')
+if [ -n "$sub" ]; then
+  parent="${sub#*.}"
+  # Only meaningful if the parent has no recipe of its own.
+  if [ -z "$("$REPO/dev.sh" known "$parent" 2>/dev/null | awk -F'\t' -v p="$parent" '$1 ~ "^" p "#"')" ]; then
+    check 0 "a subdomain's recipe does not cover its parent" 'WebFetch' "https://$parent/about"
+  else
+    skip "subdomain/parent case" "$parent has its own recipe"
+  fi
+else
+  skip "subdomain/parent case" "no multi-label working hostname in this DB"
+fi
 check 0 "unknown host"                 'WebFetch'                        'https://example.invalid/page'
 check 0 "not an http url"              'WebFetch'                        'about:blank'
 check 0 "no url at all"                'WebFetch'                        ''

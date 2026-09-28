@@ -108,7 +108,20 @@ known=$("$REPO/dev.sh" known "$host" 2>/dev/null) || exit 0
 # Only a `working` recipe is a reason to refuse. A broken, blocked or
 # needs-review one means the browser may well be the right tool right now --
 # blocking there would strand the one path left.
-working=$(printf '%s' "$known" | awk -F'\t' '$2 == "working" { print $1 }')
+#
+# And only a recipe that actually covers THIS host. `dev.sh known` matches
+# suffixes in both directions, which is right for "what do we know about this
+# domain" but wrong for blocking: a recipe on jobs.lever.co made this refuse
+# lever.co/about, Lever's marketing site, which has nothing to do with the job
+# board. A false positive in a blocking hook is worse than a miss -- it gets the
+# hook switched off, and then it protects nothing. So: the recipe's host must be
+# the host itself, or a parent of it (a recipe on lever.co may serve
+# jobs.lever.co; the reverse does not hold).
+working=$(printf '%s' "$known" | awk -F'\t' -v h="$host" '
+  $2 != "working" { next }
+  { split($1, parts, "#"); rh = parts[1] }
+  rh == h || substr(h, length(h) - length(rh)) == "." rh { print $1 }
+')
 [ -n "$working" ] || exit 0
 
 {
