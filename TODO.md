@@ -157,6 +157,56 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
+## 0e. Recipe defects found by bridging 11 recipes into Proficiently (2026-09-29)
+
+Found by the data-bridge session consuming these recipes for real, which is a
+better test than any audit here — it reads the VALUES, not just whether a run
+returned rows. Ordered by how wrong the output is, not by effort.
+
+**A derived value must not be a free-form parameter.** `glassdoor.com`'s
+`kw_end` has to equal `7 + slug.length` (it is Glassdoor's keyword offset,
+`KO7,<end>`). Get it wrong and the run **succeeds with fewer results**:
+`slug=support kw_end=99` returns 5 records, `kw_end=14` returns 30, both
+`success:true`, no warning. `nav_params_schema` was also NULL, so the engine's
+own error — "check nav_params_schema" — pointed at nothing, and a consumer
+reasonably concluded the recipe had drifted. Schema written (v1.6), which is a
+warning, not a fix. **The fix is a computed param**: the engine substitutes
+only caller-supplied values, so there is no way to express "this one is
+derived". Worth adding — this recipe cannot be used correctly by anyone who
+has not read the note.
+
+**`ziprecruiter.com` has no job link.** Its only URL field is `company_href`,
+pointing at the company's job list rather than the posting. Honestly named, so
+nothing is lying — but the recipe cannot answer "where is this job", and the
+bridge had to carry no url at all. `docs/lessons.md` names this exact shape (an
+href pointing at a company page while being read as a job link) as one of the
+expensive bugs. Check whether a per-card posting href is extractable; if it is
+not, say so in the notes so the next person stops looking.
+
+**`remoteok.com` emits two dirty fields and is missing one.**
+- `title` keeps a trailing badge: `"Customer Support & Success Specialist VERIFIED"`.
+- `posted_ago` is not a date, it is a concatenated blob:
+  `"🇨🇦 Canada 🔒🇺🇸 United States 🔒💰 $50k - $70k\t\t 26d"`.
+- No `location`, although it is plainly inside that blob.
+This is positional extraction drifting across a multi-part cell. `lab.js match`
+exists for exactly this: the values are known, so the selectors are findable
+rather than guessable.
+
+**`jobspresso.co` has no company name**, only `company_blurb`:
+`"Hopper Hopper uses big data to predict flight and hotel prices..."` — the
+name doubled and run into prose. Deriving "Hopper" from that is a guess, so it
+was left unbridged.
+
+**`workingnomads.com` and `joblist.ala.org` emit only `title` and `href`.** No
+company at all, which makes them unbridgeable where a company is required.
+Both are thin recipes that were never finished rather than broken ones.
+
+Not defects, recorded so they are not re-investigated: `glassdoor.com` is
+genuinely `working` (30 records throughout — the report of it returning
+nothing was the `kw_end` footgun above), and `usajobs.gov` returning
+"Andersen Air Base, Guam" is correct behaviour for a recipe with no remote
+filter, which is the consumer's to handle.
+
 ## 0d. `audit.js fixed-params` compares COUNTS, which a filter can pass blind
 
 Run for the first time on 2026-09-29 — it was the last of the three live
