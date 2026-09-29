@@ -156,7 +156,14 @@ async function main() {
         });
       }
       if (p.kind === 'empty_state') out({ emptyState: { likelyCause: p.likelyCause, explicitEmptyMessage: p.explicitEmptyMessage, largestSiblingGroup: p.largestSiblingGroup, advice: p.advice } });
-      if (p.kind === 'selectors') out({ selectors: p.matches });
+      // A probe reports failure in `error`, and printing only `matches` threw
+      // that away: JSON.stringify drops an undefined value, so a probe that
+      // errored printed `{}` — the tool saying nothing at all while the reason
+      // sat in the result it was handed. `card_anatomy` below already carried
+      // its error through; this did not, and it cost a diagnosis on
+      // ziprecruiter where `lab.js sel a` printed `{}` and looked like the
+      // site's fault rather than the probe's.
+      if (p.kind === 'selectors') out({ selectors: p.matches ?? null, error: p.error ?? null });
       if (p.kind === 'card_anatomy') {
         out({
           cardAnatomy: { cardCount: p.cardCount, cardsSampled: p.cardsSampled, parts: p.parts, error: p.error ?? null },
