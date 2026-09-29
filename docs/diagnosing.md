@@ -90,6 +90,32 @@ that made a salary get reported as a location. And a proposal is all it is:
 it can find the selector producing a value you already have, but it cannot
 tell you what a field you don't already extract would *mean*.
 
+**A zero null count is not a working field.** `lab.js peek` reports how often
+each field came back `null`, which catches a field that stopped extracting. It
+cannot catch the more expensive fault: a field that still fills on *every* card
+with the wrong *kind* of value. That recipe reports `0/57 null` and looks
+healthy. Two commands answer it:
+
+```
+./dev.sh distinct <target> '<params>'      # per-field value spread
+node lab.js grep <target> '<params>' '<regex>'   # what the card text says AROUND a value
+```
+
+`distinct` prints each field's distinct values with counts, and then the direct
+signal: **values appearing under more than one field name**. That is what a
+positional index landing on its neighbour looks like — and it has to be checked
+across the whole record set rather than per record, because the drift is usually
+partial. Nine of ten cards being right is what makes it invisible. A small value
+set is the other tell: a field named `location` with four distinct values is
+pointing at a chip, not a place.
+
+`grep` searches the card *source text* with surrounding context, across every
+card rather than the three that `lab.js raw` samples. Use it the moment a value
+looks wrong, before theorising: on workingnomads.com a `salary` of `"$100"`
+turned out to be a title reading `"joining reward up to USD$100"` — a signing
+bonus reported as pay. The preceding theory (a range written with an en-dash)
+was wrong, and one `grep` cost less than the run that disproved it.
+
 **Don't trust a recipe's `status` alone** — it's set by hand and can go
 stale. `node query.js health` shows each recipe's actual success rate over
 its recent runs and flags `statusDisagrees` where a recipe claims `working`

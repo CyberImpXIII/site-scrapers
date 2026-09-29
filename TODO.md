@@ -157,6 +157,37 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
+## 0f. New recipe requested: bandcamp.com article (release date) — LOW PRIORITY
+
+Asked for by the `gmailsenderscript` session on Jacob's behalf, 2026-09-29. Not
+urgent; nothing is blocked on it.
+
+`emailTools`' Bandcamp digest currently labels its date column "email date",
+because Bandcamp's notification emails carry no release date. The release date
+is on the album/track page, so this is an `article` recipe.
+
+- **Input**: album or track URLs, e.g. `https://artist.bandcamp.com/album/slug`
+  or `/track/slug`. Already absolute and stripped of `?from=` tracking, so no
+  cleanup step is needed.
+- **Wanted**: release date. Pages read "released September 25, 2026", and
+  "releases <date>" for a pre-order — so a released/pre-order flag is part of
+  the answer, not a nice-to-have: the same field means different things and a
+  consumer sorting by date would treat a future release as an old one.
+- **Nice to have**: artist, label, tags.
+- **Volume**: the digest can hold thousands of albums (9,228 releases in
+  Jacob's inbox), so it is called per album on demand or in batches, never all
+  at once. Worth confirming Bandcamp's rate tolerance before any batch use —
+  and note the standing rule: a detected wall is a result to report, not an
+  obstacle to route around.
+- **Consumer**: `emailTools/bandcamp_digest.py`. Jacob also wants that digest
+  to move toward a recipe + data-bridge design, so it may end up called through
+  data-bridge rather than directly. Build the recipe to stand alone either way.
+- **Hostname note**: every artist is its own subdomain (`artist.bandcamp.com`),
+  so one recipe cannot be keyed by hostname per artist. Register it under
+  `bandcamp.com` and confirm the `prefer-recipes` hook's subdomain matching
+  covers `*.bandcamp.com` — it matches a subdomain against a recipe host, which
+  is the case this needs, but it has not been exercised in this direction.
+
 ## 0e. Recipe defects found by bridging 11 recipes into Proficiently (2026-09-29)
 
 Found by the data-bridge session consuming these recipes for real, which is a
@@ -181,7 +212,15 @@ nothing is lying — but the recipe cannot answer "where is this job", and the
 bridge had to carry no url at all. `docs/lessons.md` names this exact shape (an
 href pointing at a company page while being read as a job link) as one of the
 expensive bugs. Check whether a per-card posting href is extractable; if it is
-not, say so in the notes so the next person stops looking.
+not, say so in the notes so the next person stops looking. **ANSWERED
+2026-09-29: it is not, and the notes now say so.** The SERP is a two-pane
+layout — the title is a `div`, not an anchor, and clicking a card loads the
+posting into the right-hand pane rather than navigating, so a posting URL does
+not exist in the list markup. Evidence rather than inference:
+`div.job_result_two_pane_v2 a[href]` counts 80 across 20 cards, which is
+exactly the company and location anchors at two each and nothing else. Getting
+a posting URL would need a per-card click, which a listing recipe cannot do.
+`company_href` stays honestly named and **must not** be mapped as a job link.
 
 **`remoteok.com` emits two dirty fields and is missing one.**
 - `title` keeps a trailing badge: `"Customer Support & Success Specialist VERIFIED"`.
@@ -195,11 +234,25 @@ rather than guessable.
 **`jobspresso.co` has no company name**, only `company_blurb`:
 `"Hopper Hopper uses big data to predict flight and hotel prices..."` — the
 name doubled and run into prose. Deriving "Hopper" from that is a guess, so it
-was left unbridged.
+was left unbridged. **DONE 2026-09-29 (v1.4, verified `working`, 30 records)** —
+`div.job_listing-company strong` is the name alone and
+`span.job_listing-company-tagline` the tagline alone; they were one blob only
+because the field was positional. Every other field on this recipe was
+positional too and is now addressed directly.
 
 **`workingnomads.com` and `joblist.ala.org` emit only `title` and `href`.** No
 company at all, which makes them unbridgeable where a company is required.
 Both are thin recipes that were never finished rather than broken ones.
+**workingnomads DONE 2026-09-29 (v1.8, verified `working`, 57 records)** — it
+was never thin: `div[data-testid="card-company"]` was sitting there unused, and
+`title`, `location`, `commitment`, `experience_level` and `salary` all came out
+too. It is the recipe that forced `child_text value_pattern` (shape addressing;
+see the commit), because its chips are optional and no index identifies them.
+Doing it the obvious way first produced two **wrong** values that no null count
+would have shown — `commitment: "Freelance"` and `experience_level:
+"Executive"` read out of TITLES by a blob regex — so this one is also the
+worked example for why `lab.js distinct` and `lab.js grep` now exist.
+`joblist.ala.org` still outstanding.
 
 Not defects, recorded so they are not re-investigated: `glassdoor.com` is
 genuinely `working` (30 records throughout — the report of it returning
@@ -515,6 +568,17 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
   (`jobs.lever.co#action:describe_application_form`,
   `salesforce.wd12.myworkdayjobs.com#listing`, `stepstone.de#listing`) all
   returned records, so that status is now earned.
+
+  **Confirmed by the reporter, 2026-09-29.** The `gmailsenderscript` session
+  owns that runner and says it was running 4 engine processes at once, which is
+  the contention signature exactly; its runner is now sequential and its TODO
+  corrected. It also expects **`weworkremotely.com`'s 4-of-4 navigation
+  timeouts came from the same parallel runs — likely contention, unconfirmed**,
+  with a sequential re-run in progress to settle it. Do not act on that report
+  as a recipe fault until the sequential result lands. This is the second time
+  a parallel-load failure has been read as a regression by two sessions, which
+  is the argument for §0b's open question of whether `health` should discount a
+  tight failure cluster rather than leaving every reader to spot it.
 
   The one `PARTIAL` (glassdoor) is fixed: `ready_timeout_ms` 30000 → 50000, and
   it now runs `success=true` at 30 records. Extraction was never the problem —

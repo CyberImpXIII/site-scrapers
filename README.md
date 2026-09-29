@@ -101,6 +101,26 @@ rule lives in `docs/`.
     cards under one header, like a company name with its jobs listed
     beneath it (wellfound.com): `regex_pattern` holds a CSS selector for the
     group container, and the value is the first line of its text.
+    **`child_text` (listing only) is the kind to reach for first**: it reads
+    the text of a named element *inside* the card, with `regex_pattern` as a
+    CSS selector and `segment_index` picking the nth match. It exists because
+    `positional_segment` splits the card's text on `" | "` and assumes every
+    card has the same parts — and cards routinely do not, so an optional badge
+    shifts every field after it and the record stays *plausible while being
+    wrong*. That drift shipped a location reported as "An Hour Ago" and a
+    salary reported as a location. Addressing the element directly makes a
+    missing element yield `null` instead of shifting its neighbours.
+    `value_pattern` addresses by **shape** instead of position: the first
+    matching child whose own text matches that regex. Use it when the matching
+    children are a *variable* sequence, where no index identifies the one you
+    want — workingnomads.com renders location, commitment, seniority and pay as
+    sibling chips and only some cards have the pay chip, so "the chip that
+    looks like money" is the only stable description of it. Prefer it over
+    `regex_anywhere` for anything with a recognisable shape: matching the whole
+    card blob instead pulled a currency amount out of a *title* and reported a
+    signing bonus as a salary. A `value_pattern` matching nothing yields
+    `null`, and so does a malformed one — it never silently degrades into
+    "first match".
   - `scrape_runs` — an audit log of every invocation (params, success,
     result count vs. the site's own claimed count, duration, error). This
     is the reliability history — not just a static status flag.
