@@ -157,6 +157,37 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
+## 0c. A listing record cannot carry a PAGE-level fact (2026-09-29)
+
+Found while handing the Greenhouse recipe to the data-bridge session. On an
+ATS board the company is a property of the PAGE, not of any card — the board
+IS the company — so `job-boards.greenhouse.io#listing` emits `title`,
+`location`, `href` and no company at all. Same for Lever, Ashby, joblist,
+workingnomads.
+
+Listing extraction is card-scoped: `child_text` looks inside a card,
+`regex_anywhere` runs against a card's text. Neither can reach a page-level
+fact, so there is nowhere for "the company" to live in a record.
+
+What a consumer can do today, and why it is not good enough:
+
+- The engine output has **no params echo**. Checked the whole top level:
+  `success, documented, timedOut, url, claimedCount, consistencyWarning,
+  count, pagesVisited, records, handoffCaptures, sessionUsed, recipeVersion,
+  debugDir`. The input is not in there.
+- `url` carries the slug — `https://job-boards.greenhouse.io/splice` — so the
+  caller can take the last path segment. Deterministic, no injection needed.
+- **But the slug is not the company name.** `universalaudio` is "Universal
+  Audio", `job-boards.greenhouse.io/splice` is "Splice". The page title has
+  the real one (`<title>Jobs at Universal Audio</title>`). A slug in a
+  human-readable column reads as a bug.
+
+There IS precedent for surfacing a page-level fact: `claimedCount` already
+does it, via `result_count_regex`. So the shape of the fix is known — a
+page-level field kind, extracted once per run rather than once per card,
+landing at the top level or copied onto every record. Worth doing if a second
+consumer needs it; not worth inventing for one.
+
 ## 0b. Concerns carried out of slices 1-2 (2026-09-29)
 
 Not bugs — things that are true, that I would want the next session to know
