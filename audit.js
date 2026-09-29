@@ -912,6 +912,21 @@ async function auditFixedParams(db, { run = defaultRunner() } = {}) {
             ? `this hardcoded parameter SUPPRESSES ALL RESULTS — the recipe returns nothing with it and ${without} records without it`
             : `removing this hardcoded parameter returns ${without} records instead of ${baseline}; confirm it is filtering deliberately`,
         });
+      } else {
+        // Reported even when fine, because an audit that prints only problems
+        // cannot distinguish "checked five recipes and they are clean" from
+        // "checked nothing". auditWorking and auditParameters both name every
+        // recipe they examined; this one did not, and its empty output was
+        // therefore unreadable — the first time it was ever run, "0 findings"
+        // could not be told apart from "it skipped everything".
+        findings.push({
+          recipe: target,
+          param: `${p.key}=${p.value}`,
+          recordsWith: baseline,
+          recordsWithout: without,
+          severity: 'ok',
+          why: `deliberate filter: ${baseline} records with it, ${without} without — removing it does not unlock anything`,
+        });
       }
     }
   }

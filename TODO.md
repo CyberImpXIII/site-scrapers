@@ -157,6 +157,36 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
+## 0d. `audit.js fixed-params` compares COUNTS, which a filter can pass blind
+
+Run for the first time on 2026-09-29 — it was the last of the three live
+audits never executed. Three recipes have a hardcoded query param; all three
+came back clean, meaning none of them suppresses results. That part is a real
+answer.
+
+Two things it cannot currently see:
+
+- **A filter that changes WHICH results you get without changing HOW MANY is
+  invisible.** dice reported 34 records with `filters.workplaceTypes=Remote`
+  and 33 without, which reads as "the filter does nothing" — but every one of
+  30 records in a separate run was `Remote` or `Remote or <place>`, so it is
+  filtering exactly as intended. The counts were similar by coincidence.
+  `auditParameters` already solved this: it compares record IDENTITY via
+  `ids()`, not counts. This audit should do the same.
+- **A page-size cap makes the comparison meaningless.** linkedin reported
+  60 vs 60 and ziprecruiter 20 vs 20 — both are almost certainly the page
+  size, not the effect of the filter. With identity comparison this would
+  resolve itself; with counts it cannot.
+
+Neither is urgent: no recipe is currently suppressing results, which is the
+failure this audit exists to catch (usajobs' hardcoded `rmi=true`). But an
+`ok` from it is weaker evidence than it looks.
+
+Fixed in the same run: the audit reported only FINDINGS, so its first-ever
+output of "0" could not be told apart from "it checked nothing". It now names
+every recipe it examined with the two counts, the way `auditWorking` and
+`auditParameters` already do.
+
 ## 0c. A listing record cannot carry a PAGE-level fact (2026-09-29)
 
 Found while handing the Greenhouse recipe to the data-bridge session. On an
