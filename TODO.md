@@ -71,6 +71,51 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## Site primitives — slice 1 DONE, slices 2 and 3 next
+
+Slice 1 (2026-09-28): `node primitives.js show <hostname>` / `./dev.sh page
+<hostname>` pool what every recipe on a page knows. **Derived, not stored** —
+see the header of `lib/primitives.js` for why, and do not add a table without
+first hitting something that genuinely cannot be derived.
+
+### Slice 2 — record what is NOT derivable
+
+Slice 1 can only report actions a *recipe* already uses. The two things it
+cannot answer are the interesting ones:
+
+- **An action tried speculatively.** "Does `dismiss_overlay` do anything on
+  this page?" has no answer unless a recipe already references it. Running the
+  diagnostic actions against a page and recording the outcome is what makes
+  primitives predictive rather than retrospective.
+- **A page with no recipe at all.** Probing before writing the first recipe is
+  exactly when the guesswork is worst, and today that knowledge has nowhere
+  to live.
+
+This is where storage becomes necessary, so it also needs the three gates
+slice 1 avoided: a write path through a sanctioned CLI, a claim that is
+**earned by a run** (an action "works here" only if a run says so — the rule
+`status` already follows), and **dating plus a staleness audit**, because a
+primitive asserting `dismiss_overlay` works on a page that has since changed is
+precisely the "stale notes are worse than none" failure in `docs/lessons.md`.
+
+Keep the identity function as the only definition of "same page"
+(`lib/pageIdentity.js`) — a second notion of page identity is how the two
+silently stop merging.
+
+### Slice 3 — conditional priority for generic actions
+
+The goal Jacob stated: try the actions most likely to work here *first*, so
+recipe-building gets more programmatic and finds failure points earlier.
+
+Half of it exists. `audit.js repeats` (`findRepeatedSequences`) already finds
+step sequences duplicated across recipes, which is the "what should become a
+new generic action" question. What is missing is the ranking input, which is
+slice 2's data: for a page of this shape, which actions have worked before.
+
+Worth noting before building: ranking needs a notion of page *similarity*, not
+just page identity — "an ATS posting page" is the useful class, and identity is
+exact. That is a real design question, not a chore.
+
 ## 0. Seams found but NOT yet gated (2026-09-28)
 
 Found while gating the hook layer, under the "Gate the seams" directive in
