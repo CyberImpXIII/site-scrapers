@@ -26,6 +26,7 @@
 //   "ready_timeout_ms":25000, "nav_template":"...", "nav_params_schema":"{}",
 //   "notes":"...", "fields":[{"field_name":"title","extract_kind":"positional_segment","segment_index":0}]}
 // Only the keys you pass are changed; "fields" replaces the whole set.
+// "notes_append" adds to the existing notes rather than replacing them.
 // Status is never set here — that is verify.js's job, from a real run.
 
 // node:sqlite emits an ExperimentalWarning on every run, which lands on
@@ -138,10 +139,26 @@ async function main() {
       { action: 'wait', ms: wait },
       ...tail,
     ]);
+    // Probe with the TARGET host's saved session, not logged out. The prober
+    // used to pass noSession unconditionally, which made it structurally
+    // unable to see any page that needs one — and it reported that as a fact
+    // about the page ("card_selector matched nothing") rather than as its own
+    // blindness. joblist.ala.org returns 21 records with its session and 0
+    // without, so every probe against it was confidently wrong. A probe is
+    // supposed to show what the recipe will see. --no-session restores the
+    // clean-state behaviour when that is what you actually want.
+    const noSession = process.argv.includes('--no-session');
+    let sessionHostname = null;
+    try {
+      sessionHostname = new URL(a).hostname;
+    } catch {
+      // Not a URL — leave the jar to the prober's own hostname rather than
+      // guessing, which is the old behaviour and no worse than it.
+    }
     const r = await runEngine(`${PROBER}#action:default`, {
       url: a,
       sel: (b && !b.startsWith('--') ? b : '') || '',
-      noSession: true,
+      ...(noSession || !sessionHostname ? { noSession: true } : { sessionHostname }),
       noDiagnostics: true,
     });
     if (!r.success) die(`prober run failed: ${r.error}`);
@@ -259,11 +276,22 @@ async function main() {
         with: { card_selector: '{{sel}}', expected: '{{expected}}' },
       },
     ]);
+    // Same session reasoning as the probe commands above, and it bites harder
+    // here: the run that learned these values used the recipe's session, so
+    // probing for them logged out would report selector:null for every field
+    // — which reads as "every value is derived" rather than "I could not load
+    // the page". Key the jar to the host the recipe actually visited.
+    let matchSessionHost = null;
+    try {
+      matchSessionHost = new URL(r.url).hostname;
+    } catch {
+      matchSessionHost = site.hostname;
+    }
     const p = await runEngine(`${PROBER}#action:default`, {
       url: r.url,
       sel: site.card_selector,
       expected: JSON.stringify(expected),
-      noSession: true,
+      ...(matchSessionHost ? { sessionHostname: matchSessionHost } : { noSession: true }),
       noDiagnostics: true,
     });
     if (!p.success) die(`prober run failed: ${p.error}`);
@@ -319,6 +347,10 @@ async function main() {
       // Distinguishes "the page does not say this" from "no card carried source
       // text", which look identical in a hit count of zero.
       searchableRecords: searchable,
+      timedOut: r.timedOut,
+      error: r.error ?? null,
+      failedStep: r.failedStep ?? null,
+      debugDir: r.debugDir ?? null,
       pattern: c,
       ...grepRaw(jobs, c),
     });
@@ -334,7 +366,17 @@ async function main() {
       target: a,
       success: r.success,
       count: r.count ?? jobs.length,
+      // The same failure detail peek reports. Omitting it meant a failed run
+      // printed "success=false n=0" and nothing else, which forces a SECOND
+      // live run just to find out what broke -- the exact fault CLAUDE.md
+      // names, committed here within an hour of writing the rule down.
+      url: r.url,
+      timedOut: r.timedOut,
+      partialResults: r.partialResults ?? false,
       error: r.error ?? null,
+      failedStep: r.failedStep ?? null,
+      failureContext: r.failureContext ?? null,
+      debugDir: r.debugDir ?? null,
       fields: distinctByField(jobs),
       // Named for what it means rather than what it is: every entry here is a
       // pair of fields that may be reading the same element.
@@ -371,6 +413,17 @@ async function main() {
           `Use: node verify.js ${a} '<params>'  (add --attended to prove a person alone is sufficient). ` +
           'Settable by hand: broken, needs-review, blocked-attn (the last requires notes).'
       );
+    }
+
+    // notes_append adds to the existing notes instead of replacing them. A
+    // recipe's notes are its accumulated history — why a selector is odd, what
+    // was already ruled out — and that is the part nobody re-derives. Setting
+    // `notes` to add one finding means reproducing the whole existing string
+    // by hand, which has twice meant writing a throwaway script to read the
+    // old value first. Resolved here so the next append is one key.
+    if ('notes_append' in def) {
+      if ('notes' in def) die('pass either "notes" (replace) or "notes_append" (add to), not both');
+      def.notes = `${site.notes || ''}\n${def.notes_append}`.trim();
     }
 
     const cols = [

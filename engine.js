@@ -928,7 +928,25 @@ async function main() {
   // construction instead of depending on every caller remembering to pass
   // noSession — a footgun whose failure mode looks like "the site changed".
   const sessionDisabled = params.noSession || site.session_mode === 'none';
-  const sessionOpt = sessionDisabled ? undefined : { hostname: site.hostname, sessionName };
+  // The jar is keyed by the recipe's hostname, which is right for every real
+  // recipe because that IS the host it visits. It is wrong for lab.js's
+  // prober: that recipe lives under lab-prober.internal while navigating to
+  // whatever URL is being diagnosed, so no cookie of the real site ever
+  // matches its jar (saveSessionCookies filters by domain). The probe then
+  // loads the page logged out and reports "card_selector matched nothing" —
+  // a confidently WRONG answer about the page rather than a failure to read
+  // it. joblist.ala.org is the case that surfaced it: its recipe returns 21
+  // records and 0 with noSession, and every probe against it read as a dead
+  // selector. sessionHostname lets a caller key the jar to the host it is
+  // actually visiting.
+  // A BORROWED jar is always read-only: you may look through another host's
+  // session to see what it sees, but you may not write to it. Without this a
+  // probe would persist its own cookies into the jar a real recipe depends on.
+  const borrowedSession = Boolean(params.sessionHostname) && params.sessionHostname !== site.hostname;
+  const sessionHostname = params.sessionHostname || site.hostname;
+  const sessionOpt = sessionDisabled
+    ? undefined
+    : { hostname: sessionHostname, sessionName, ...(borrowedSession ? { readOnly: true } : {}) };
   // Failure-diagnostics capture (screenshot/DOM/console/network) is ON BY
   // DEFAULT too; params.noDiagnostics: true skips it for one call.
   const debugOpt = params.noDiagnostics ? undefined : siteMeta;

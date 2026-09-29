@@ -252,7 +252,34 @@ Doing it the obvious way first produced two **wrong** values that no null count
 would have shown — `commitment: "Freelance"` and `experience_level:
 "Executive"` read out of TITLES by a blob regex — so this one is also the
 worked example for why `lab.js distinct` and `lab.js grep` now exist.
-`joblist.ala.org` still outstanding.
+**`joblist.ala.org` DONE 2026-09-29 (v1.9) but NOT re-verified — see below.**
+Also never thin: the old `card_selector` matched the innermost wrapper around
+the title link, so the card's entire text *was* the title and
+`probe_card_anatomy` reported it as having no text-bearing children at all. The
+real card is three levels up, `div:has(> div > div > a[href*="/job/"])`, with
+clean hooks (`div.job-company-row`, `div.job-location`, `div.job-posted-date`).
+All four ancestor levels report the same count of 28, so counting cannot tell
+them apart — the text *sample* is what does, via `lab.js sel`. A run returned
+**25 records with all seven fields non-null**.
+
+Two things left open, deliberately:
+- **Do not run `verify.js` on it yet.** Right after that run the site stopped
+  serving its list on ten consecutive attempts, having served it roughly one in
+  three before, following ~15 requests in a short window. That reads as rate
+  limiting, and a verify against a rate-limited site would record a verdict of
+  `broken` against a definition that demonstrably returns 25 full records.
+  Leave it alone, then verify. (Not routed around: no retry loop, no backoff
+  trickery, no UA change.)
+- **`labels` is unconfirmed.** It came back non-null on all 25, but the anatomy
+  probe found the badge spans on only 1 of 8 sampled cards. Either the first
+  page is genuinely all-Preferred (it is sorted that way) or the field is
+  picking up something that is not a per-card badge. `./dev.sh distinct
+  joblist.ala.org '{}'` settles it: one distinct value across every record
+  means it is not a per-card field and should be dropped.
+
+**This site is ~1-in-3 flaky even when healthy**, which is recorded in its
+notes. An empty result here is a retry, not breakage — and that is worth
+remembering before anyone reads a failure as a regression.
 
 Not defects, recorded so they are not re-investigated: `glassdoor.com` is
 genuinely `working` (30 records throughout — the report of it returning
@@ -377,6 +404,31 @@ written down until Jacob asked whether anything had been left out — which is
 its own lesson: **an item flagged in conversation and not written to this file
 does not exist.** Write it here when you see it, not at the end.
 
+- **The gate races its own verification tests over the live DB.** `guardedChange`
+  applies the mutation and *then* runs the scoped test files — and several of
+  those files (`page-identity`, `primitives`, `audit`) assert against the real
+  `data/scrapers.db` rather than a fixture. So the gate's own write is in flight
+  while the tests that are meant to validate it walk the same rows. Observed
+  2026-09-29 applying a note to `joblist.ala.org`: the *identical* input rolled
+  back on three attempts and passed on two, with `introducedFindings: []` and
+  `actionTests.failed: 0` on the passing ones. The same nine files run alone
+  pass 5 times out of 5. **A gate that intermittently rejects a valid change is
+  worse than no gate**, because the failure teaches you to re-run it until it
+  passes — which is exactly the habit a gate exists to prevent. One contributing
+  cause is already fixed (`page-identity` was counting other files' `127.0.0.1`
+  fixtures as live data); the structural one is not. The fix is for live-DB
+  tests to run against a copy, or for the gate to test outside the mutation
+  window. Note also that **every rejected attempt still bumps the version** —
+  the joblist note went v1.6 → v1.8 before it landed — so retrying leaves
+  history churn behind.
+- **`lab.js`'s prober registers itself as `action_type: 'login'` and performs no
+  login** (`lab.js:91`). It is there only to satisfy the action-type taxonomy
+  gate, which has no category for a read-only diagnostic. So the taxonomy — the
+  thing that exists to make an action's purpose a deliberate choice — carries a
+  false entry, and anyone auditing action types sees a login recipe that never
+  logs in. Either add a `diagnose` type or exempt the internal prober; do not
+  leave a wrong value in the data whose whole job is to be right. Found while
+  trying to register a scratch diagnostic recipe and being correctly refused.
 - **Probe-knowledge categories are consumed by string.** `lib/probes.js` reads
   `probeKnowledge('card_anatomy', 'utility_class')`,
   `probeKnowledgeGrouped('card_anatomy', 'field_shape')`,

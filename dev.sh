@@ -104,6 +104,33 @@ case "$cmd" in
     # time -- which is how one of them gets dropped when the other is slow.
     #
     # Exits non-zero if the suite fails, so it can gate rather than just report.
+    #
+    # REFUSES TO RUN CONCURRENTLY. Two overlapping checks share one
+    # data/scrapers.db: the suite's fixtures are inserted and deleted by both
+    # at once, so each run sees the other's half-built state and reports
+    # failures that have nothing to do with the code. Observed 2026-09-29 --
+    # two overlapping runs reported 15 failures and 5 failures on a tree whose
+    # tests pass 5 times out of 5 when run alone. That is the worst kind of
+    # result, because "SUITE FAILED" is indistinguishable from a real
+    # regression and the natural response is to re-run until it passes, which
+    # is exactly the habit a pre-commit gate exists to prevent. Blocked rather
+    # than documented, per CLAUDE.md: make the wrong thing impossible.
+    lockdir="$DIR/.check.lock"
+    if ! mkdir "$lockdir" 2>/dev/null; then
+      holder=$(cat "$lockdir/pid" 2>/dev/null || echo "?")
+      # A crashed run leaves the directory behind; reclaim it rather than
+      # wedging the gate forever, but only once we KNOW that pid is gone.
+      if [ "$holder" != "?" ] && kill -0 "$holder" 2>/dev/null; then
+        echo "another ./dev.sh check is already running (pid $holder)."
+        echo "Concurrent checks share one DB and produce meaningless failures — wait for it, or kill it."
+        exit 2
+      fi
+      echo "   (reclaimed a stale lock from pid $holder)"
+      rm -rf "$lockdir"; mkdir "$lockdir" || { echo "could not take the check lock"; exit 2; }
+    fi
+    echo $$ > "$lockdir/pid"
+    trap 'rm -rf "$lockdir"' EXIT INT TERM
+
     echo "-- suite"
     # test.sh is already quiet, so a clean run collapses to one line here. When
     # it fails, print what it said IN FULL -- the assertion, the diff and the
@@ -232,7 +259,14 @@ case "$cmd" in
     "$NODE_BIN" lab.js distinct "$1" "${2:-{\}}" | "$NODE_BIN" -e '
       let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
         const d=JSON.parse(raw);
-        console.log(`${d.target}  success=${d.success} n=${d.count}${d.error?` ${String(d.error).slice(0,60)}`:""}`);
+        console.log(`${d.target}  success=${d.success} n=${d.count}${d.timedOut?" TIMEDOUT":""}${d.partialResults?" PARTIAL":""}${d.error?` ${String(d.error).slice(0,80)}`:""}`);
+        if (!d.success) {
+          // A failed run has to say WHY here, or reading it costs another run.
+          if (d.failedStep) console.log(`  failedStep: ${JSON.stringify(d.failedStep).slice(0,160)}`);
+          if (d.failureContext) console.log(`  context: ${JSON.stringify(d.failureContext).slice(0,200)}`);
+          if (d.debugDir) console.log(`  debugDir: ${d.debugDir}`);
+          if (!d.error && !d.failedStep) console.log("  no error reported -- run `node lab.js distinct <target> '<params>'` for the raw result");
+        }
         for (const [k,v] of Object.entries(d.fields||{})) {
           const vals=v.top.map(t=>`${JSON.stringify(t.value).slice(0,34)}${t.n>1?` x${t.n}`:""}`).join(" | ");
           console.log(`  ${k.padEnd(18)} ${String(v.distinct).padStart(3)} distinct  ${vals}${v.truncated?` (+${v.truncated} more)`:""}`);

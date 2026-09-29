@@ -177,6 +177,15 @@ test('it groups the pages that actually exist, and merges nothing else', () => {
   const db = openDb();
   const sites = listSites(db)
     .filter(s => !String(s.hostname).endsWith('.internal'))
+    // Other test files register fixture recipes on 127.0.0.1 against an
+    // ephemeral local port, insert them, and delete them again -- all while
+    // this file is walking the same database, because test files run in
+    // PARALLEL. They are not "live data" in the sense this test means, and
+    // including them makes the assertions below depend on which fixtures
+    // happen to exist at this instant. That surfaced as this test failing
+    // inside the gate while passing in isolation and in a full suite run, the
+    // moment one more file gained a fixture.
+    .filter(s => String(s.hostname) !== '127.0.0.1')
     .map(s => getSite(db, s.hostname, s.page_type, s.recipe_name))
     // A row can vanish between the list and the read: test files run in
     // PARALLEL, and another file's fixture cleanup deletes recipes from this
