@@ -161,6 +161,96 @@ test('a primitive names every recipe on the page and the failures of its host', 
   assert.equal(p.knownFailures[0].resolution, 'raised the timeout');
 });
 
+// --- suggestPlan: what to try here, and why in that order -------------------
+
+const obs = (over = {}) => ({
+  kind: 'generic_action', hostname: 'x.com', page_key: 'x.com\u001f{{url}}',
+  observed_url: 'https://x.com/1', subject: 'dismiss_overlay', outcome: 'changed',
+  detail: 'd', observed_at: new Date().toISOString(), times_observed: 1, ...over,
+});
+
+test('the plan is ordered by the KIND of evidence, not by a score', () => {
+  const { suggestPlan } = require('../lib/primitives');
+  const HERE = 'x.com\u001f{{url}}';
+  const plan = suggestPlan({
+    pageKey: HERE,
+    hostname: 'x.com',
+    observations: [obs({ subject: 'known_one' })],
+    allObservations: [
+      obs({ subject: 'known_one' }),
+      // did something on ANOTHER page of this host
+      obs({ subject: 'host_one', page_key: 'x.com\u001fhttps://x.com/{{c}}' }),
+      // did something on a different host entirely -> base rate only
+      obs({ subject: 'base_one', hostname: 'y.com', page_key: 'y.com\u001f{{url}}' }),
+    ],
+    availableActions: ['known_one', 'host_one', 'base_one', 'never_tried'],
+  });
+  assert.deepEqual(
+    plan.map(p => `${p.tier}:${p.action}`),
+    ['same-host:host_one', 'base-rate:base_one', 'untried:never_tried', 'known-here:known_one'],
+    'same-host beats base-rate beats untried, and what is already known here sinks to the bottom'
+  );
+});
+
+test('a stale measurement goes to the FRONT, not the bottom', () => {
+  // The one case where something already measured here is the most urgent
+  // thing to run: the answer exists but may describe a page that has changed.
+  const { suggestPlan } = require('../lib/primitives');
+  const { STALE_AFTER_DAYS } = require('../lib/observations');
+  const old = new Date(Date.now() - (STALE_AFTER_DAYS + 5) * 86400000).toISOString();
+  const plan = suggestPlan({
+    pageKey: 'x.com\u001f{{url}}',
+    hostname: 'x.com',
+    observations: [obs({ subject: 'gone_stale', observed_at: old })],
+    allObservations: [obs({ subject: 'gone_stale', observed_at: old })],
+    availableActions: ['gone_stale', 'never_tried'],
+  });
+  assert.equal(plan[0].tier, 'retry-here');
+  assert.match(plan[0].why, /may have changed/);
+});
+
+test('base rate counts PAGES, so one page trialled often does not outvote many', () => {
+  const { suggestPlan } = require('../lib/primitives');
+  const many = [];
+  // `often` did something on one page, measured repeatedly.
+  for (let i = 0; i < 5; i++) many.push(obs({ subject: 'often', hostname: 'z.com', page_key: 'z.com\u001fp1' }));
+  // `broad` did something on three distinct pages.
+  for (const p of ['p1', 'p2', 'p3']) many.push(obs({ subject: 'broad', hostname: 'z.com', page_key: `z.com\u001f${p}` }));
+  const plan = suggestPlan({
+    pageKey: 'new.com\u001f{{url}}', hostname: 'new.com',
+    observations: [], allObservations: many, availableActions: ['often', 'broad'],
+  });
+  assert.equal(plan[0].action, 'broad', 'three pages of evidence beats one page measured five times');
+  assert.equal(plan.find(p => p.action === 'broad').rate, '3/3');
+  assert.equal(plan.find(p => p.action === 'often').rate, '1/1');
+});
+
+test('an action that reliably does nothing sinks below one that does something', () => {
+  const { suggestPlan } = require('../lib/primitives');
+  const all = [
+    obs({ subject: 'works', hostname: 'z.com', page_key: 'z.com\u001fp1', outcome: 'changed' }),
+    obs({ subject: 'works', hostname: 'z.com', page_key: 'z.com\u001fp2', outcome: 'changed' }),
+    obs({ subject: 'inert', hostname: 'z.com', page_key: 'z.com\u001fp1', outcome: 'no_effect' }),
+    obs({ subject: 'inert', hostname: 'z.com', page_key: 'z.com\u001fp2', outcome: 'no_effect' }),
+  ];
+  const plan = suggestPlan({
+    pageKey: 'new.com\u001f{{url}}', hostname: 'new.com',
+    observations: [], allObservations: all, availableActions: ['inert', 'works'],
+  });
+  assert.equal(plan[0].action, 'works');
+  assert.equal(plan.find(p => p.action === 'inert').rate, '0/2', 'still listed — no_effect elsewhere is not proof about here');
+});
+
+test('errors elsewhere do not count as the action doing something', () => {
+  const { suggestPlan } = require('../lib/primitives');
+  const plan = suggestPlan({
+    pageKey: 'new.com\u001f{{url}}', hostname: 'new.com', observations: [],
+    allObservations: [obs({ subject: 'broken', hostname: 'z.com', page_key: 'z.com\u001fp1', outcome: 'error' })],
+    availableActions: ['broken'],
+  });
+  assert.equal(plan[0].rate, '0/1');
+});
+
 test('allPages keeps recipes with no entry point out of the page list', () => {
   const { pages, unkeyed } = allPages([
     recipe(),

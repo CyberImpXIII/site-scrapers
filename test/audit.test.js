@@ -166,6 +166,44 @@ test('a sequence made only of references is already factored out', () => {
   assert.deepEqual(found, [], 'reporting these would advise extracting an extraction');
 });
 
+test('a goto plus an already-extracted reference is not a candidate', () => {
+  // This shape led the real report: "goto > run_generic_action" in 8 recipes.
+  // There is nothing to factor out -- the reference IS the extracted part and
+  // the goto's url is site knowledge that differs per recipe -- so the audit's
+  // top finding was, in effect, "action recipes exist". Noise in a report that
+  // is meant to be read is worse than a shorter report.
+  const shape = [
+    { action: 'goto', url: 'https://a.com/x' },
+    { action: 'run_generic_action', ref: 'describe_form' },
+  ];
+  assert.deepEqual(findRepeatedSequences([recipe('a.com#action:x', shape), recipe('b.com#action:x', shape)]), []);
+});
+
+test('one substantive step between references is still not worth an action', () => {
+  // Same reason MIN_SEQUENCE is 2: a single shared step does not earn a
+  // generic action, it earns being written twice.
+  const shape = [
+    { action: 'goto', url: 'https://a.com/x' },
+    { action: 'click', selector: '#apply' },
+    { action: 'run_generic_action', ref: 'describe_form' },
+  ];
+  assert.deepEqual(findRepeatedSequences([recipe('a.com#action:x', shape), recipe('b.com#action:x', shape)]), []);
+});
+
+test('two substantive steps around a reference ARE a candidate', () => {
+  // The boundary in the other direction: real shared procedure still gets
+  // reported even when a reference sits in the middle of it.
+  const shape = [
+    { action: 'goto', url: 'https://a.com/x' },
+    { action: 'click', selector: '#apply' },
+    { action: 'run_generic_action', ref: 'dismiss_overlay' },
+    { action: 'waitForSelector', selector: '#form' },
+  ];
+  const found = findRepeatedSequences([recipe('a.com#action:x', shape), recipe('b.com#action:x', shape)]);
+  assert.ok(found.length >= 1, 'a sequence with real substance must still be reported');
+  assert.ok(found[0].recipes.length === 2);
+});
+
 test('longer shared sequences outrank shorter ones', () => {
   const long = [
     { action: 'waitForSelector', selector: '.a' },

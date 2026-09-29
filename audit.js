@@ -562,9 +562,24 @@ function findRepeatedSequences(recipes) {
     const sigs = r.raw.map(signature);
     for (let len = Math.min(6, sigs.length); len >= MIN_SEQUENCE; len--) {
       for (let i = 0; i + len <= sigs.length; i++) {
-        const seq = sigs.slice(i, i + len).join(' > ');
-        // Sequences that are purely references are already factored out.
-        if (!sigs.slice(i, i + len).some(x => !x.startsWith('run_generic_action'))) continue;
+        const window = sigs.slice(i, i + len);
+        const seq = window.join(' > ');
+        // A candidate needs SUBSTANCE to extract, not just repetition.
+        //
+        // Skipping only all-reference sequences was too weak: "goto >
+        // run_generic_action" appeared in 8 recipes and led the report, but
+        // there is nothing there to factor out — the reference IS the already-
+        // extracted part, and the goto's url is site knowledge that differs
+        // per recipe. Every action recipe has that shape, so the audit's top
+        // finding was "action recipes exist".
+        //
+        // Substance means steps that are neither a reference nor a bare goto.
+        // Two of them, because a single shared step is not worth an action —
+        // the same reason MIN_SEQUENCE exists.
+        const substantive = window.filter(
+          x => !x.startsWith('run_generic_action') && !x.startsWith('run_action') && !x.startsWith('goto')
+        );
+        if (substantive.length < MIN_SEQUENCE) continue;
         if (!seen.has(seq)) seen.set(seq, new Set());
         seen.get(seq).add(r.key);
       }

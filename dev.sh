@@ -20,6 +20,8 @@
 #   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
 #   ./dev.sh board <company> ...            # which ATS hosts each company's job board (one cheap HTTP check each)
 #   ./dev.sh page <hostname>                # what is already known about this page, before you open a browser
+#   ./dev.sh plan <url|hostname>            # which generic actions to try here, in the order worth trying them
+#   ./dev.sh trial <url> [--wait=MS]        # RUN them and record what each one did
 #   ./dev.sh hooks [--sync]                 # verify the hook layer across every tool folder (--sync pushes this repo's copies)
 #   ./dev.sh known <hostname>               # every recipe registered for a hostname, as "target<TAB>status"
 #   ./dev.sh failures <hostname>            # what has broken here before, one line each, best match first
@@ -252,6 +254,34 @@ case "$cmd" in
             console.log(`  BROKE    [${f.type}] x${f.occurrences} -> ${(f.resolution||"no resolution recorded").slice(0,100)}`);
           }
         }
+      });' || exit 1
+    ;;
+
+  plan)
+    # What to try here and why, as lines. The `run` line at the bottom is the
+    # command that does it, so the plan is executable rather than advisory.
+    [ $# -ge 1 ] || usage
+    "$NODE_BIN" primitives.js suggest "$1" | "$NODE_BIN" -e '
+      let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
+        const d=JSON.parse(raw);
+        if (d.success === false) { console.log(d.error); process.exit(1); }
+        console.log(d.page);
+        for (const p of d.plan) console.log(`  ${p.tier.padEnd(12)} ${p.action.padEnd(26)} ${p.why}`);
+        if (d.run) console.log(`\n  ${d.run}`);
+      });' || exit 1
+    ;;
+
+  trial)
+    # Run the actions and record what each one did. One line per action; the
+    # JSON form is `node primitives.js try`.
+    [ $# -ge 1 ] || usage
+    url="$1"; shift
+    "$NODE_BIN" primitives.js try "$url" "$@" | "$NODE_BIN" -e '
+      let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
+        const d=JSON.parse(raw);
+        if (d.success === false) { console.log(d.error); process.exit(1); }
+        console.log(`${d.url}\n  filed against: ${d.attachedTo}`);
+        for (const t of d.tried) console.log(`  ${t.outcome.padEnd(10)} ${t.action.padEnd(26)} ${t.detail}`);
       });' || exit 1
     ;;
 

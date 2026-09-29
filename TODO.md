@@ -119,6 +119,18 @@ Keep the identity function as the only definition of "same page"
 (`lib/pageIdentity.js`) — a second notion of page identity is how the two
 silently stop merging.
 
+**Slice 3 is DONE** (2026-09-29): `./dev.sh plan <url|hostname>` orders the
+actions worth trying on a page, and `audit.js repeats` no longer reports
+already-factored shapes. What is deliberately still open is below, under
+"page similarity".
+
+One finding worth acting on: **`probe_card_candidates` under-performs on
+Greenhouse's compact rows.** On `job-boards.greenhouse.io/splice` it proposed
+`p x5` where the working recipe uses `tr.job-post` x7. A Greenhouse row is a
+title plus a location, so it is probably falling under `repeated_structure`'s
+average-text-length floor — the same floor that correctly rejects nav lists.
+Worth checking whether that threshold can distinguish them.
+
 ### Slice 3 — conditional priority for generic actions
 
 The goal Jacob stated: try the actions most likely to work here *first*, so
@@ -132,6 +144,45 @@ slice 2's data: for a page of this shape, which actions have worked before.
 Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
+
+## 0b. Concerns carried out of slices 1-2 (2026-09-29)
+
+Not bugs — things that are true, that I would want the next session to know
+before trusting or extending this.
+
+- **The card probe proposes selectors the audit warns about.** On the Lever
+  board `probe_card_candidates` offered `div:has(div[data-qa="btn-apply"])`,
+  and `audit.js units` flags a descendant `:has()` as over-matching ancestors.
+  One part of the system recommends what another flags. It happened to match
+  exactly 20, the same as the recipe's own selector, so it was right here —
+  but the probe should either prefer `:has(> ...)` or say the count needs
+  checking. Currently it says neither.
+- **A trial costs one page load per action, and there are now 8 defaults.**
+  On a slow site (Lever wants 25s) that is minutes per page. The isolation is
+  only needed for MUTATING actions — probes change nothing by definition, so
+  they could share a single load. That would cut a default run from 8 loads to
+  5 with no loss of correctness, and is the obvious next optimisation.
+- **An observation is filed against a page TEMPLATE but measured on one URL.**
+  The Lever board findings come from `/palantir`. Another company's board
+  could have a different consent state or size. Recording it as a property of
+  `https://jobs.lever.co/{{company}}` is an approximation — a reasonable one,
+  but if two trials of the same page disagree, that is why, and
+  `times_observed` resetting is the signal.
+- **`reported` does not distinguish "found what you need" from "characterised
+  the page".** `diagnose_antibot: reported` and `probe_card_candidates:
+  reported` rank identically on outcome alone. Section 3's ranking has to read
+  the summary, not just the outcome, and currently does so only loosely.
+- **Staleness is a single global 90 days.** A job board changes far more often
+  than a Workday tenant. Fine as tuning; wrong as a universal.
+- **`matchesEntryTemplate` treats `{{param}}` as exactly one path segment**, so
+  a template whose placeholder spans slashes will not match its own URLs.
+  Correct for every recipe here; worth knowing before adding one that is not.
+- **Two internal scaffolding recipes now exist** (`lab-prober.internal`,
+  `primitive-trial.internal`). `./dev.sh clean` removes them and
+  `./dev.sh health` shows them; they are harmless but they are noise in
+  `query.js sites`.
+- **`try` has no `dev.sh` wrapper**, unlike every other repeated read here, so
+  its JSON is what you get.
 
 ## 0. Seams found but NOT yet gated (2026-09-28)
 

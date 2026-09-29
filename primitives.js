@@ -279,6 +279,51 @@ function main() {
     return;
   }
 
+  if (cmd === 'suggest') {
+    if (!arg) die('Usage: node primitives.js suggest <url|hostname>');
+    const { suggestPlan } = require('./lib/primitives');
+    const { listObservations } = require('./db');
+    const { pageKeyFor, pageKeyFromParts, entryUrlFor, matchesEntryTemplate, describePageKey } = require('./lib/pageIdentity');
+    const db = openDb();
+
+    let hostname = arg;
+    let isUrl = false;
+    try { hostname = new URL(arg).hostname.replace(/^www\./, '').toLowerCase(); isUrl = true; } catch { /* a bare hostname */ }
+
+    // Same attribution rule the trial uses, so `suggest` and `try` agree about
+    // which page they are talking about.
+    const onHost = listSites(db)
+      .filter(s => String(s.hostname).toLowerCase() === hostname.toLowerCase())
+      .map(s => getSite(db, s.hostname, s.page_type, s.recipe_name));
+    const match = isUrl
+      ? onHost.filter(r => matchesEntryTemplate(arg, entryUrlFor(r)))
+          .sort((a, b) => String(entryUrlFor(b)).replace(/\{\{\w+\}\}/g, '').length
+                        - String(entryUrlFor(a)).replace(/\{\{\w+\}\}/g, '').length)[0]
+      : onHost[0];
+    const pageKey = match ? pageKeyFor(match) : (isUrl ? pageKeyFromParts(hostname, arg) : null);
+
+    const all = listObservations(db);
+    const plan = suggestPlan({
+      pageKey,
+      hostname,
+      observations: all.filter(o => o.page_key === pageKey),
+      allObservations: all,
+      availableActions: DEFAULT_TRIALS,
+    });
+    const next = plan.filter(p => p.tier !== 'known-here').map(p => p.action);
+    out({
+      target: arg,
+      page: pageKey ? describePageKey(pageKey) : `${hostname} (no recipe and no URL given — host-level guess)`,
+      plan,
+      ...(next.length ? { run: `node primitives.js try <url> --actions=${next.join(',')}` } : {}),
+      hint:
+        'Ordered by the KIND of evidence behind each, not by a score: measured-here-and-stale first, then it worked elsewhere on this host, ' +
+        'then how often it pays off anywhere, then never tried. "known-here" entries are at the bottom because there is nothing left to learn from them. ' +
+        'There is deliberately no page-similarity notion beyond same-host — see TODO.',
+    });
+    return;
+  }
+
   if (cmd === 'forget') {
     if (!arg) die('Usage: node primitives.js forget <hostname>  — drops every observation for that host');
     const { forgetObservations } = require('./db');
@@ -339,7 +384,7 @@ function main() {
     return;
   }
 
-  die(`Unknown command "${cmd ?? ''}". Use: pages | show <hostname|target> | try <url>`);
+  die(`Unknown command "${cmd ?? ''}". Use: pages | show <hostname|target> | try <url> | suggest <url|hostname> | forget <hostname>`);
 }
 
 main();
