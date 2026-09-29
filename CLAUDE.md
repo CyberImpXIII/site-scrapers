@@ -48,6 +48,14 @@ the engine is generic, so a product catalogue was arriving under `jobs` too).
 Read them with `recordsOf()` from `lib/outputShape.js` rather than reaching for
 the key, which also handles an `article` run's single record.
 
+**A URL field is absolute** (since 2026-09-29). `anchor_attribute` resolves
+`href`/`src`/`action` against the page's `baseURI`, so `record.href` is usable
+without knowing which site produced it — dice and Ashby wrote them relative,
+Greenhouse absolute, and every consumer was prefixing an origin defensively.
+Only the standard URL attributes are resolved: a `data-job-id` stays exactly
+as the site wrote it, because turning an id into a plausible URL is a wrong
+value rather than a missing one. See `lib/urlAttrs.js`.
+
 **1b. Building a SECOND recipe on a known host? Read the page first.**
 `./dev.sh page <hostname>` pools what every existing recipe on that page already
 knows: its flags (slow render, must-be-logged-out, needs a person mid-run), the

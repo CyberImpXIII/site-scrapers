@@ -9,12 +9,21 @@ function cardHtml(i) {
   // breaks between block-level boxes, not between inline siblings like
   // adjacent <span>s, which would collapse onto one line and break
   // positional_segment extraction.
+  //
+  // THE CLASSES AND data-* ATTRIBUTES ARE LOAD-BEARING, do not tidy them away.
+  // The efficiency test asserts structured output is much smaller than the raw
+  // page, and its own rationale is that raw HTML "carries markup/attributes
+  // this recipe never touches" — which a fixture of bare <div>s does not. With
+  // no markup the page was barely larger than the JSON extracted from it, so
+  // the assertion measured almost nothing and tipped over the moment hrefs
+  // became absolute (~22 chars x 10 records). Real listing markup is mostly
+  // attributes; this approximates that so the ratio means something.
   return `
-    <div>
-      <div>${i}d</div>
-      <div>Support Engineer ${i}</div>
-      <div>Remote</div>
-      <a href="/job/${i}">View job</a>
+    <div class="job-card job-card--listing" data-testid="job-card" data-job-id="job-${i}">
+      <div class="job-card__meta text-muted small" data-field="posted-at">${i}d</div>
+      <div class="job-card__title h3 fw-bold text-truncate" data-field="title">Support Engineer ${i}</div>
+      <div class="job-card__location d-flex align-items-center gap-1" data-field="location">Remote</div>
+      <a class="job-card__link btn btn-primary btn-sm" data-testid="job-link" href="/job/${i}">View job</a>
     </div>`;
 }
 

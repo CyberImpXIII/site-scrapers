@@ -72,6 +72,7 @@ const logRun = (db, run) => authorizeWrite('engine.js run telemetry', () => logR
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
+const { resolveUrlFields } = require('./lib/urlAttrs');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
 
@@ -574,8 +575,19 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
   }
 }
 
+// Read once per extraction so URL attributes can be resolved against what the
+// browser itself would resolve them against — which is baseURI, not the page
+// URL, on a page carrying a <base> tag.
+async function baseUriOf(page) {
+  try {
+    return await page.evaluate(() => document.baseURI);
+  } catch {
+    return null; // a wedged page just means hrefs stay as written
+  }
+}
+
 async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen, fields, includeRaw }) {
-  return page.evaluate(
+  const records = await page.evaluate(
     (cardAnchorText, cardSelector, cardMinTextLen, fields, includeRaw) => {
       // Two ways to find cards. card_selector (when set) matches each card
       // container directly — for sites with no literal text shared by every
@@ -698,6 +710,7 @@ async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen
     fields,
     includeRaw
   );
+  return resolveUrlFields(records, fields, await baseUriOf(page));
 }
 
 // Article pages are one record per page, not repeated cards. Pull text from
@@ -708,7 +721,7 @@ async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen
 // is often cleaner/more stable than positional blob parsing) and 'full_blob'
 // (the entire post-truncation text, for a catch-all body/description field).
 async function extractArticle(page, { contentSelector, contentStopText, minTextLen, fields, includeRaw }) {
-  return page.evaluate(
+  const result = await page.evaluate(
     (contentSelector, contentStopText, minTextLen, fields, includeRaw) => {
       const container = (contentSelector && document.querySelector(contentSelector)) || document.body;
       if (!container) return { record: null, blobLen: 0 };
@@ -762,6 +775,8 @@ async function extractArticle(page, { contentSelector, contentStopText, minTextL
     fields,
     includeRaw
   );
+  if (result && result.record) resolveUrlFields([result.record], fields, await baseUriOf(page));
+  return result;
 }
 
 async function main() {

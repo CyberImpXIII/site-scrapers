@@ -11,16 +11,20 @@ quietly skipping it — several of these are decisions, not chores.
 
 ## Waiting on Jacob — nothing else can move these
 
-**Should `href` be resolved to an absolute URL?** An output-contract change, so
-it is his call rather than one to make late in a session.
+**~~Should `href` be resolved to an absolute URL?~~ DONE 2026-09-29** — Jacob
+said make them absolute unless there was a good reason not to. There wasn't;
+there were four things to handle, all handled: only standard URL attributes
+are resolved (a `data-job-id` must not become a URL), an empty attribute must
+not become the page's own URL, an unparseable value keeps what the site said,
+and with no readable `baseURI` it degrades to the old behaviour. Resolved once
+on the Node side against `document.baseURI` rather than inside each of the two
+extraction paths. Verified live: dice and Ashby now absolute, Greenhouse and
+Lever unchanged. `lib/urlAttrs.js`, `test/url-attrs.test.js`.
 
-**This now blocks something real.** 2026-09-29: the data-bridge session is
-mapping `dice.com#listing` output into Proficiently, and every one of its 30
-`href` values is relative (`/job-detail/...`). The consumer has to prefix the
-origin itself, and since Greenhouse returns absolute while Ashby and dice
-return relative, it has to do so defensively — per recipe, forever, or once
-here. That is the argument for doing it: the inconsistency does not stay
-inside this repo, it propagates to every consumer.
+What settled it: the data-bridge session was mapping `dice.com#listing` into
+Proficiently and all 30 of its `href` values were relative, so the consumer
+would have had to prefix an origin defensively, per recipe, forever. The
+inconsistency did not stay inside this repo — it propagated.
 
 `anchor_attribute` returns the raw attribute, so a recipe's `href` is absolute
 when the site writes it absolute (Greenhouse) and relative when it does not

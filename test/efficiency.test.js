@@ -77,7 +77,9 @@ test('extracts all fixture cards correctly', async () => {
   assert.equal(json.success, true);
   assert.equal(json.count, CARD_COUNT);
   assert.equal(json.records[0].title, 'Support Engineer 1');
-  assert.equal(json.records[0].href, '/job/1');
+  // Absolute, resolved against the page. The fixture writes href="/job/1";
+  // a caller should not have to know that to use it. See lib/urlAttrs.js.
+  assert.match(json.records[0].href, /^http:\/\/127\.0\.0\.1:\d+\/job\/1$/);
 });
 
 test('a result far larger than the pipe buffer arrives intact', async () => {
