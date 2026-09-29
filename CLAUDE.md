@@ -48,6 +48,16 @@ the engine is generic, so a product catalogue was arriving under `jobs` too).
 Read them with `recordsOf()` from `lib/outputShape.js` rather than reaching for
 the key, which also handles an `article` run's single record.
 
+**1b. Building a SECOND recipe on a known host? Read the page first.**
+`./dev.sh page <hostname>` pools what every existing recipe on that page already
+knows: its flags (slow render, must-be-logged-out, needs a person mid-run), the
+params and the values proven to work, which generic actions have demonstrably
+run there, and what has broken on that host before. Three pages here already
+carry two recipes each and every pair was characterised twice, because nothing
+connected them. An action listed as "ran here via a working recipe" is evidence;
+one absent from the list has never been tried here, which is not the same as not
+working.
+
 **2. Writes are BLOCKED outside a sanctioned path.**
 
 | to do this | use |
@@ -144,8 +154,9 @@ verify.js   <target> '<params>' [--dry] [--attended]
 audit.js    units | inline | repeats | literals | hardcoded | provenance  (offline)
             params | working | fixed-params                              (LIVE, minutes)
 failures.js match | record | common | list | types | signatures | probe-knowledge
+primitives.js  pages | show <hostname>   what is known about a PAGE, across every recipe on it
 dev.sh      check | test [n] | audit | run | verify | inside | apply | waive
-            known | failures | board | browser-ok
+            page | hooks | known | failures | board | browser-ok
             health | blocked | snap | new | clean
 init.js     first-run setup after a clone
 ```

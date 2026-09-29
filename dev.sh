@@ -19,6 +19,7 @@
 #   ./dev.sh apply <target> <file.json> '<params>'          # lab.js set, then peek, to see what it did
 #   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
 #   ./dev.sh board <company> ...            # which ATS hosts each company's job board (one cheap HTTP check each)
+#   ./dev.sh page <hostname>                # what is already known about this page, before you open a browser
 #   ./dev.sh hooks [--sync]                 # verify the hook layer across every tool folder (--sync pushes this repo's copies)
 #   ./dev.sh known <hostname>               # every recipe registered for a hostname, as "target<TAB>status"
 #   ./dev.sh failures <hostname>            # what has broken here before, one line each, best match first
@@ -218,6 +219,33 @@ case "$cmd" in
         for (const [k,v] of Object.entries(d.fieldCoverage||{})) console.log(`    ${k.padEnd(18)} ${v}`);
         const s=(d.samples||[])[0]; if (s) console.log(`    first: ${JSON.stringify(s).slice(0,220)}`);
       });'
+    ;;
+
+  page)
+    # Everything already known about a page, as lines. Read this BEFORE
+    # building a second recipe on a host that already has one -- three pages
+    # here carry two recipes each and every pair was characterised twice,
+    # because nothing connected them.
+    [ $# -ge 1 ] || usage
+    "$NODE_BIN" primitives.js show "$1" | "$NODE_BIN" -e '
+      let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
+        const d=JSON.parse(raw);
+        if (d.success === false) { console.log(d.error); process.exit(1); }
+        for (const p of d.pages) {
+          console.log(`\n${p.page}`);
+          for (const r of p.recipes) console.log(`  recipe   ${r.pageType.padEnd(8)} ${r.status}`);
+          for (const [k,v] of Object.entries(p.flags)) console.log(`  FLAG     ${k}: ${v}`);
+          const declared = Object.keys(p.params.declared);
+          if (declared.length) console.log(`  params   ${declared.join(", ")}`);
+          for (const [who,vals] of Object.entries(p.params.knownWorkingValues)) {
+            console.log(`  known    ${who}: ${JSON.stringify(vals[0]).slice(0,90)}`);
+          }
+          for (const a of p.genericActions) console.log(`  action   ${a.action.padEnd(24)} ${a.evidence}`);
+          for (const f of p.knownFailures) {
+            console.log(`  BROKE    [${f.type}] x${f.occurrences} -> ${(f.resolution||"no resolution recorded").slice(0,100)}`);
+          }
+        }
+      });' || exit 1
     ;;
 
   hooks)
