@@ -25,6 +25,28 @@ Most of the expensive bugs here produced *plausible* output rather than an error
 
 Prefer `null` over a guess. If a field cannot be found, say so.
 
+## `card_selector` and `card_anchor_text` are not interchangeable — one is also the READINESS signal
+
+Adding `card_selector: "tr.job"` to remoteok.com, a recipe that was returning
+50 records via `card_anchor_text: "Apply"`, dropped it to **one empty record**.
+The selector was not wrong: `tr.job` matches all 50 rows on a loaded page, and
+`lab.js sel` confirmed 50/50 while the recipe returned 1.
+
+`waitForCards` polls for `card_selector` when one is set. remoteok has a
+`tr.job` in the DOM *before its rows have content*, so the wait resolved
+immediately and extraction ran against an unrendered page. `card_anchor_text`
+waits for text that only exists once a row is real, which is why it worked.
+
+So the choice is not only "how do I identify a card" — it is also "what
+counts as the page being ready". A structural selector that matches an empty
+scaffold row is a worse readiness signal than a piece of text that only
+appears with real content, even though it is the better card identifier.
+
+Symptom to recognise: a recipe returns ONE record with every field null, while
+probing the same selectors against the same URL reports the full count. That
+gap between the probe and the run is the tell — the probe waited, the run did
+not.
+
 ## Positional extraction drifts; address elements directly
 
 `positional_segment` assumes every card has the same parts. An optional rating,
