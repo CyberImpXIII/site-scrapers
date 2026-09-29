@@ -11,7 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { signatureDiff, outcomeFor, isStale, ageInDays, STALE_AFTER_DAYS } = require('../lib/observations');
+const { signatureDiff, outcomeFor, outcomeForProbes, isStale, ageInDays, STALE_AFTER_DAYS } = require("../lib/observations");
 
 const sig = (over = {}) => ({
   url: 'https://x.com/jobs',
@@ -112,6 +112,79 @@ test('an observation goes stale, because the page it describes rots', () => {
   assert.equal(isStale(daysAgo(STALE_AFTER_DAYS - 1), now), false);
   assert.equal(isStale(daysAgo(STALE_AFTER_DAYS + 1), now), true);
   assert.equal(ageInDays(daysAgo(30).observed_at, now), 30);
+});
+
+// --- probes are judged on what they REPORTED, not on what they moved --------
+
+test('every registered probe kind has a summariser', () => {
+  // The seam. A probe with no entry here falls through to "found nothing",
+  // which is a claim about the PAGE rather than a gap in this table -- so a
+  // newly added probe kind would silently start reporting that it never finds
+  // anything, on every page, and look like a working measurement.
+  const { PROBE_KINDS } = require('../lib/probes');
+  const { PROBE_SUMMARY } = require('../lib/observations');
+  assert.deepEqual(
+    Object.keys(PROBE_KINDS).sort().filter(k => !PROBE_SUMMARY[k]),
+    [],
+    'probe kinds with no summariser in lib/observations.js'
+  );
+  assert.deepEqual(
+    Object.keys(PROBE_SUMMARY).sort().filter(k => !PROBE_KINDS[k]),
+    [],
+    'summarisers for probe kinds that no longer exist'
+  );
+});
+
+test('a diagnostic that found cards is reported, not no_effect', () => {
+  // The whole reason this path exists: probe_card_candidates changes nothing
+  // by design, so the page signature says no_effect however well it worked.
+  const r = outcomeForProbes([
+    { kind: 'repeated_structure', candidates: [{ childSelector: 'li.job', count: 20, stableHook: null, sharedLine: 'Apply' }] },
+  ]);
+  assert.equal(r.outcome, 'reported');
+  assert.match(r.detail, /li\.job x20/);
+  assert.match(r.detail, /Apply/);
+});
+
+test('a diagnostic that found nothing is no_effect, and says so about the PAGE', () => {
+  const r = outcomeForProbes([{ kind: 'repeated_structure', candidates: [] }]);
+  assert.equal(r.outcome, 'no_effect');
+  assert.match(r.detail, /no repeated card structure/);
+});
+
+test('"not blocked" counts as a finding, because it is the answer you wanted', () => {
+  const r = outcomeForProbes([{ kind: 'blockers', blocked: false, flags: [] }]);
+  assert.equal(r.outcome, 'reported');
+  assert.match(r.detail, /not blocked/);
+});
+
+test('a non-diagnostic action returns null so the signature decides', () => {
+  // dismiss_overlay emits no diagnostics; judging it here would always say
+  // "found nothing" and bury the fact that it removed the banner.
+  assert.equal(outcomeForProbes([]), null);
+  assert.equal(outcomeForProbes([{ kind: 'page_signature', signature: {} }]), null, 'the harness own probes do not count');
+});
+
+test('a probe kind with no summariser is reported as a gap, not as an empty page', () => {
+  const { summariseProbe } = require('../lib/observations');
+  const s = summariseProbe({ kind: 'some_future_probe' });
+  assert.equal(s.unknownKind, true);
+  assert.match(s.summary, /no summariser/);
+});
+
+test('a probe that errored is an error, not a page with nothing on it', () => {
+  const r = outcomeForProbes([{ kind: 'repeated_structure', error: 'timed out scanning' }]);
+  assert.equal(r.outcome, 'error');
+  assert.match(r.detail, /timed out scanning/);
+});
+
+test('one probe erroring among several does not sink the others', () => {
+  const r = outcomeForProbes([
+    { kind: 'repeated_structure', error: 'timed out' },
+    { kind: 'blockers', blocked: true, flags: ['captcha'] },
+  ]);
+  assert.equal(r.outcome, 'reported', 'a partial answer is still an answer');
+  assert.match(r.detail, /captcha/);
 });
 
 // --- storage: earned, and one current answer per question -------------------

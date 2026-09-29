@@ -63,9 +63,21 @@ heuristic generic actions against a page — one page load each, so results
 cannot depend on each other — and records what each one DID, judged by
 comparing a page signature before and after. An action that no-ops cleanly is
 not evidence that it works, which is the whole reason this is measured rather
-than inferred from "it did not throw". Outcomes are `changed` / `no_effect` /
-`error`; `changed` means "this does something here", not "this helped". Trying
-the Lever board this way found a consent dialog no recipe handles.
+than inferred from "it did not throw".
+
+Outcomes: `changed` (the page moved) / `reported` (a diagnostic came back with
+findings) / `no_effect` / `error`. `changed` means "this does something here",
+not "this helped". A diagnostic action changes nothing by design, so it is
+judged on what it reported instead — an action that emitted diagnostics is
+judged on them, one that did not is judged on the page signature, so there is
+no list of "which actions are probes" to drift.
+
+**This is the fastest way to open an UNKNOWN page**, because the default trials
+lead with the questions you have before a recipe exists. One command against
+the Lever board returned a usable `card_selector`
+(`div:has(div[data-qa="btn-apply"])` x20, shared line "Apply"), a consent
+overlay that no recipe on that host handles, and anti-bot present but not
+blocking.
 
 Observations are **earned**: `recordObservation` is a guarded write and the
 trial runner is its only sanctioned caller, so an outcome cannot be asserted by

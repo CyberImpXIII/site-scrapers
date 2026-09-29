@@ -71,7 +71,23 @@ function load() {
 // you do anything here?". An action needing a selector (`paginate` wants
 // next_selector) is excluded -- it would no-op for lack of input and record a
 // misleading no_effect.
-const DEFAULT_TRIALS = ['dismiss_overlay', 'remove_overlay', 'infinite_scroll', 'expand_truncated_text'];
+// Two halves, both parameterless so they can be asked of a page blind.
+//
+// The diagnostics come first because on a page with NO recipe they are the
+// questions you actually have -- are there cards here and what is the
+// selector, is there a wall, is there anti-bot -- and that is the case where
+// the guesswork is worst. An action needing input (`paginate` wants
+// next_selector, `probe_selectors` wants selectors) is excluded: it would
+// no-op for lack of input and record a misleading answer.
+const DEFAULT_TRIALS = [
+  'probe_card_candidates',
+  'diagnose_blockers',
+  'diagnose_antibot',
+  'dismiss_overlay',
+  'remove_overlay',
+  'infinite_scroll',
+  'expand_truncated_text',
+];
 
 // One page load per action, deliberately. Sharing a load makes each result
 // depend on the ones before it -- dismiss_overlay having already removed the
@@ -190,18 +206,41 @@ async function tryActions() {
   const byLabel = new Map();
   for (const d of result.diagnostics || []) if (d.label) byLabel.set(d.label, d);
 
+  // Diagnostics an action emitted are the ones between its own markers. The
+  // list is in execution order, so bracketing is exact and needs no list of
+  // "which actions are probes" -- which would drift the first time one was
+  // added.
+  const emittedBy = i => {
+    const all = result.diagnostics || [];
+    const from = all.findIndex(d => d.label === `before:${i}`);
+    const to = all.findIndex(d => d.label === `after:${i}`);
+    return from >= 0 && to > from ? all.slice(from + 1, to) : [];
+  };
+
   const { recordObservation } = require('./db');
-  const { outcomeFor } = require('./lib/observations');
+  const { outcomeFor, outcomeForProbes } = require('./lib/observations');
   const { authorize } = require('./lib/writeGuard');
   const recorded = [];
   for (const [i, action] of actions.entries()) {
     const before = byLabel.get(`before:${i}`);
     const after = byLabel.get(`after:${i}`);
-    const decided = outcomeFor({
+    const bySignature = outcomeFor({
       error: result.failedStep && result.failedStep.index != null && !after ? result.error : null,
       before: before && before.signature,
       after: after && after.signature,
     });
+    // A diagnostic action changes nothing by design, so the signature says
+    // no_effect however well it worked. Judge it on what it reported instead,
+    // and mention the page moving too if it somehow did.
+    const byReport = outcomeForProbes(emittedBy(i));
+    const decided = byReport
+      ? {
+          ...byReport,
+          detail: bySignature.outcome === 'changed'
+            ? `${byReport.detail} [also moved the page: ${bySignature.detail}]`.slice(0, 200)
+            : byReport.detail,
+        }
+      : bySignature;
     authorize(`primitives trial: ${action} on ${hostname}`, () =>
       recordObservation(db, {
         hostname,
