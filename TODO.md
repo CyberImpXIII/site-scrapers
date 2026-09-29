@@ -78,6 +78,23 @@ Slice 1 (2026-09-28): `node primitives.js show <hostname>` / `./dev.sh page
 see the header of `lib/primitives.js` for why, and do not add a table without
 first hitting something that genuinely cannot be derived.
 
+**Slice 2 is DONE** (2026-09-29): `node primitives.js try <url>` measures what
+each generic action does on a page and records it; `forget <hostname>`
+re-opens the question; `audit.js units` flags observations past 90 days.
+Original wording kept below for the reasoning.
+
+Two things it turned up that are worth acting on:
+
+- **`jobs.lever.co`'s board has a consent dialog no recipe handles.**
+  `dismiss_overlay` measured `changed` (dialogs 1 -> 0, elements -14) on
+  `https://jobs.lever.co/palantir`. The listing recipe works anyway, so it is
+  not urgent — but it is an unhandled overlay on a page we scrape, and the
+  kind of thing that starts failing after a redesign. Compose
+  `dismiss_overlay` into that recipe, or record why not.
+- **The other ATS boards have not been tried.** Running `try` against the
+  Greenhouse and Ashby boards, and against the posting pages, would probably
+  turn up the same class of thing. Cheap: one command per page.
+
 ### Slice 2 — record what is NOT derivable
 
 Slice 1 can only report actions a *recipe* already uses. The two things it
