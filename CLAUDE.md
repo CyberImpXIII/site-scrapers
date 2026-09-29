@@ -209,6 +209,31 @@ salesforce's `:has()` three times.
 
 ---
 
+## Wall clock is not a cost — tokens are
+
+**Cost here means tokens and AI usage. Nothing else.** This machine is
+powerful and loads many pages at once. If something takes a while but is
+purely Puppeteer — headless, in a subprocess, returning a small result — it is
+**not expensive**, and "it takes a minute" is not an argument against it.
+
+The distinction is the page never enters anyone's context. A browser loads it,
+a few hundred bytes of JSON come back, and the model reads those. A run that
+takes 60 seconds and returns 400 bytes is cheaper than one that takes 2
+seconds and returns 40KB. `query.js efficiency` tracks `output_chars` for
+exactly this reason, and the README's "Why this saves tokens" is the same
+argument: what got eliminated was screenshots, DOM dumps and chunked
+retries — the scaffolding around the data — not the waiting.
+
+So: **do not optimise for speed, do not batch to save seconds, do not skip a
+measurement because it is slow.** Prefer the thorough run. Spend wall clock
+freely to avoid a second round trip through the model, which is the thing that
+actually costs.
+
+What DOES still count against a run: output size (it lands in context), and
+anything that would provoke a site into blocking us — but "8 sequential page
+loads" is ordinary browsing, not that. When in doubt about whether a cost is
+real, ask whether a token is spent on it.
+
 ## Gate the seams — STANDING DIRECTIVE
 
 **Any change that creates an interface gates it in the same change** — a gate, a

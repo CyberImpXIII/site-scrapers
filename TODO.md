@@ -157,26 +157,16 @@ before trusting or extending this.
   exactly 20, the same as the recipe's own selector, so it was right here —
   but the probe should either prefer `:has(> ...)` or say the count needs
   checking. Currently it says neither.
-- **A trial makes one page REQUEST per action — 8 by default.** Measured on
-  the Lever board: 60.5s for 8 actions, 13.8s for one, so roughly 7s of fixed
-  startup plus 6.7s per action.
-
-  An earlier version of this entry called that "minutes per page" and implied
-  it was expensive. Both were wrong, and the second more interestingly so:
-  **the page never enters anyone's context** — it loads in a headless browser
-  in a subprocess and only a few hundred bytes of JSON come back — so there is
-  no token cost at all, which is the cost that usually matters here. One
-  minute of wall clock for a deliberate once-per-page characterisation is
-  fine.
-
-  The cost that IS real is request volume: 8 loads of one URL inside a minute,
-  against a site we need to keep serving us. Mild — a person browsing makes
-  more — but this repo's standing constraint is never to provoke bot
-  detection, and the antibot probe already reports a service present on that
-  very page. Probes change nothing by definition, so the per-action isolation
-  is only needed for the MUTATING ones: batching the four probes into one load
-  would make it 5 requests instead of 8. Worth doing for the 3 requests, not
-  for the ~20 seconds.
+- ~~A trial makes one page request per action.~~ **WITHDRAWN — this was not a
+  concern, and getting it wrong twice is the useful part.** Measured: 60.5s
+  for 8 actions on the Lever board, 13.8s for one. The first version called
+  that "minutes per page"; the second, told that the page never enters
+  context, kept the entry alive by reaching for request volume and bot
+  detection instead. Neither holds. 8 sequential loads is ordinary browsing,
+  and one minute of headless Puppeteer costs nothing that matters — see
+  "Wall clock is not a cost" in `CLAUDE.md`. The per-action page load buys
+  independence between trials, which is worth having; there is nothing to
+  optimise here.
 - **An observation is filed against a page TEMPLATE but measured on one URL.**
   The Lever board findings come from `/palantir`. Another company's board
   could have a different consent state or size. Recording it as a property of
