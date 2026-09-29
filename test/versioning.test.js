@@ -30,6 +30,8 @@ const {
   restoreVersion,
   deleteSite,
   definitionHasPassingRun,
+  VERSIONED_SITE_COLUMNS,
+  VERSIONED_FIELD_COLUMNS,
 } = require('../db');
 const { authorizeForTests } = require('../lib/writeGuard');
 
@@ -346,4 +348,50 @@ test('definitionHasPassingRun tracks the definition, not the label', () => {
   // A real edit does invalidate it — that is the point.
   register({ notes: 'a genuine behavioural edit after verification' });
   assert.equal(definitionHasPassingRun(db, siteId), false, 'an edited recipe needs re-verifying');
+});
+
+// --- the version hash must cover every content column ----------------------
+//
+// A column added to site_fields but left out of VERSIONED_FIELD_COLUMNS is a
+// SILENT fault, which is the expensive kind: edits to it never bump the
+// version, so history stops recording the change and a rollback quietly
+// restores a definition that differs from what was there. value_pattern was
+// added in exactly this way and this test is what catches the next one.
+test('every content column of site_fields is versioned', () => {
+  const cols = db.prepare('PRAGMA table_info(site_fields)').all().map(c => c.name);
+  // Identity and linkage, not content: they cannot differ between two
+  // definitions of the same recipe, so hashing them would add noise.
+  const notContent = new Set(['id', 'site_id']);
+  const missing = cols.filter(c => !notContent.has(c) && !VERSIONED_FIELD_COLUMNS.includes(c));
+  assert.deepEqual(
+    missing, [],
+    `site_fields columns absent from VERSIONED_FIELD_COLUMNS: ${missing.join(', ')}. ` +
+    'Add them there, or to notContent above if they genuinely are not part of the definition.'
+  );
+  // And the converse: a name in the list that no longer exists means the hash
+  // is silently reading undefined for it.
+  const stale = VERSIONED_FIELD_COLUMNS.filter(c => !cols.includes(c));
+  assert.deepEqual(stale, [], `VERSIONED_FIELD_COLUMNS names columns that do not exist: ${stale.join(', ')}`);
+});
+
+test('every column named in VERSIONED_SITE_COLUMNS exists on sites', () => {
+  // Only this direction for sites: that table deliberately holds columns that
+  // are NOT part of the definition (status, last_verified), and including them
+  // made every verification spawn a version -- see the comment on the constant.
+  const cols = db.prepare('PRAGMA table_info(sites)').all().map(c => c.name);
+  const stale = VERSIONED_SITE_COLUMNS.filter(c => !cols.includes(c));
+  assert.deepEqual(stale, [], `VERSIONED_SITE_COLUMNS names columns that do not exist: ${stale.join(', ')}`);
+});
+
+test('changing only value_pattern bumps the version', () => {
+  // The behavioural half of the check above: proving the column is in the list
+  // is not proof that editing it is recorded.
+  const base = { field_name: 'salary', extract_kind: 'child_text', regex_pattern: 'div.box' };
+  const before = register({ fields: [{ ...base, value_pattern: '\\$[\\d,]+' }] });
+  const same = register({ fields: [{ ...base, value_pattern: '\\$[\\d,]+' }] });
+  assert.equal(same.minor, before.minor, 're-registering an identical recipe must record nothing');
+
+  const after = register({ fields: [{ ...base, value_pattern: '£[\\d,]+' }] });
+  assert.equal(after.minor, before.minor + 1, 'a changed value_pattern is a real edit');
+  assert.equal(recipeDefinition(db, siteId).fields[0].value_pattern, '£[\\d,]+');
 });

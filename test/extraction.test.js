@@ -52,12 +52,36 @@ function cardHtml(i) {
   </li>`;
 }
 
+// The workingnomads.com shape, which neither addressing mode could express.
+// Every card renders a row of same-class chips; the PAY chip is present on
+// only some cards, and it is not last, so it shifts the chips after it. That
+// makes `div.chip` index 1 pay on some cards and commitment on others.
+//
+// Card 1's TITLE also contains a dollar amount, reproducing the other half of
+// the real fault: matching the card's whole text blob for a currency shape
+// pulled "$100" out of a title reading "Joining Rewards of up to USD$100" and
+// reported a signing bonus as a salary.
+function chipCardHtml(i) {
+  const pay = i % 3 === 0 ? `<div class="chip">$${i}000-$${i}500</div>` : '';
+  const title = i === 1 ? `Engineer ${i} - joining reward up to USD$500` : `Engineer ${i}`;
+  return `<li class="card">
+    <h2 class="title">${title}</h2>
+    <div class="chips">
+      <div class="chip">City ${i}</div>
+      ${pay}
+      <div class="chip">Full-time</div>
+    </div>
+    <a href="/job/${i}">View job</a>
+  </li>`;
+}
+
 test.before(async () => {
   authorizeForTests();
   server = await new Promise(resolve => {
     const s = http.createServer((req, res) => {
       res.setHeader('Content-Type', 'text/html');
-      const cards = Array.from({ length: 6 }, (_, i) => cardHtml(i)).join('\n');
+      const html = req.url.startsWith('/chips') ? chipCardHtml : cardHtml;
+      const cards = Array.from({ length: 6 }, (_, i) => html(i)).join('\n');
       res.end(`<!doctype html><html><body><ul>${cards}</ul></body></html>`);
     });
     s.listen(0, '127.0.0.1', () => resolve(s));
@@ -71,14 +95,18 @@ test.after(() => {
   server.close();
 });
 
-async function runWithFields(name, fields) {
+async function runWithFields(name, fields, { path: urlPath = '' } = {}) {
   const id = upsertSite(db, {
     hostname: '127.0.0.1',
     page_type: 'listing',
     recipe_name: name,
     status: 'working',
     nav_method: 'url_param',
-    nav_template: baseUrl,
+    // new URL, not concatenation: baseUrl already ends in '/', and
+    // baseUrl + '/chips' yields '//chips', which the fixture's route check
+    // misses -- it then serves the OTHER fixture and the test fails for a
+    // reason that has nothing to do with what it is testing.
+    nav_template: new URL(urlPath, baseUrl).href,
     card_selector: 'li.card',
     card_min_text_len: 1,
     ready_timeout_ms: 4000,
@@ -179,4 +207,90 @@ test('child_text collapses whitespace so values are comparable', async () => {
     assert.ok(!/\s{2,}|\n/.test(job.card), `expected collapsed whitespace, got ${JSON.stringify(job.card)}`);
     assert.equal(job.card, job.card.trim());
   }
+});
+
+// --- value_pattern: addressing a child by SHAPE rather than position -------
+//
+// child_text ended positional drift between a card's PARTS, but the same drift
+// reappears one level down whenever the matching children are themselves a
+// variable sequence. These four tests run over one fixture and show the two
+// existing kinds failing on it before showing value_pattern succeeding, so the
+// need is demonstrated rather than asserted.
+
+test('child_text by index drifts when an optional chip is not last', async () => {
+  const r = await runWithFields('chip_positional', [
+    { field_name: 'title', extract_kind: 'child_text', regex_pattern: 'h2.title' },
+    { field_name: 'pay', extract_kind: 'child_text', regex_pattern: 'div.chip', segment_index: 1 },
+  ], { path: '/chips' });
+  assert.equal(r.count, 6);
+  const pay = r.records.map(j => j.pay);
+  // Cards 0 and 3 have a pay chip at index 1; the rest have commitment there.
+  assert.match(pay[0], /^\$0000/);
+  assert.equal(pay[1], 'Full-time', 'this is the drift: a commitment reported as pay');
+  assert.ok(pay.includes('Full-time'), 'the fixture must actually exhibit drift for the next test to mean anything');
+});
+
+test('regex_anywhere picks up a currency amount from the TITLE', async () => {
+  const r = await runWithFields('chip_blob', [
+    { field_name: 'pay', extract_kind: 'regex_anywhere', regex_pattern: '\\$[\\d,]+(?:-\\$?[\\d,]+)?' },
+  ], { path: '/chips' });
+  // Card 1 has no pay chip, but its title says "joining reward up to USD$500".
+  // A bonus reported as pay -- wrong rather than missing, and invisible.
+  assert.equal(r.records[1].pay, '$500', 'the blob match must actually be fooled, or the fix below proves nothing');
+});
+
+test('value_pattern picks the chip that looks like money, wherever it sits', async () => {
+  const r = await runWithFields('chip_shape', [
+    { field_name: 'title', extract_kind: 'child_text', regex_pattern: 'h2.title' },
+    {
+      field_name: 'pay',
+      extract_kind: 'child_text',
+      regex_pattern: 'div.chip',
+      value_pattern: '^\\$[\\d,]',
+    },
+  ], { path: '/chips' });
+  assert.equal(r.count, 6);
+  const pay = r.records.map(j => j.pay);
+  // Present where it exists...
+  assert.equal(pay[0], '$0000-$0500');
+  assert.equal(pay[3], '$3000-$3500');
+  // ...null where it does not, INCLUDING the card whose title contains money.
+  assert.equal(pay[1], null, 'a title containing a currency amount must not become pay');
+  assert.equal(pay[2], null);
+  assert.equal(pay[4], null);
+  // No card reports a commitment as pay.
+  assert.ok(!pay.includes('Full-time'), 'shape addressing must be immune to the chip order');
+});
+
+test('a value_pattern that matches nothing yields null, not the first child', async () => {
+  // The failure mode to avoid is a filter that silently degrades into "no
+  // filter" -- that reads as a working field while ignoring the constraint.
+  // The title is here only to keep the records distinguishable: the engine
+  // dedupes identical records, so six cards whose every field is null collapse
+  // to one and the count assertion would fail for an unrelated reason.
+  const r = await runWithFields('chip_nomatch', [
+    { field_name: 'title', extract_kind: 'child_text', regex_pattern: 'h2.title' },
+    { field_name: 'pay', extract_kind: 'child_text', regex_pattern: 'div.chip', value_pattern: 'NOTHING_MATCHES_THIS' },
+  ], { path: '/chips' });
+  assert.equal(r.count, 6);
+  assert.deepEqual([...new Set(r.records.map(j => j.pay))], [null]);
+});
+
+test('a malformed value_pattern yields null rather than ignoring the filter', async () => {
+  const r = await runWithFields('chip_badregex', [
+    { field_name: 'title', extract_kind: 'child_text', regex_pattern: 'h2.title' },
+    { field_name: 'pay', extract_kind: 'child_text', regex_pattern: 'div.chip', value_pattern: '[unterminated' },
+  ], { path: '/chips' });
+  assert.equal(r.count, 6, 'one bad field must not take down the run');
+  assert.deepEqual([...new Set(r.records.map(j => j.pay))], [null]);
+});
+
+test('value_pattern overrides segment_index rather than combining with it', async () => {
+  // Both set is a recipe-authoring mistake; the documented behaviour is that
+  // shape wins, so the result must not depend on the index.
+  const withIndex = await runWithFields('chip_both', [
+    { field_name: 'pay', extract_kind: 'child_text', regex_pattern: 'div.chip', segment_index: 2, value_pattern: '^\\$[\\d,]' },
+  ], { path: '/chips' });
+  assert.equal(withIndex.records[0].pay, '$0000-$0500');
+  assert.equal(withIndex.records[1].pay, null);
 });

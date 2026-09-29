@@ -679,11 +679,34 @@ async function extractCards(page, { cardAnchorText, cardSelector, cardMinTextLen
             //
             // Addressing an element directly is immune to the whole class: a
             // missing element yields null rather than shifting its neighbours.
+            //
+            // value_pattern addresses by SHAPE rather than position: the first
+            // match whose own text matches the regex. Needed when the matching
+            // children are a VARIABLE sequence — workingnomads.com renders
+            // location, commitment, seniority and pay as sibling div.box chips
+            // and only 10 of 57 cards have the pay one, so no index identifies
+            // it. Matching the whole card blob instead is what reported a title
+            // reading "Joining Rewards of up to USD$100" as a salary.
             try {
               const matches = card.querySelectorAll(f.regex_pattern);
-              const idx = f.segment_index == null ? 0 : f.segment_index < 0 ? matches.length + f.segment_index : f.segment_index;
-              const el = matches[idx];
-              record[f.field_name] = el ? el.innerText.trim().replace(/\s+/g, ' ') || null : null;
+              const textOf = (el) => (el ? el.innerText.trim().replace(/\s+/g, ' ') : '');
+              let el;
+              if (f.value_pattern) {
+                let vre;
+                try {
+                  vre = new RegExp(f.value_pattern);
+                } catch {
+                  vre = null;
+                }
+                // A malformed value_pattern must not silently degrade into
+                // "first match", which would look like a working field while
+                // ignoring the filter entirely.
+                el = vre ? [...matches].find((m) => vre.test(textOf(m))) : undefined;
+              } else {
+                const idx = f.segment_index == null ? 0 : f.segment_index < 0 ? matches.length + f.segment_index : f.segment_index;
+                el = matches[idx];
+              }
+              record[f.field_name] = el ? textOf(el) || null : null;
             } catch {
               // A malformed selector yields null like any other miss, rather
               // than taking down every remaining field on the card.

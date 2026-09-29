@@ -17,6 +17,7 @@
 #   ./dev.sh verify <target> '<params>' ... # earn "working" for several recipes, one line each
 #   ./dev.sh inside <url> '<card_sel>' [--wait=MS] [--all]  # what is inside a card, as field candidates
 #   ./dev.sh apply <target> <file.json> '<params>'          # lab.js set, then peek, to see what it did
+#   ./dev.sh distinct <target> '<params>'   # per-field value spread + fields sharing a value (positional drift)
 #   ./dev.sh waive <target> <rule> '<what you checked>'     # record that an audit warning was checked and does not apply
 #   ./dev.sh board <company> ...            # which ATS hosts each company's job board (one cheap HTTP check each)
 #   ./dev.sh page <hostname>                # what is already known about this page, before you open a browser
@@ -220,6 +221,27 @@ case "$cmd" in
         // to all nulls is the usual way a selector change goes wrong.
         for (const [k,v] of Object.entries(d.fieldCoverage||{})) console.log(`    ${k.padEnd(18)} ${v}`);
         const s=(d.samples||[])[0]; if (s) console.log(`    first: ${JSON.stringify(s).slice(0,220)}`);
+      });'
+    ;;
+
+  distinct)
+    # Coverage says a field FILLED; this says whether it filled with the right
+    # KIND of thing. Trimmed hard on purpose -- the whole point is to read a
+    # spread without reading 57 records.
+    [ $# -ge 1 ] || usage
+    "$NODE_BIN" lab.js distinct "$1" "${2:-{\}}" | "$NODE_BIN" -e '
+      let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
+        const d=JSON.parse(raw);
+        console.log(`${d.target}  success=${d.success} n=${d.count}${d.error?` ${String(d.error).slice(0,60)}`:""}`);
+        for (const [k,v] of Object.entries(d.fields||{})) {
+          const vals=v.top.map(t=>`${JSON.stringify(t.value).slice(0,34)}${t.n>1?` x${t.n}`:""}`).join(" | ");
+          console.log(`  ${k.padEnd(18)} ${String(v.distinct).padStart(3)} distinct  ${vals}${v.truncated?` (+${v.truncated} more)`:""}`);
+        }
+        const drift=d.possibleDrift||[];
+        if (!drift.length) { console.log("  no values shared between fields"); return; }
+        console.log(`  POSSIBLE DRIFT -- ${drift.length} value(s) under more than one field:`);
+        for (const s of drift.slice(0,10)) console.log(`    ${JSON.stringify(s.value).slice(0,40)} -> ${s.fields.map(f=>`${f.field} x${f.n}`).join(", ")}`);
+        if (drift.length>10) console.log(`    (+${drift.length-10} more)`);
       });'
     ;;
 

@@ -15,6 +15,8 @@
 //   node lab.js match <target> '<params>' [--wait=MS]  # which selector yields each field's KNOWN value in every card
 //   node lab.js peek <target> '<params>'          # run a recipe, show samples + per-field null counts
 //   node lab.js raw <target> '<params>'           # same, but show each card's source text
+//   node lab.js distinct <target> '<params>'      # per-field value spread + values shared between fields (drift)
+//   node lab.js grep <target> '<params>' '<regex>'  # what the card text says AROUND a value, across every card
 //   node lab.js set <target> '<json>'             # set card_selector / anchor / timeout / fields at once
 //   node lab.js params <target> '<A>' '<B>'       # do two different params actually return different results?
 //   node lab.js new <target>                      # print a register.js skeleton for a new recipe
@@ -38,6 +40,8 @@ const execFileAsync = promisify(execFile);
 const path = require('path');
 const { openDb, getSite, getFields, insertField, parseSiteArg, snapshotVersionIfChanged } = require('./db');
 const { recordsOf } = require('./lib/outputShape');
+const { distinctByField, crossFieldValues } = require('./lib/distinctValues');
+const { grepRaw, searchableCount } = require('./lib/rawGrep');
 
 const REPO_ROOT = __dirname;
 const PROBER = 'lab-prober.internal';
@@ -298,6 +302,44 @@ async function main() {
       debugDir: r.debugDir ?? null,
       samples: jobs.slice(0, 3),
       fieldCoverage: jobs.length ? nullCounts(jobs) : null,
+    });
+    return;
+  }
+
+  if (cmd === 'grep') {
+    if (!a || c === undefined) die("Usage: node lab.js grep <target> '<params>' '<regex>'");
+    // Always raw: the source blob is the thing being searched.
+    const r = await runEngine(a, b ? JSON.parse(b) : {}, true);
+    const jobs = recordsOf(r);
+    const searchable = searchableCount(jobs);
+    out({
+      target: a,
+      success: r.success,
+      count: r.count ?? jobs.length,
+      // Distinguishes "the page does not say this" from "no card carried source
+      // text", which look identical in a hit count of zero.
+      searchableRecords: searchable,
+      pattern: c,
+      ...grepRaw(jobs, c),
+    });
+    return;
+  }
+
+  if (cmd === 'distinct') {
+    if (!a) die("Usage: node lab.js distinct <target> '<params>'");
+    const r = await runEngine(a, b ? JSON.parse(b) : {}, false);
+    const jobs = recordsOf(r);
+    const shared = crossFieldValues(jobs);
+    out({
+      target: a,
+      success: r.success,
+      count: r.count ?? jobs.length,
+      error: r.error ?? null,
+      fields: distinctByField(jobs),
+      // Named for what it means rather than what it is: every entry here is a
+      // pair of fields that may be reading the same element.
+      possibleDrift: shared,
+      driftFields: [...new Set(shared.flatMap((s) => s.fields.map((f) => f.field)))],
     });
     return;
   }

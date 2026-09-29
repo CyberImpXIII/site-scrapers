@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS site_fields (
   segment_index INTEGER,             -- for positional_segment: index into blob.split(' | ')
   regex_pattern TEXT,                -- for regex_anywhere: JS regex source; capture group 1 used if present, else whole match
   attribute_name TEXT,               -- for anchor_attribute: e.g. 'href'
+  value_pattern TEXT,                -- for child_text: pick the first matching child whose TEXT matches this regex, instead of by segment_index
   example_value TEXT,                -- last known-good value, human sanity-check reference
   field_order INTEGER NOT NULL DEFAULT 0,
   UNIQUE(site_id, field_name)
@@ -283,6 +284,24 @@ function migrateCardSelectorColumn(db) {
   const cols = db.prepare('PRAGMA table_info(sites)').all();
   if (cols.length === 0 || cols.some(c => c.name === 'card_selector')) return;
   db.exec('ALTER TABLE sites ADD COLUMN card_selector TEXT');
+}
+
+// child_text picks WHICH matching child by position (segment_index). That is
+// the right choice when the children are a fixed sequence, and the wrong one
+// when the sequence is variable -- which is the drift positional_segment was
+// abandoned for, reappearing one level down.
+//
+// value_pattern picks by SHAPE instead: the first matching child whose text
+// matches this regex. workingnomads.com is the case that forced it -- location,
+// commitment, experience level and pay are all sibling div.box chips, and pay
+// is present on only 10 of 57 cards, so no index identifies it. Matching the
+// blob with regex_anywhere instead pulled "$100" out of a TITLE reading
+// "Joining Rewards of up to USD$100" and reported a signing bonus as a salary.
+// Neither addressing mode could express "the chip that looks like money".
+function migrateValuePatternColumn(db) {
+  const cols = db.prepare('PRAGMA table_info(site_fields)').all();
+  if (cols.length === 0 || cols.some(c => c.name === 'value_pattern')) return;
+  db.exec('ALTER TABLE site_fields ADD COLUMN value_pattern TEXT');
 }
 
 // Old DBs predate generic_actions.source. Plain ADD COLUMN. Existing rows
@@ -528,6 +547,7 @@ function openDb() {
   migrateGenericActionSourceColumn(db);
   migrateRunVersionColumn(db);
   migrateParamProbeColumn(db);
+  migrateValuePatternColumn(db);
   authorize('db.js one-time baseline backfill', () => backfillBaselineVersions(db));
   authorize('db.js seeding from code', () => {
     seedActionTypes(db);
@@ -687,7 +707,7 @@ const VERSIONED_SITE_COLUMNS = [
   'ready_timeout_ms', 'result_count_regex', 'notes',
 ];
 const VERSIONED_FIELD_COLUMNS = [
-  'field_name', 'extract_kind', 'segment_index', 'regex_pattern', 'attribute_name', 'example_value', 'field_order',
+  'field_name', 'extract_kind', 'segment_index', 'regex_pattern', 'attribute_name', 'example_value', 'value_pattern', 'field_order',
 ];
 
 function recipeDefinition(db, siteId) {
@@ -939,8 +959,8 @@ function upsertGenericAction(db, g) {
 function insertField(db, siteId, f, order) {
   assertAuthorized('insertField');
   db.prepare(
-    `INSERT INTO site_fields (site_id, field_name, extract_kind, segment_index, regex_pattern, attribute_name, example_value, field_order)
-     VALUES (?,?,?,?,?,?,?,?)`
+    `INSERT INTO site_fields (site_id, field_name, extract_kind, segment_index, regex_pattern, attribute_name, example_value, value_pattern, field_order)
+     VALUES (?,?,?,?,?,?,?,?,?)`
   ).run(
     siteId,
     f.field_name,
@@ -949,6 +969,7 @@ function insertField(db, siteId, f, order) {
     f.regex_pattern ?? null,
     f.attribute_name ?? null,
     f.example_value ?? null,
+    f.value_pattern ?? null,
     order
   );
 }
@@ -1195,6 +1216,12 @@ function getEfficiencyStats(db) {
 }
 
 module.exports = {
+  // Exported for test/versioning.test.js, which asserts every content column of
+  // site_fields is covered. A column added and left out of this list is a
+  // SILENT fault: edits to it never bump the version, so the recipe's history
+  // stops recording the change and a rollback restores the wrong definition.
+  VERSIONED_SITE_COLUMNS,
+  VERSIONED_FIELD_COLUMNS,
   openDb,
   getSite,
   getFields,
