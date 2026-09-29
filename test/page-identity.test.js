@@ -177,7 +177,14 @@ test('it groups the pages that actually exist, and merges nothing else', () => {
   const db = openDb();
   const sites = listSites(db)
     .filter(s => !String(s.hostname).endsWith('.internal'))
-    .map(s => getSite(db, s.hostname, s.page_type, s.recipe_name));
+    .map(s => getSite(db, s.hostname, s.page_type, s.recipe_name))
+    // A row can vanish between the list and the read: test files run in
+    // PARALLEL, and another file's fixture cleanup deletes recipes from this
+    // same database while this one is walking it. Same race the live audits
+    // already guard against under "a recipe deleted mid-sweep is skipped, not
+    // a crash" -- here it surfaced as `undefined.hostname` the moment another
+    // suite gained one more fixture.
+    .filter(Boolean);
   if (sites.length < 5) {
     assert.ok(true, 'skipped: too few recipes registered to assert grouping');
     return;

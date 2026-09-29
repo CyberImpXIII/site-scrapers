@@ -295,9 +295,15 @@ test('a hardcoded value that suppresses all results is an error', async () => {
   assert.match(f.why, /SUPPRESSES ALL RESULTS/);
 });
 
-test('a hardcoded value that merely filters is not reported', async () => {
+test('a hardcoded value that merely filters is reported as ok, never as a defect', async () => {
   // One-directional on purpose: a value that REDUCES results is usually doing
-  // its job, and reporting it would train people to ignore the audit.
+  // its job, and flagging it would train people to ignore the audit.
+  //
+  // It IS listed though, at severity ok. Reporting only defects made the
+  // audit's output unreadable the first time it was really run: "0 findings"
+  // could not be told apart from "it checked nothing", and this is a live
+  // audit that skips any recipe it cannot exercise. Naming what was checked
+  // is the difference between a clean bill and silence.
   const target = fixture('f_filter', {
     nav_template: 'https://liveaudit.test/jobs?k={{q}}&remote=1',
     nav_params_schema: '{"q":"keywords"}',
@@ -306,7 +312,24 @@ test('a hardcoded value that merely filters is not reported', async () => {
   const findings = await auditFixedParams(db, {
     run: async t => (t === target ? { count: /remote=1/.test(templateOf(t)) ? 20 : 25 } : { count: 10 }),
   });
-  assert.equal(find(findings, target), undefined, 'a small increase is an ordinary filter, not a defect');
+  const f = find(findings, target);
+  assert.ok(f, 'the recipe must appear, so a clean run is distinguishable from an empty one');
+  assert.equal(f.severity, 'ok', 'a small increase is an ordinary filter, not a defect');
+  assert.equal(f.recordsWith, 20);
+  assert.equal(f.recordsWithout, 25);
+});
+
+test('a recipe the audit could NOT exercise is absent, not silently ok', async () => {
+  // The other half of making the output readable: "ok" has to mean checked.
+  // A recipe with no probe values cannot be run, so it must not appear at all
+  // rather than appear as fine.
+  const target = fixture('f_unexercisable', {
+    nav_template: 'https://liveaudit.test/jobs?k={{q}}&remote=1',
+    nav_params_schema: '{"q":"keywords"}',
+    // no param_probe_values, so {{q}} cannot be filled
+  });
+  const findings = await auditFixedParams(db, { run: async () => ({ count: 10 }) });
+  assert.equal(find(findings, target), undefined, 'unexercisable must not read as clean');
 });
 
 test('the template is restored even when a run throws', async () => {
