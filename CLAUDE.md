@@ -58,6 +58,22 @@ connected them. An action listed as "ran here via a working recipe" is evidence;
 one absent from the list has never been tried here, which is not the same as not
 working.
 
+**Find out pre-emptively with `node primitives.js try <url>`.** It runs the
+heuristic generic actions against a page — one page load each, so results
+cannot depend on each other — and records what each one DID, judged by
+comparing a page signature before and after. An action that no-ops cleanly is
+not evidence that it works, which is the whole reason this is measured rather
+than inferred from "it did not throw". Outcomes are `changed` / `no_effect` /
+`error`; `changed` means "this does something here", not "this helped". Trying
+the Lever board this way found a consent dialog no recipe handles.
+
+Observations are **earned**: `recordObservation` is a guarded write and the
+trial runner is its only sanctioned caller, so an outcome cannot be asserted by
+hand. They go **stale** — `audit.js units` flags any older than 90 days,
+because a measurement taken against a page that has since been redesigned
+reads exactly like a current one. Re-measure, or `node primitives.js forget
+<hostname>`.
+
 **2. Writes are BLOCKED outside a sanctioned path.**
 
 | to do this | use |
@@ -154,7 +170,8 @@ verify.js   <target> '<params>' [--dry] [--attended]
 audit.js    units | inline | repeats | literals | hardcoded | provenance  (offline)
             params | working | fixed-params                              (LIVE, minutes)
 failures.js match | record | common | list | types | signatures | probe-knowledge
-primitives.js  pages | show <hostname>   what is known about a PAGE, across every recipe on it
+primitives.js  pages | show <hostname> | try <url> | forget <hostname>
+            what is known about a PAGE; `try` MEASURES which generic actions do anything there
 dev.sh      check | test [n] | audit | run | verify | inside | apply | waive
             page | hooks | known | failures | board | browser-ok
             health | blocked | snap | new | clean

@@ -158,6 +158,41 @@ CREATE TABLE IF NOT EXISTS site_fields (
   UNIQUE(site_id, field_name)
 );
 
+-- What has been OBSERVED about a page, as opposed to what its recipes imply.
+--
+-- lib/primitives.js derives most of a page's profile from the recipes that
+-- already target it. Two things it cannot derive, and they are the ones worth
+-- most: whether a generic action does anything here when NO recipe references
+-- it yet, and anything at all about a page that has no recipe — which is
+-- exactly when the guesswork is worst.
+--
+-- One row is the CURRENT answer for (page, kind, subject), not a history:
+-- UNIQUE forces an upsert, so re-observing refreshes rather than accumulates,
+-- and "when was this last true" stays a single readable date. times_observed
+-- counts consecutive agreeing observations; a changed outcome resets it,
+-- because the previous count was evidence for a different answer.
+--
+-- Every row is EARNED. recordObservation is a guarded write, and the only
+-- sanctioned caller is the trial runner, which writes what it just measured.
+-- There is deliberately no way to assert an outcome by hand: "dismiss_overlay
+-- works here" typed by someone who did not run it is exactly the folklore this
+-- table exists to replace.
+CREATE TABLE IF NOT EXISTS page_observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hostname TEXT NOT NULL,
+  page_key TEXT NOT NULL,        -- lib/pageIdentity's key when a recipe exists, else the observed URL
+  observed_url TEXT NOT NULL,    -- the concrete URL it was measured on
+  kind TEXT NOT NULL,            -- 'generic_action' | 'probe'
+  subject TEXT NOT NULL,         -- which action, or which probe
+  outcome TEXT NOT NULL,         -- 'changed' | 'no_effect' | 'error'
+  detail TEXT,                   -- one line: what changed, or what threw
+  evidence TEXT,                 -- JSON: the before/after signature it was decided from
+  first_observed_at TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  times_observed INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(page_key, kind, subject)
+);
+
 CREATE TABLE IF NOT EXISTS scrape_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id INTEGER REFERENCES sites(id),
@@ -918,6 +953,94 @@ function insertField(db, siteId, f, order) {
   );
 }
 
+// Records what a trial actually measured on a page. GUARDED: unlike logRun,
+// which is append-only telemetry about a run that happened, this is a claim
+// about what is TRUE of a page, and the other half of the system reads it as
+// evidence. An outcome typed by hand would be indistinguishable from one that
+// was measured, which is the whole thing this is meant to prevent.
+//
+// Upserts on (page_key, kind, subject): one current answer per question. An
+// outcome that AGREES with the stored one bumps times_observed; one that
+// disagrees resets it to 1, because the old count was evidence for the old
+// answer and carrying it over would overstate confidence in the new one.
+function recordObservation(db, obs) {
+  assertAuthorized('recordObservation');
+  const now = new Date().toISOString();
+  const existing = db
+    .prepare('SELECT id, outcome, times_observed, first_observed_at FROM page_observations WHERE page_key = ? AND kind = ? AND subject = ?')
+    .get(obs.page_key, obs.kind, obs.subject);
+
+  if (existing) {
+    const agrees = existing.outcome === obs.outcome;
+    db.prepare(
+      `UPDATE page_observations
+          SET hostname = ?, observed_url = ?, outcome = ?, detail = ?, evidence = ?,
+              observed_at = ?, times_observed = ?
+        WHERE id = ?`
+    ).run(
+      obs.hostname,
+      obs.observed_url,
+      obs.outcome,
+      obs.detail ?? null,
+      obs.evidence ? JSON.stringify(obs.evidence) : null,
+      now,
+      agrees ? existing.times_observed + 1 : 1,
+      existing.id
+    );
+    return { id: existing.id, changedFrom: agrees ? null : existing.outcome };
+  }
+
+  db.prepare(
+    `INSERT INTO page_observations
+       (hostname, page_key, observed_url, kind, subject, outcome, detail, evidence, first_observed_at, observed_at, times_observed)
+     VALUES (?,?,?,?,?,?,?,?,?,?,1)`
+  ).run(
+    obs.hostname,
+    obs.page_key,
+    obs.observed_url,
+    obs.kind,
+    obs.subject,
+    obs.outcome,
+    obs.detail ?? null,
+    obs.evidence ? JSON.stringify(obs.evidence) : null,
+    now,
+    now
+  );
+  return { id: db.prepare('SELECT last_insert_rowid() AS id').get().id, changedFrom: null };
+}
+
+// Drops observations for a host or a page. Guarded, like recording them:
+// deleting evidence is as consequential as writing it.
+//
+// Needed because a page is someone else's HTML. When it is redesigned, what
+// was measured against the old layout is not merely old, it is wrong — and an
+// observation that is wrong reads exactly like one that is right. Also the
+// repair path for anything filed against the wrong page.
+function forgetObservations(db, { hostname, pageKey } = {}) {
+  assertAuthorized('forgetObservations');
+  if (!hostname && !pageKey) throw new Error('forgetObservations needs a hostname or a pageKey — refusing to clear the whole table');
+  const where = [];
+  const args = [];
+  if (hostname) { where.push('LOWER(hostname) = LOWER(?)'); args.push(hostname); }
+  if (pageKey) { where.push('page_key = ?'); args.push(pageKey); }
+  const before = db.prepare(`SELECT COUNT(*) AS n FROM page_observations WHERE ${where.join(' AND ')}`).get(...args).n;
+  db.prepare(`DELETE FROM page_observations WHERE ${where.join(' AND ')}`).run(...args);
+  return { removed: before };
+}
+
+// Observations, newest first. Filter by hostname or by exact page key.
+function listObservations(db, { hostname, pageKey } = {}) {
+  const where = [];
+  const args = [];
+  if (hostname) { where.push('LOWER(hostname) = LOWER(?)'); args.push(hostname); }
+  if (pageKey) { where.push('page_key = ?'); args.push(pageKey); }
+  const sql = `SELECT * FROM page_observations ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY observed_at DESC`;
+  return db.prepare(sql).all(...args).map(r => ({
+    ...r,
+    evidence: (() => { try { return r.evidence ? JSON.parse(r.evidence) : null; } catch { return null; } })(),
+  }));
+}
+
 function logRun(db, run) {
   // Guarded despite being append-only telemetry, because it is not ONLY
   // telemetry: definitionHasPassingRun reads result_count to decide whether
@@ -1079,6 +1202,9 @@ module.exports = {
   upsertSite,
   insertField,
   logRun,
+  recordObservation,
+  listObservations,
+  forgetObservations,
   getRuns,
   getRecipeHealth,
   recipeDefinition,

@@ -240,7 +240,14 @@ case "$cmd" in
           for (const [who,vals] of Object.entries(p.params.knownWorkingValues)) {
             console.log(`  known    ${who}: ${JSON.stringify(vals[0]).slice(0,90)}`);
           }
-          for (const a of p.genericActions) console.log(`  action   ${a.action.padEnd(24)} ${a.evidence}`);
+          for (const a of p.genericActions) {
+            // A measurement outrules an inference, so it leads when present.
+            const m = a.measured;
+            const said = m
+              ? `MEASURED ${m.outcome}${m.timesObserved>1?` x${m.timesObserved}`:""}${m.stale?" (STALE)":""} — ${m.detail}`
+              : a.evidence;
+            console.log(`  action   ${a.action.padEnd(22)} ${said}`);
+          }
           for (const f of p.knownFailures) {
             console.log(`  BROKE    [${f.type}] x${f.occurrences} -> ${(f.resolution||"no resolution recorded").slice(0,100)}`);
           }

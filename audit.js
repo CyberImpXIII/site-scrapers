@@ -295,6 +295,31 @@ function auditUnits(db) {
   }
 
   // --- Mistakes this project actually made, now checkable offline ---------
+  // Observations describe someone else's HTML at a moment in time. One taken
+  // against a layout that has since been redesigned is not merely old, it is
+  // wrong — and it reads exactly like one that is right, which is the "stale
+  // notes are worse than none" failure in docs/lessons.md, now with a table
+  // behind it. Flagged rather than deleted: it may still be true, and the
+  // reader is better placed to judge that than a cutoff is.
+  try {
+    const { listObservations } = require('./db');
+    const { isStale, ageInDays, STALE_AFTER_DAYS } = require('./lib/observations');
+    const { describePageKey } = require('./lib/pageIdentity');
+    for (const o of listObservations(db)) {
+      if (!isStale(o)) continue;
+      add(
+        'warn',
+        describePageKey(o.page_key),
+        `observation "${o.subject} -> ${o.outcome}" is ${ageInDays(o.observed_at)} days old`,
+        `older than ${STALE_AFTER_DAYS} days, so it describes a page that may have been redesigned since. ` +
+          `Re-measure with \`node primitives.js try <url>\`, or drop it with \`node primitives.js forget ${o.hostname}\``,
+        'stale-observation'
+      );
+    }
+  } catch {
+    // A DB without the table (an old copy) is not a finding.
+  }
+
   for (const { site, target: unit } of eachRecipe(db)) {
     const notes = String(site.notes || '');
     const acks = acknowledgements(notes);
@@ -922,4 +947,8 @@ module.exports = {
   findInlineDuplicates,
   acknowledgements,
   waiverFor,
+  // Exported so the stale-observation rule can be tested end to end. The
+  // predicate behind it is unit-tested, but a rule that is never wired into
+  // the audit reports nothing while looking implemented.
+  auditUnits,
 };

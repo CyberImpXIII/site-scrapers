@@ -120,6 +120,53 @@ test('describePageKey renders a key a person can read', () => {
   assert.equal(describePageKey(key), 'jobs.lever.co  {{url}}');
 });
 
+// --- the key has to survive STORAGE, not just JavaScript --------------------
+
+test('a page key round-trips through the database unchanged', () => {
+  // This is not a paranoid test; it caught a real bug. The separator was
+  // \u0000, which is fine in a JS string and which SQLite TRUNCATES a TEXT
+  // value at. Every key written came back as just the hostname, so every page
+  // on a host collapsed onto one key and UNIQUE(page_key, ...) had them
+  // overwriting each other — silently, because the write succeeded and simply
+  // returned something other than what it was given.
+  //
+  // Every in-memory assertion above passed throughout. Only a round trip
+  // through the actual store could see it.
+  const { openDb, recordObservation, listObservations, forgetObservations } = require('../db');
+  const { authorizeForTests } = require('../lib/writeGuard');
+  authorizeForTests('page key round trip');
+  const db = openDb();
+
+  const host = 'roundtrip.test';
+  const keys = [
+    pageKeyFor({ hostname: host, nav_method: 'direct_url', nav_template: '{{url}}' }),
+    pageKeyFor({ hostname: host, nav_method: 'url_param', nav_template: `https://${host}/{{company}}` }),
+  ];
+  assert.notEqual(keys[0], keys[1], 'the two pages must differ before we even store them');
+
+  try {
+    keys.forEach((key, i) =>
+      recordObservation(db, {
+        hostname: host,
+        page_key: key,
+        observed_url: `https://${host}/${i}`,
+        kind: 'generic_action',
+        subject: 'dismiss_overlay',
+        outcome: 'changed',
+        detail: 'x',
+      })
+    );
+
+    const stored = listObservations(db, { hostname: host });
+    assert.equal(stored.length, 2, 'two distinct pages must stay two rows, not collapse into one');
+    assert.deepEqual(stored.map(o => o.page_key).sort(), [...keys].sort(), 'the key that came back must be the key that went in');
+    // And it must still be readable as a page afterwards.
+    assert.equal(describePageKey(stored.find(o => o.page_key === keys[1]).page_key), `${host}  https://${host}/{{company}}`);
+  } finally {
+    forgetObservations(db, { hostname: host });
+  }
+});
+
 // --- against the real recipe set --------------------------------------------
 
 test('it groups the pages that actually exist, and merges nothing else', () => {
