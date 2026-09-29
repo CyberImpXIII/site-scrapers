@@ -14,6 +14,14 @@ quietly skipping it — several of these are decisions, not chores.
 **Should `href` be resolved to an absolute URL?** An output-contract change, so
 it is his call rather than one to make late in a session.
 
+**This now blocks something real.** 2026-09-29: the data-bridge session is
+mapping `dice.com#listing` output into Proficiently, and every one of its 30
+`href` values is relative (`/job-detail/...`). The consumer has to prefix the
+origin itself, and since Greenhouse returns absolute while Ashby and dice
+return relative, it has to do so defensively — per recipe, forever, or once
+here. That is the argument for doing it: the inconsistency does not stay
+inside this repo, it propagates to every consumer.
+
 `anchor_attribute` returns the raw attribute, so a recipe's `href` is absolute
 when the site writes it absolute (Greenhouse) and relative when it does not
 (Ashby: `/linear/c21af93e-…`). A caller cannot use `record.href` directly
