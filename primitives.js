@@ -81,6 +81,7 @@ function load() {
 // no-op for lack of input and record a misleading answer.
 const DEFAULT_TRIALS = [
   'probe_card_candidates',
+  'probe_pagination_controls',
   'diagnose_blockers',
   'diagnose_antibot',
   'dismiss_overlay',

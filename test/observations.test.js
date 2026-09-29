@@ -152,10 +152,32 @@ test('a diagnostic that found nothing is no_effect, and says so about the PAGE',
   assert.match(r.detail, /no repeated card structure/);
 });
 
-test('"not blocked" counts as a finding, because it is the answer you wanted', () => {
-  const r = outcomeForProbes([{ kind: 'blockers', blocked: false, flags: [] }]);
-  assert.equal(r.outcome, 'reported');
-  assert.match(r.detail, /not blocked/);
+test('a probe that CHARACTERISES always reports; one that SEARCHES can come up empty', () => {
+  // The line between them, and it is not arbitrary. `blockers` and
+  // `pagination_controls` describe the page, so "not blocked" and "no control
+  // but it scrolls" are answers -- the second paired with an infinite_scroll
+  // trial that also finds nothing is how you learn everything is already on
+  // the page. `repeated_structure` searches FOR something, so finding none
+  // genuinely means there are no cards here.
+  assert.equal(outcomeForProbes([{ kind: 'blockers', blocked: false, flags: [] }]).outcome, 'reported');
+
+  const paging = outcomeForProbes([{ kind: 'pagination_controls', likely: null, controls: [], scrollable: true }]);
+  assert.equal(paging.outcome, 'reported');
+  assert.match(paging.detail, /may be infinite scroll/);
+
+  assert.equal(outcomeForProbes([{ kind: 'repeated_structure', candidates: [] }]).outcome, 'no_effect');
+});
+
+test('pagination_controls leads with the mechanism and the selector to use', () => {
+  const r = outcomeForProbes([{
+    kind: 'pagination_controls',
+    likely: 'load_more',
+    controls: [{ mechanism: 'load_more', selector: 'button.load-more', text: 'Show more' }],
+    urlParams: ['page'],
+  }]);
+  assert.match(r.detail, /likely load_more/);
+  assert.match(r.detail, /button\.load-more/);
+  assert.match(r.detail, /url params: page/);
 });
 
 test('a non-diagnostic action returns null so the signature decides', () => {

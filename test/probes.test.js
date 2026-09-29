@@ -74,6 +74,25 @@ function pageFor(query) {
     ).join('');
     return `<html><head><meta charset="utf-8"></head><body><ul>${rows}</ul></body></html>`;
   }
+  if (query.get('page') === 'paging') {
+    // One page per mechanism, selected by &kind=, because the whole point of
+    // the probe is telling them apart -- a single fixture with all of them
+    // would prove only that it finds something.
+    const kind = query.get('kind');
+    const filler = Array.from({ length: 40 }, (_, i) => `<p>Job ${i} with enough text to make the page scroll.</p>`).join('');
+    const body = {
+      load_more: '<button class="load-more">Show more jobs</button>',
+      // A decoy that must NOT be read as a next control.
+      decoy: '<a href="/x">Learn more</a><a href="/y">More filters</a>',
+      next: '<a rel="next" href="/jobs?page=2">Next</a>',
+      german: '<button class="mehr">Mehr laden</button>',
+      numbered: '<nav class="pagination"><a href="?p=1">1</a><a href="?p=2">2</a><a href="?p=3">3</a></nav>',
+      sentinel: '<div class="infinite-scroll-sentinel"></div>',
+      disabled: '<button class="load-more" disabled>Show more jobs</button>',
+      none: '',
+    }[kind] || '';
+    return `<html><head><meta charset="utf-8"></head><body>${filler}${body}</body></html>`;
+  }
   if (query.get('page') === 'shapes') {
     // One part per recognisable shape, plus two that must NOT be proposed:
     // .place holds a plain string no vocabulary covers, and .mixed matches the
@@ -275,6 +294,85 @@ test('card_anatomy reports the outermost element holding a text, not every wrapp
   const anat = byKind(result, 'card_anatomy');
   assert.ok(anat.parts.some(p => p.selector === 'div.ti'), 'the titled wrapper should be reported');
   assert.equal(anat.parts.filter(p => p.selector === 'span').length, 0, 'its bare inner span should not be');
+});
+
+// pagination_controls proposes the OTHER half of a listing recipe:
+// pagination_method, and the next_selector `paginate` needs. Each mechanism
+// implies a different recipe, so telling them apart is the whole job.
+
+const paging = async (name, kind) => {
+  const result = await run(`probe_paging_${name}`, [
+    { action: 'goto', url: `${baseUrl}?page=paging&kind=${kind}` },
+    { action: 'run_generic_action', ref: 'probe_pagination_controls' },
+  ]);
+  return byKind(result, 'pagination_controls');
+};
+
+test('a load-more button is found, with the selector paginate would need', async () => {
+  const p = await paging('loadmore', 'load_more');
+  assert.equal(p.likely, 'load_more');
+  const c = p.controls.find(x => x.mechanism === 'load_more');
+  assert.equal(c.selector, 'button.load-more');
+  assert.match(p.hint, /next_selector/);
+});
+
+test('"Learn more" and "More filters" are not pagination controls', async () => {
+  // The decoy case. `more` on its own matches both of those, and a wrong
+  // next_selector is a recipe that silently paginates into nothing -- so the
+  // vocabulary is anchored rather than loose.
+  const p = await paging('decoy', 'decoy');
+  assert.deepEqual(p.controls.filter(c => c.mechanism !== 'scroll_sentinel'), []);
+  assert.notEqual(p.likely, 'load_more');
+});
+
+test('rel="next" is recognised structurally, not from its wording', async () => {
+  const p = await paging('next', 'next');
+  assert.equal(p.likely, 'next_link');
+  assert.equal(p.controls.find(c => c.mechanism === 'next_link').selector, 'a[rel="next"]');
+});
+
+test('the text vocabulary is data, so a German control is found too', async () => {
+  // stepstone.de is already in this repo. An English-only word list would
+  // report "no pagination" on it, which reads as a single-page site.
+  const p = await paging('german', 'german');
+  assert.equal(p.likely, 'load_more');
+  assert.match(p.controls[0].text, /Mehr laden/);
+});
+
+test('a run of numbered links is a mechanism; one number is not', async () => {
+  const p = await paging('numbered', 'numbered');
+  assert.equal(p.likely, 'numbered');
+  assert.ok(p.controls.filter(c => c.mechanism === 'numbered').length >= 3);
+});
+
+test('a disabled control is not offered as a way forward', async () => {
+  // "Show more" greyed out on the last page means there is no more, and
+  // proposing it would build a recipe that paginates into nothing.
+  const p = await paging('disabled', 'disabled');
+  assert.deepEqual(p.controls.filter(c => c.mechanism === 'load_more'), []);
+  assert.notEqual(p.likely, 'load_more');
+});
+
+test('infinite scroll is never CLAIMED — only scrolling can establish it', async () => {
+  // The honesty requirement. A sentinel-shaped element is a hint from a class
+  // name; treating it as a finding is exactly the confidently-wrong answer
+  // docs/lessons.md is about. likely stays null and the hint says what would
+  // settle it.
+  const p = await paging('sentinel', 'sentinel');
+  assert.equal(p.likely, null, 'a sentinel element is not proof of infinite scroll');
+  assert.ok(p.controls.some(c => c.mechanism === 'scroll_sentinel'));
+  assert.match(p.hint, /infinite_scroll action/);
+  assert.match(p.hint, /never proof/);
+});
+
+test('a page with nothing and nowhere to scroll is single_page, not unknown', async () => {
+  const result = await run('probe_paging_single', [
+    { action: 'goto', url: `${baseUrl}?page=anatomy` },
+    { action: 'run_generic_action', ref: 'probe_pagination_controls' },
+  ]);
+  const p = byKind(result, 'pagination_controls');
+  assert.equal(p.likely, 'single_page');
+  assert.match(p.hint, /probably already here/);
 });
 
 test('card_anatomy proposes a field name only from a shape it was told about', async () => {
