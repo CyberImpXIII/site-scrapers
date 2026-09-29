@@ -242,6 +242,56 @@ anything that would provoke a site into blocking us — but "8 sequential page
 loads" is ordinary browsing, not that. When in doubt about whether a cost is
 real, ask whether a token is spent on it.
 
+## Keep an active TODO — write it when you notice it
+
+**Jacob's rule, in every copy of these rules.** `TODO.md` is not an end-of-
+session summary. An issue you noticed and neither fixed, reported, nor wrote
+down is **lost when the session ends**, and the next session pays to find it
+again. It holds your own bugs (including ones you caused and worked around),
+open decisions with what each hinges on, **unconfirmed suspicions labelled as
+such** naming the probe that would settle them, and **what you reported to
+another owner** — so nobody re-reports it and a stalled report stays visible.
+
+Record evidence, not worry: what you ran, what you saw, what you concluded.
+Delete items when done; a TODO nobody trims stops being read.
+
+**Write it at the moment you notice it.** The end of a session is exactly when
+context runs out. Section 0 of `TODO.md` carries the proof: three items were
+spotted mid-session, called "worth noting", and never written down — they
+surfaced only because Jacob asked whether anything had been left out. One was
+a `lib/gate.js` defect I had explicitly said I would record.
+
+## Report a problem in someone else's code to whoever owns it
+
+**Jacob's directive, in every copy of these rules — like the hooks.** When you
+find a bug, a wrong result, a status that overstates what works, or a missing
+guard in code another agent owns, **tell that agent.** Do not fix it silently,
+do not route around it, do not leave it to be rediscovered.
+
+- `ListAgents` to find the owner, `SendMessage` to report. Say what you
+  observed, the exact input or parameters, what you expected, and what you did
+  on your own side meanwhile.
+- **Both alternatives cost more.** Fixing it yourself clobbers their work and
+  skips the checks their repo has for a reason. Routing around it hides a
+  fixable fault, and the next consumer pays again.
+- **Report unconfirmed findings too**, labelled, naming the probe you ran, so
+  the owner can tell evidence from inference.
+- If nobody owns it, or the owner is unresponsive, tell Jacob rather than
+  quietly absorbing it.
+
+It has paid for itself in both directions from this repo. A `glassdoor` recipe
+reported here as broken was not broken — it had a NULL `nav_params_schema` and
+a `kw_end` whose wrong value returns 5 records instead of 30 with
+`success:true`. A report in the other direction found an import script
+discarding good data by aborting on a non-zero exit code. And a consumer
+reading the VALUES found three `remoteok` extraction faults that every audit
+here passed, because a run returning 50 rows looks healthy from the inside.
+
+**Consumers see what audits cannot.** An audit here checks that a run returned
+records; it does not read them. If someone is using this engine's output, their
+report is the strongest signal available about whether a recipe is actually
+right.
+
 ## Gate the seams — STANDING DIRECTIVE
 
 **Any change that creates an interface gates it in the same change** — a gate, a
