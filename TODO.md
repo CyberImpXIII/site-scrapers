@@ -406,6 +406,22 @@ before trusting or extending this.
   Now **seven** with `knowledge-base` (2026-10-02), all declared in
   `DECLARED` in `check-hooks.sh`; the top-level prose still needs the count.
 
+**Added 2026-10-02 (hook tests resolved the wrong repo) -- OPEN until synced:**
+- `test-prefer-recipes.sh` / `test-troubleshooting.sh` took any folder with a
+  `dev.sh` for site-scrapers. From knowledge-base (which has one) they queried
+  no recipes, skipped every block case (4 and 2) and printed "all cases
+  passed". Fixed here: same walk-up rule as the hooks (dev.sh AND engine.js),
+  plus a `recipes from:` line and a loud line when `query.js sites` is empty.
+  Regression test in `test/hooks.test.js`. Reported by the knowledge-base
+  reviewer via the dispatcher; reproduced here before fixing.
+- **The other six copies are NOT synced** (`./check-hooks.sh` shows both
+  test files DRIFTED, 2 implementations across 7 copies). `--sync` would write
+  into knowledge-base and other owners' folders, so it was left to a dispatch.
+  Delete this item once `./dev.sh hooks` is clean again.
+- Unconfirmed: both tests hardcode `NODE_BIN=$HOME/.nvm/versions/node/v22.20.0`.
+  A machine without that exact node would get empty `sites` and skip (now
+  loudly). Probe: run with that path absent.
+
 **Added 2026-10-02 (DECLARED hook locations):**
 - Workspace vs standalone is decided by ONE marker, the top level's
   `.claude/agents.manifest.json` (the harness's roster file). If harness moves

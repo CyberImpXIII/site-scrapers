@@ -130,6 +130,35 @@ test('every hook has a test script, and each one passes', () => {
   }
 });
 
+test('hook tests find site-scrapers from a sibling that ALSO has a dev.sh', () => {
+  // knowledge-base has its own dev.sh. The tests used to take any folder with a
+  // dev.sh for site-scrapers, so from knowledge-base they queried no recipes and
+  // skipped every block case while printing "all cases passed". Fixture:
+  // <tmp>/knowledge-base/{dev.sh,.claude/hooks/...} beside a <tmp>/site-scrapers
+  // link to this repo. Only the resolution line is asserted.
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-kbfix-'));
+  try {
+    fs.symlinkSync(REPO, path.join(root, 'site-scrapers'));
+    const kb = path.join(root, 'knowledge-base');
+    const kbHooks = path.join(kb, '.claude', 'hooks');
+    fs.mkdirSync(kbHooks, { recursive: true });
+    fs.writeFileSync(path.join(kb, 'dev.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+    for (const t of ['test-prefer-recipes.sh', 'test-troubleshooting.sh']) {
+      // Only the resolution prologue runs: everything after `fails=0` up to
+      // the "recipes from" echo, so no recipe query and no browser-ok marker.
+      const src = fs.readFileSync(path.join(HOOKS, t), 'utf8');
+      const end = src.indexOf('\nfi\n', src.indexOf('REPO="$(find_repo)"'));
+      assert.ok(end > 0, `${t}: find_repo prologue not found -- did the resolution move?`);
+      fs.writeFileSync(path.join(kbHooks, t), src.slice(0, end + 4), { mode: 0o755 });
+      const r = require('node:child_process').spawnSync('bash', [path.join(kbHooks, t)], { encoding: 'utf8' });
+      const out = `${r.stdout || ''}${r.stderr || ''}`;
+      assert.match(out, /recipes from: .*\/site-scrapers\n/, `${t} from knowledge-base:\n${out}`);
+      assert.doesNotMatch(out, /recipes from: .*knowledge-base/, out);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // --- check-hooks.sh: which hooks need a twin, on a fixture tools folder -------
 //
 // check-hooks.sh finds its siblings from its OWN location (the folder above it),

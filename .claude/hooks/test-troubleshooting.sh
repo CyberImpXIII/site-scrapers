@@ -17,10 +17,28 @@
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$DIR/troubleshooting.sh"
-REPO="$(cd "$DIR/../.." && pwd)"
-[ -f "$REPO/dev.sh" ] || REPO="$REPO/site-scrapers"
 fails=0
 skips=0
+# site-scrapers is found by the SAME rule the hook uses (dev.sh AND engine.js,
+# walking up), not by "a folder with a dev.sh": knowledge-base has a dev.sh
+# too, so from there this used to query a folder with no recipes and skip every
+# block case while still printing "all cases passed".
+find_repo() {
+  local d="$DIR"
+  while [ "$d" != "/" ] && [ -n "$d" ]; do
+    if [ -f "$d/site-scrapers/dev.sh" ] && [ -f "$d/site-scrapers/engine.js" ]; then printf '%s\n' "$d/site-scrapers"; return 0; fi
+    if [ -f "$d/dev.sh" ] && [ -f "$d/engine.js" ]; then printf '%s\n' "$d"; return 0; fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+REPO="$(find_repo)" || REPO=""
+if [ -z "$REPO" ]; then
+  echo "site-scrapers NOT FOUND above $DIR -- every recipe-backed case below SKIPS"
+  REPO="/nonexistent"
+else
+  echo "recipes from: $REPO"
+fi
 
 check() {
   local want="$1" desc="$2" cmd="$3"
@@ -38,6 +56,7 @@ skip() { printf '  SKIP  %-40s %s\n' "$1" "$2"; skips=$((skips + 1)); }
 
 NODE_BIN="$HOME/.nvm/versions/node/v22.20.0/bin/node"
 sites=$(cd "$REPO" && "$NODE_BIN" query.js sites 2>/dev/null)
+[ -n "$sites" ] || echo "query.js sites returned NOTHING from $REPO -- any SKIP below is for that reason, not an empty DB"
 pick() { printf '%s' "$sites" | jq -r "$1" 2>/dev/null; }
 attn=$(pick 'map(select(.status == "blocked-attn")) | .[0].hostname // empty')
 working=$(pick 'map(select(.status == "working")) | .[0].hostname // empty')
