@@ -130,6 +130,12 @@ broke every call would be worse than the habit it corrects.
 | `prefer-recipes.sh` | a browser/WebFetch call on a host that has a `working` recipe (rule 1) |
 | `troubleshooting.sh` | re-running a `blocked-attn` recipe without `--attended` (rule 3) |
 
+These three live in two copies, here and at the top level (`./check-hooks.sh
+--sync` pushes this repo's); **if you change one, change both.** The top level
+also has hooks of its own that exist only there by design (the dispatcher's
+delegation layer). `./check-hooks.sh` requires a twin only for the hooks this
+repo registers or holds, so a new top-level-only hook needs no exception.
+
 `troubleshooting.sh` also **prints this host's failure history** when you are
 about to run `lab.js set` or `register.js` — the `node failures.js match` step
 `docs/diagnosing.md` asks for first, done for you rather than demanded.

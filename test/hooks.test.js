@@ -38,10 +38,30 @@ const hookFiles = fs
   .filter(f => f.endsWith('.sh') && !f.startsWith('test-'))
   .sort();
 
+// Every hook command, across EVERY event, not only PreToolUse.
 const wiredCommands = () => {
   const raw = JSON.parse(fs.readFileSync(SETTINGS, 'utf8'));
-  return (raw.hooks?.PreToolUse || []).flatMap(e => (e.hooks || []).map(h => h.command));
+  return Object.values(raw.hooks || {})
+    .flat()
+    .flatMap(e => (e.hooks || []).map(h => h.command))
+    .filter(Boolean);
 };
+
+// The script a command runs: the first word after `.claude/hooks/`. The rest
+// are ARGUMENTS -- `agent-watch.sh prespawn` runs agent-watch.sh. Taking the
+// last `/`-segment read that as one name with a space in it, and check-hooks.sh
+// read it as two hooks, one called `prespawn`. Same rule as its wired_scripts().
+const hookScript = command => {
+  const m = /\.claude\/hooks\/(\S+)/.exec(command);
+  return m ? m[1] : null;
+};
+
+test('hookScript reads the script and never an argument', () => {
+  assert.equal(hookScript('$CLAUDE_PROJECT_DIR/.claude/hooks/agent-watch.sh prespawn'), 'agent-watch.sh');
+  assert.equal(hookScript('$CLAUDE_PROJECT_DIR/.claude/hooks/agent-watch.sh alert PostToolUse'), 'agent-watch.sh');
+  assert.equal(hookScript('$CLAUDE_PROJECT_DIR/.claude/hooks/no-inline-blobs.sh'), 'no-inline-blobs.sh');
+  assert.equal(hookScript('echo not a hook file'), null);
+});
 
 test('there are hooks to check', () => {
   // Guards against the whole file passing vacuously if .claude/hooks ever moves.
@@ -53,7 +73,8 @@ test('every hook named in settings.json exists and is executable', () => {
   // named-but-absent hook command does not degrade to "unenforced" -- it
   // REFUSES every matching tool call.
   for (const command of wiredCommands()) {
-    const name = command.split('/').pop();
+    const name = hookScript(command);
+    if (!name) continue;
     const file = path.join(HOOKS, name);
     assert.ok(fs.existsSync(file), `settings.json names ${name}, which does not exist`);
     assert.ok((fs.statSync(file).mode & 0o111) !== 0, `${name} is not executable, so it cannot run`);
@@ -62,7 +83,7 @@ test('every hook named in settings.json exists and is executable', () => {
 
 test('every hook is wired, and every wired hook is a real file', () => {
   // A hook file nothing wires enforces nothing while looking installed.
-  const wired = new Set(wiredCommands().map(c => c.split('/').pop()));
+  const wired = new Set(wiredCommands().map(hookScript).filter(Boolean));
   for (const name of hookFiles) {
     assert.ok(wired.has(name), `${name} exists but settings.json does not wire it`);
   }
@@ -107,6 +128,107 @@ test('every hook has a test script, and each one passes', () => {
       assert.fail(`test-${name} failed:\n${(e.stdout || '') + (e.stderr || '')}`);
     }
   }
+});
+
+// --- check-hooks.sh: which hooks need a twin, on a fixture tools folder -------
+//
+// check-hooks.sh finds its siblings from its OWN location (the folder above it),
+// so a copy placed at <tmp>/site-scrapers/check-hooks.sh checks <tmp> and never
+// the real tree. Nothing real is deleted to prove a deletion is caught.
+
+const TWINS = ['no-inline-blobs.sh', 'prefer-recipes.sh', 'troubleshooting.sh'];
+const hookCmd = s => ({ type: 'command', command: `$CLAUDE_PROJECT_DIR/.claude/hooks/${s}` });
+
+function hookFixture() {
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-hookfix-'));
+  const top = path.join(root, '.claude');
+  const repo = path.join(root, 'site-scrapers');
+  const script = (dir, name) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), '#!/usr/bin/env bash\n# fixture hook\nexit 0\n', { mode: 0o755 });
+  };
+  // Top level: the twins plus hooks that exist ONLY there, one registered with
+  // mode arguments on several events, and one invented name standing in for
+  // whatever top-level-only hook comes next -- no exception may name it.
+  const topOnly = ['dispatch-guard.sh', 'agent-watch.sh', 'session-doctor.sh', 'future-hook.sh'];
+  for (const n of [...TWINS, ...topOnly]) script(path.join(top, 'hooks'), n);
+  fs.writeFileSync(path.join(top, 'settings.json'), JSON.stringify({ hooks: {
+    PreToolUse: [{ matcher: 'Bash', hooks: [...TWINS, 'dispatch-guard.sh', 'agent-watch.sh prespawn'].map(hookCmd) }],
+    SessionStart: [{ hooks: [hookCmd('session-doctor.sh'), hookCmd('future-hook.sh --quiet')] }],
+    SubagentStop: [{ hooks: [hookCmd('agent-watch.sh stop')] }],
+    PostToolUse: [{ matcher: '*', hooks: [hookCmd('agent-watch.sh alert PostToolUse')] }],
+  } }));
+  for (const n of TWINS) script(path.join(repo, '.claude', 'hooks'), n);
+  fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), JSON.stringify({ hooks: {
+    PreToolUse: [{ matcher: 'Bash', hooks: TWINS.map(hookCmd) }],
+  } }));
+  fs.copyFileSync(path.join(REPO, 'check-hooks.sh'), path.join(repo, 'check-hooks.sh'));
+  fs.chmodSync(path.join(repo, 'check-hooks.sh'), 0o755);
+  const run = () => {
+    const r = require('node:child_process').spawnSync('bash', [path.join(repo, 'check-hooks.sh')], { encoding: 'utf8' });
+    return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
+  };
+  return { root, top, repo, run, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+
+test('check-hooks: top-level-only hooks and their arguments raise no error', () => {
+  const fx = hookFixture();
+  try {
+    const { status, out } = fx.run();
+    assert.equal(status, 0, `expected a clean check:\n${out}`);
+    assert.doesNotMatch(out, /ERROR/);
+    assert.match(out, /hooks: clean/);
+    // An argument is never a hook name: not prespawn, stop, alert or --quiet.
+    assert.doesNotMatch(out, /names (prespawn|stop|alert|PostToolUse|--quiet)\b/);
+    for (const n of ['dispatch-guard.sh', 'agent-watch.sh', 'session-doctor.sh', 'future-hook.sh']) {
+      assert.match(out, new RegExp(`${n.replace('.', '\\.')} is local to: \\.claude/hooks`), `${n} should be reported as local`);
+    }
+    // Wired on non-PreToolUse events counts as wired.
+    assert.doesNotMatch(out, /present but not wired/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: deleting the TOP-LEVEL copy of a twin still fails', () => {
+  const fx = hookFixture();
+  try {
+    fs.rmSync(path.join(fx.top, 'hooks', 'prefer-recipes.sh'));
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /ERROR\s+prefer-recipes\.sh is missing from: \.claude\/hooks\b/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: deleting THIS repo\'s copy of a twin still fails', () => {
+  const fx = hookFixture();
+  try {
+    fs.rmSync(path.join(fx.repo, '.claude', 'hooks', 'troubleshooting.sh'));
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /site-scrapers\/\.claude\/settings\.json names troubleshooting\.sh but it does not exist/);
+    assert.match(out, /troubleshooting\.sh is missing from: site-scrapers\/\.claude\/hooks/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: a twin whose logic drifted from its top-level copy fails', () => {
+  const fx = hookFixture();
+  try {
+    fs.appendFileSync(path.join(fx.top, 'hooks', 'no-inline-blobs.sh'), 'echo drifted\n');
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /no-inline-blobs\.sh has DRIFTED/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: a missing script registered WITH arguments is named by its script', () => {
+  const fx = hookFixture();
+  try {
+    fs.rmSync(path.join(fx.top, 'hooks', 'agent-watch.sh'));
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /names agent-watch\.sh but it does not exist/);
+    assert.doesNotMatch(out, /names (prespawn|stop|alert)\b/);
+  } finally { fx.cleanup(); }
 });
 
 // --- dev.sh: documented and implemented must be the same set -----------------
