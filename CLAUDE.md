@@ -341,8 +341,15 @@ One verification run, not two.
 
 ## Absolute constraints
 
-- **Never** submit a form, apply to a job, create an account, or enter real
-  credentials. Describing a form is safe; filling one is not.
+- **Job applications are prepare-then-confirm** (Jacob, 2026-10-02). An agent
+  may prepare an application end to end — open the form, fill every field,
+  upload documents, answer the questions. It **stops at the final submit** and
+  gets Jacob's explicit yes for *that* application before clicking it. A yes
+  for one application never carries over to another.
+- **Never** create an account, or do anything else public or irreversible —
+  any other submit included — without Jacob's explicit yes first.
+- **Never** enter real credentials without Jacob. He supplies them at run time
+  (a caller param or a `handoff`); they are never stored.
 - Credential-shaped values are caller-supplied params at run time, never written
   into a stored recipe.
 - **Never** attempt to bypass bot detection. A detected wall means
