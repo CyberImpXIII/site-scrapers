@@ -347,13 +347,18 @@ One verification run, not two.
 
 ## Absolute constraints
 
-- **Job applications are prepare-then-confirm** (Jacob, 2026-10-02). An agent
-  may prepare an application end to end — open the form, fill every field,
-  upload documents, answer the questions. It **stops at the final submit** and
-  gets Jacob's explicit yes for *that* application before clicking it. A yes
-  for one application never carries over to another.
+- **Job applications are prepare-then-confirm, one yes per batch** (Jacob,
+  2026-10-02: "One yes should cover a batch"). An agent may prepare
+  applications end to end — open the form, fill every field, upload documents,
+  answer the questions. It **stops before anything irreversible** and presents
+  the prepared batch to Jacob: each application, its role and company, and the
+  irreversible steps it involves (the submit, and creating an account wherever
+  one is required). One explicit yes covers exactly what that presentation
+  listed. Anything prepared after the yes — or left out of the presentation —
+  needs its own yes. Nothing submits unattended.
 - **Never** create an account, or do anything else public or irreversible —
-  any other submit included — without Jacob's explicit yes first.
+  any other submit included — without Jacob's explicit yes first (for an
+  application, a yes to a presented batch that listed it).
 - **Never** enter real credentials without Jacob. He supplies them at run time
   (a caller param or a `handoff`); they are never stored.
 - Credential-shaped values are caller-supplied params at run time, never written

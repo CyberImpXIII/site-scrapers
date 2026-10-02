@@ -179,8 +179,9 @@ are now byte-identical 3-step definitions. **Neither action fills or submits
 anything.** Applications are prepare-then-confirm (CLAUDE.md, Absolute
 constraints): an agent may fill the form, upload documents and answer the
 questions, but **nothing ever submits unattended** — a submit step may exist
-only behind Jacob's explicit yes for that one application, such as an
-attended handoff.
+only behind Jacob's explicit yes to a presented batch that listed that
+application (one yes covers exactly the batch shown; anything prepared later
+needs its own), such as an attended handoff.
 
 Required-ness is reported with `requiredEvidence`, because Greenhouse and
 Lever mark it only with a `*`/`✱` in the label and leave the HTML attribute

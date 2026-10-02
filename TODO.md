@@ -404,6 +404,15 @@ before trusting or extending this.
   scriptingTools/chronjobScheduler, scriptingTools/data-bridge), all in step.
   Prose belongs to the dispatcher; reported in the 2026-10-02 handback.
 
+**Added 2026-10-02 (batch-yes application rule):**
+- The application rule ("one yes covers a presented batch") is restated in
+  four places here: `CLAUDE.md` Absolute constraints (authoritative),
+  `docs/recipes.md` (describe_form passage), the `open_apply_form` description
+  in `lib/builtinActions.js`, and the Standing constraints at the foot of this
+  file. Nothing checks they agree; the per-application wording survived one
+  rewrite already (06df444). Wanted: fold into the CLAUDE.md-sync check below,
+  or point the three restatements at CLAUDE.md instead of paraphrasing it.
+
 Found while gating the hook layer, under the "Gate the seams" directive in
 `CLAUDE.md`. Each is a place where a mistake would be **silent**, which is why
 they are worth writing down rather than leaving to be rediscovered. None is
@@ -701,8 +710,10 @@ Two defects behind that same sweep are already fixed (2026-09-28):
 ## Standing constraints — these are not negotiable and not up for optimisation
 
 - **Job applications are prepare-then-confirm** (Jacob, 2026-10-02): fill the
-  form, upload documents, answer the questions, then stop at the final submit
-  for Jacob's explicit yes for that one application. Nothing submits
+  form, upload documents, answer the questions, then stop and present the
+  prepared batch (applications, roles, companies, and each irreversible step:
+  the submit, any account creation). One explicit yes covers exactly the batch
+  presented; anything prepared after it needs its own yes. Nothing submits
   unattended. Never create an account, submit anything else, or enter real
   credentials without him. CLAUDE.md "Absolute constraints" is authoritative.
 - **Never** attempt to bypass bot detection. A detected wall means
