@@ -130,8 +130,13 @@ broke every call would be worse than the habit it corrects.
 | `prefer-recipes.sh` | a browser/WebFetch call on a host that has a `working` recipe (rule 1) |
 | `troubleshooting.sh` | re-running a `blocked-attn` recipe without `--attended` (rule 3) |
 
-These three live in two copies, here and at the top level (`./check-hooks.sh
---sync` pushes this repo's); **if you change one, change both.** The top level
+These three live in one copy per tool folder — here, the top level, and every
+sibling listed in `DECLARED` in `check-hooks.sh` (knowledge-base included).
+`./check-hooks.sh --sync` pushes this repo's; **if you change one, sync them
+all.** A declared copy that is absent is an ERROR in the workspace (detected by
+the top level's `.claude/agents.manifest.json`) and is printed as `UNCHECKED`,
+and counted in the final line, on a standalone clone — never passed silently.
+A new tool folder holding the hooks must be added to `DECLARED`. The top level
 also has hooks of its own that exist only there by design (the dispatcher's
 delegation layer). `./check-hooks.sh` requires a twin only for the hooks this
 repo registers or holds, so a new top-level-only hook needs no exception.

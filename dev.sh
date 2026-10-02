@@ -152,7 +152,7 @@ case "$cmd" in
     if [ "$hookrc" = 0 ]; then
       printf '%s\n' "$hookout" | tail -1 | sed 's/^/   /'
     else
-      printf '%s\n' "$hookout" | grep -E '^  (ERROR|note)' | sed 's/^ */   /'
+      printf '%s\n' "$hookout" | grep -E '^  (ERROR|note|UNCHECKED)' | sed 's/^ */   /'
       printf '%s\n' "$hookout" | tail -1 | sed 's/^/   /'
     fi
     echo "-- working tree"

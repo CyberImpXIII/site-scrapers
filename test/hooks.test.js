@@ -139,7 +139,18 @@ test('every hook has a test script, and each one passes', () => {
 const TWINS = ['no-inline-blobs.sh', 'prefer-recipes.sh', 'troubleshooting.sh'];
 const hookCmd = s => ({ type: 'command', command: `$CLAUDE_PROJECT_DIR/.claude/hooks/${s}` });
 
-function hookFixture() {
+// The DECLARED list, read from the script rather than restated, so the fixture
+// follows it. `.` is the top level, which every fixture already has.
+const DECLARED = (() => {
+  const m = /^DECLARED="([^"]*)"/m.exec(fs.readFileSync(path.join(REPO, 'check-hooks.sh'), 'utf8'));
+  return m ? m[1].split(/\s+/).filter(Boolean) : [];
+})();
+const SIBLINGS = DECLARED.filter(l => l !== '.');
+
+// opts.workspace: write the top-level marker and every declared sibling, as the
+// real workspace has them. Without it the fixture is a STANDALONE clone: the
+// top level and this repo only.
+function hookFixture(opts = {}) {
   const os = require('node:os');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-hookfix-'));
   const top = path.join(root, '.claude');
@@ -163,14 +174,125 @@ function hookFixture() {
   fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), JSON.stringify({ hooks: {
     PreToolUse: [{ matcher: 'Bash', hooks: TWINS.map(hookCmd) }],
   } }));
+  if (opts.workspace) {
+    fs.writeFileSync(path.join(top, 'agents.manifest.json'), '{}');
+    for (const loc of SIBLINGS) {
+      for (const n of TWINS) script(path.join(root, loc, '.claude', 'hooks'), n);
+      fs.writeFileSync(path.join(root, loc, '.claude', 'settings.json'), JSON.stringify({ hooks: {
+        PreToolUse: [{ matcher: 'Bash', hooks: TWINS.map(hookCmd) }],
+      } }));
+    }
+  }
   fs.copyFileSync(path.join(REPO, 'check-hooks.sh'), path.join(repo, 'check-hooks.sh'));
   fs.chmodSync(path.join(repo, 'check-hooks.sh'), 0o755);
   const run = () => {
     const r = require('node:child_process').spawnSync('bash', [path.join(repo, 'check-hooks.sh')], { encoding: 'utf8' });
     return { status: r.status, out: `${r.stdout || ''}${r.stderr || ''}` };
   };
-  return { root, top, repo, run, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, top, repo, run, script, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
+
+// --- check-hooks.sh: DECLARED locations (the knowledge-base copy and its peers)
+
+test('check-hooks: DECLARED parses and names the knowledge-base copy', () => {
+  // If the regex stopped matching, every test below would build an empty
+  // workspace and pass vacuously.
+  assert.ok(SIBLINGS.length >= 5, `DECLARED read as: ${JSON.stringify(DECLARED)}`);
+  assert.ok(DECLARED.includes('.'), 'the top level must be declared');
+  assert.ok(SIBLINGS.includes('knowledge-base'), 'the knowledge-base copy must be declared');
+});
+
+test('check-hooks: a full workspace is clean and counts every declared copy', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    const { status, out } = fx.run();
+    assert.equal(status, 0, out);
+    assert.match(out, /declared locations \(workspace/);
+    assert.match(out, /ok\s+knowledge-base\/\.claude\/hooks/);
+    assert.doesNotMatch(out, /UNCHECKED|ERROR/);
+    // top level + this repo + every sibling
+    assert.match(out, new RegExp(`prefer-recipes\\.sh \\(${SIBLINGS.length + 2} copies\\)`));
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: a DRIFTED knowledge-base copy fails and is named', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    fs.appendFileSync(path.join(fx.root, 'knowledge-base', '.claude', 'hooks', 'prefer-recipes.sh'), 'echo drifted\n');
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /prefer-recipes\.sh has DRIFTED/);
+    assert.match(out, /knowledge-base\/\.claude\/hooks\/prefer-recipes\.sh/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: a comment-only difference in the knowledge-base copy is NOT drift', () => {
+  // Compared on meaning: each copy's header describes its own location.
+  const fx = hookFixture({ workspace: true });
+  try {
+    fs.appendFileSync(path.join(fx.root, 'knowledge-base', '.claude', 'hooks', 'prefer-recipes.sh'), '# knowledge-base copy\n\n');
+    const { status, out } = fx.run();
+    assert.equal(status, 0, out);
+    assert.doesNotMatch(out, /DRIFTED/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: one hook missing from knowledge-base fails', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    fs.rmSync(path.join(fx.root, 'knowledge-base', '.claude', 'hooks', 'troubleshooting.sh'));
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /ERROR\s+troubleshooting\.sh is missing from: knowledge-base\/\.claude\/hooks/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: the WHOLE knowledge-base hook folder gone is reported, not skipped', () => {
+  // The case discovery alone missed: the remaining copies agree, so before
+  // DECLARED this printed "clean" with one copy fewer.
+  for (const gone of [['knowledge-base', '.claude', 'hooks'], ['knowledge-base']]) {
+    const fx = hookFixture({ workspace: true });
+    try {
+      fs.rmSync(path.join(fx.root, ...gone), { recursive: true });
+      const { status, out } = fx.run();
+      assert.equal(status, 1, `removing ${gone.join('/')}:\n${out}`);
+      assert.match(out, /ERROR\s+knowledge-base\/\.claude\/hooks is DECLARED but absent/);
+      assert.doesNotMatch(out, /hooks: clean/);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('check-hooks: STANDALONE, an absent sibling is UNCHECKED out loud, not passed silently', () => {
+  // A fresh clone of site-scrapers alone: no marker, no siblings. Exit 0, but
+  // every absent declared copy is named, and the final line -- the one
+  // `./dev.sh check` shows -- counts them.
+  const fx = hookFixture();
+  try {
+    const { status, out } = fx.run();
+    assert.equal(status, 0, out);
+    assert.match(out, /declared locations \(standalone/);
+    for (const loc of SIBLINGS) {
+      assert.match(out, new RegExp(`UNCHECKED\\s+${loc.replace(/[.]/g, '\\.')}/\\.claude/hooks is declared but absent`), `${loc} not reported`);
+    }
+    const last = out.trim().split('\n').pop();
+    assert.match(last, new RegExp(`${SIBLINGS.length} declared locations UNCHECKED`), last);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: a copy found but NOT declared is an error in the workspace, a note standalone', () => {
+  for (const workspace of [true, false]) {
+    const fx = hookFixture({ workspace });
+    try {
+      for (const n of TWINS) fx.script(path.join(fx.root, 'newTool', '.claude', 'hooks'), n);
+      fs.writeFileSync(path.join(fx.root, 'newTool', '.claude', 'settings.json'), JSON.stringify({ hooks: {
+        PreToolUse: [{ matcher: 'Bash', hooks: TWINS.map(hookCmd) }],
+      } }));
+      const { status, out } = fx.run();
+      assert.match(out, workspace ? /ERROR\s+newTool\/\.claude\/hooks holds twinned hooks/ : /note\s+newTool\/\.claude\/hooks holds twinned hooks/, out);
+      assert.equal(status, workspace ? 1 : 0, out);
+    } finally { fx.cleanup(); }
+  }
+});
 
 test('check-hooks: top-level-only hooks and their arguments raise no error', () => {
   const fx = hookFixture();

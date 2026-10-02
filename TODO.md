@@ -403,6 +403,21 @@ before trusting or extending this.
   the checker finds **six** (top level, site-scrapers, emailTools, scripts,
   scriptingTools/chronjobScheduler, scriptingTools/data-bridge), all in step.
   Prose belongs to the dispatcher; reported in the 2026-10-02 handback.
+  Now **seven** with `knowledge-base` (2026-10-02), all declared in
+  `DECLARED` in `check-hooks.sh`; the top-level prose still needs the count.
+
+**Added 2026-10-02 (DECLARED hook locations):**
+- Workspace vs standalone is decided by ONE marker, the top level's
+  `.claude/agents.manifest.json` (the harness's roster file). If harness moves
+  or renames it, every run here flips to standalone: absent copies become
+  `UNCHECKED` (counted in the last line) instead of ERROR. Loud, not silent,
+  but weaker. Nothing tells harness this file is load-bearing here -- report it.
+- Unconfirmed suspicion: on a standalone clone, discovery still `find`s every
+  `.claude/hooks` up to depth 4 under the PARENT folder. Cloned into `~`, that
+  would pick up `~/.claude/hooks` and anything else nearby as "copies" and may
+  raise false ERRORs. Probe: copy the repo to a scratch parent holding an
+  unrelated `.claude/hooks/foo.sh` and run `./check-hooks.sh`. Possibly limit
+  discovery to DECLARED locations in standalone mode.
 
 **Added 2026-10-02 (batch-yes application rule):**
 - The application rule ("one yes covers a presented batch") is restated in

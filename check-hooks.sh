@@ -27,7 +27,8 @@
 # it would fail forever and get switched off.
 #
 # Works standalone: with no sibling tool folders it checks this repo alone, so a
-# fresh clone still gets the in-repo guarantees.
+# fresh clone still gets the in-repo guarantees -- and says, by name, which
+# declared copies it could NOT check (see DECLARED below).
 
 set -uo pipefail
 
@@ -35,6 +36,31 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$(dirname "$REPO")"
 errors=0
 notes=0
+unchecked=0
+
+# DECLARED: every tool folder (relative to the folder above this repo; `.` is
+# the top level) that carries copies of the hooks this repo twins. This repo is
+# checked always and is not listed (a clone may not be named site-scrapers).
+#
+# Why a list when the copies are found by `find`: discovery only sees what is
+# there. Delete a whole .claude/hooks -- or a whole sibling repo -- and the
+# check used to compare the copies that remained and print "clean", one copy
+# fewer each time and nothing said. The list is what is SUPPOSED to be there.
+#
+# An absent declared location is reported according to where this runs:
+#   - WORKSPACE (the top level's dispatcher roster, .claude/agents.manifest.json,
+#     is present): absent is an ERROR. In the real workspace a declared copy
+#     that is gone is exactly the silent loss this list exists to catch.
+#   - STANDALONE (that marker is absent, e.g. a fresh clone of site-scrapers on
+#     its own): absent is UNCHECKED -- printed per location and counted in the
+#     final line, exit 0. There is nothing to compare against, and failing would
+#     make the check unusable outside the workspace; passing silently would
+#     claim coverage it does not have.
+# And the reverse direction: a location found holding a twinned hook but not
+# declared is an ERROR in the workspace (add it here), a note standalone.
+DECLARED=". emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge"
+WORKSPACE_MARKER=".claude/agents.manifest.json"
+if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone; fi
 
 # --sync copies this repo's hooks over every other location, because that chore
 # recurs on every hook change and was already got wrong once: the find_repo fix
@@ -84,6 +110,22 @@ locations=$(find "$TOOLS" -maxdepth 4 -type d -path "*/.claude/hooks" -not -path
 
 echo "hook locations:"
 for d in $locations; do printf '  %s\n' "${d#$TOOLS/}"; done
+echo
+
+# --- 0. Declared locations: present, or said out loud ------------------------
+echo "declared locations ($mode -- marker $WORKSPACE_MARKER $( [ "$mode" = workspace ] && echo present || echo absent)):"
+for loc in $DECLARED; do
+  if [ "$loc" = . ]; then d="$TOOLS/.claude/hooks"; label=".claude/hooks"
+  else d="$TOOLS/$loc/.claude/hooks"; label="$loc/.claude/hooks"; fi
+  if [ -d "$d" ]; then
+    ok "$label"
+  elif [ "$mode" = workspace ]; then
+    err "$label is DECLARED but absent -- its copies of the twinned hooks are gone, and nothing else would say so"
+  else
+    printf '  UNCHECKED  %s is declared but absent here (standalone run) -- its copies are not compared\n' "$label"
+    unchecked=$((unchecked + 1))
+  fi
+done
 echo
 
 # --- 1. Logic drift between copies of the same hook ---------------------------
@@ -141,6 +183,18 @@ for name in $(printf '%s\n%s\n' "$names" "$twinned" | awk 'NF' | sort -u); do
   else
     ok "$name is installed everywhere"
   fi
+done
+# The other direction of DECLARED: a copy found but not listed would vanish
+# silently later, because only listed locations are missed when absent.
+for d in $locations; do
+  [ "$d" = "$REPO/.claude/hooks" ] && continue
+  if [ "$d" = "$TOOLS/.claude/hooks" ]; then loc=.; else loc="${d#$TOOLS/}"; loc="${loc%/.claude/hooks}"; fi
+  printf '%s\n' $DECLARED | grep -qxF "$loc" && continue
+  holds=""
+  for name in $twinned; do [ -f "$d/$name" ] && holds="$holds $name"; done
+  [ -n "$holds" ] || continue
+  msg="${d#$TOOLS/} holds twinned hooks ($holds ) but is not in DECLARED (check-hooks.sh) -- if it were deleted, nothing would report it"
+  if [ "$mode" = workspace ]; then err "$msg"; else note "$msg"; fi
 done
 echo
 
@@ -201,9 +255,13 @@ for d in $locations; do
 done
 echo
 
+# The last line is what `./dev.sh check` shows on success, so an UNCHECKED
+# location must be counted HERE or a standalone run would read as full coverage.
 if [ "$errors" = 0 ]; then
-  if [ "$notes" = 0 ]; then echo "hooks: clean"
-  else echo "hooks: clean, $notes note$( [ "$notes" = 1 ] || echo s)"; fi
+  line="hooks: clean"
+  [ "$notes" = 0 ] || line="$line, $notes note$( [ "$notes" = 1 ] || echo s)"
+  [ "$unchecked" = 0 ] || line="$line, $unchecked declared location$( [ "$unchecked" = 1 ] || echo s) UNCHECKED (absent; standalone run)"
+  echo "$line"
   exit 0
 fi
 echo "hooks: $errors ERROR$( [ "$errors" = 1 ] || echo S)"

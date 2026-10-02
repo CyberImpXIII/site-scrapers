@@ -867,10 +867,13 @@ All three **fail open**. Each has a test beside it
 (`bash .claude/hooks/test-<name>.sh`), and `node init.js` reports which are
 live — a guard you believe in but that is not running is worse than none.
 
-Each hook exists in two copies, here and in `../.claude/hooks/`, because a hook
-only fires when Claude Code's project dir is the one holding it. Copies rather
-than symlinks: a missing hook command exits non-zero, which is read as a block,
-so a dangling link would refuse every matching call. Keep them in step.
+Each hook exists in one copy per tool folder (here, `../.claude/hooks/`, and
+every sibling named in `DECLARED` in `check-hooks.sh`), because a hook only
+fires when Claude Code's project dir is the one holding it. Copies rather than
+symlinks: a missing hook command exits non-zero, which is read as a block, so a
+dangling link would refuse every matching call. `./check-hooks.sh` compares
+them on logic and reports a declared copy that is missing (an error in the
+workspace, `UNCHECKED` on a standalone clone); `--sync` pushes this repo's.
 
 ## Workflow (for Claude to follow)
 
