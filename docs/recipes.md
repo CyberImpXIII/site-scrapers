@@ -176,9 +176,11 @@ every field with selector, type, label and whether it is required. Together
 they hand you a structured form description to decide what to enter.
 Verified against real Greenhouse, Lever and Ashby postings, whose recipes
 are now byte-identical 3-step definitions. **Neither action fills or submits
-anything, and `open_apply_form` must never be extended with a step that
-clicks Submit/Send** — describing a form is safe to run unattended, filling
-one is not.
+anything.** Applications are prepare-then-confirm (CLAUDE.md, Absolute
+constraints): an agent may fill the form, upload documents and answer the
+questions, but **nothing ever submits unattended** — a submit step may exist
+only behind Jacob's explicit yes for that one application, such as an
+attended handoff.
 
 Required-ness is reported with `requiredEvidence`, because Greenhouse and
 Lever mark it only with a `*`/`✱` in the label and leave the HTML attribute

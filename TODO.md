@@ -394,6 +394,16 @@ before trusting or extending this.
 
 ## 0. Seams found but NOT yet gated (2026-09-28)
 
+**Added 2026-10-02 (check-hooks twin set):**
+- `check-hooks.sh` fail-open runs each script WITHOUT its registered
+  arguments, on purpose (`agent-watch.sh spawn|stop` would write into the top
+  level's agent ledger). So a hook that fails CLOSED only in one mode is not
+  caught here; that is its owner's `test-<hook>.sh` to cover.
+- The top-level CLAUDE.md says the three scraper hooks live in **two** copies;
+  the checker finds **six** (top level, site-scrapers, emailTools, scripts,
+  scriptingTools/chronjobScheduler, scriptingTools/data-bridge), all in step.
+  Prose belongs to the dispatcher; reported in the 2026-10-02 handback.
+
 Found while gating the hook layer, under the "Gate the seams" directive in
 `CLAUDE.md`. Each is a place where a mistake would be **silent**, which is why
 they are worth writing down rather than leaving to be rediscovered. None is
@@ -690,8 +700,11 @@ Two defects behind that same sweep are already fixed (2026-09-28):
 
 ## Standing constraints — these are not negotiable and not up for optimisation
 
-- **Never** submit a form, apply to a job, create an account, or enter real
-  credentials. Describing a form is safe; filling one is not.
+- **Job applications are prepare-then-confirm** (Jacob, 2026-10-02): fill the
+  form, upload documents, answer the questions, then stop at the final submit
+  for Jacob's explicit yes for that one application. Nothing submits
+  unattended. Never create an account, submit anything else, or enter real
+  credentials without him. CLAUDE.md "Absolute constraints" is authoritative.
 - **Never** attempt to bypass bot detection. A detected wall means
   `blocked-attn` and an attended run — never a workaround.
 - Credential-shaped values are caller-supplied params at run time, never written
