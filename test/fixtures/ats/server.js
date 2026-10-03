@@ -68,7 +68,12 @@ function render(ats, query) {
     .replace('<!--WALL-->', wall)
     .replace('<!--TOP_APPLY-->', topApply)
     .replace('<!--SUBMIT_IN_FORM-->', submit.inForm)
-    .replace('<!--SUBMIT_OUTSIDE_FORM-->', submit.outside);
+    .replace('<!--SUBMIT_OUTSIDE_FORM-->', submit.outside)
+    // ?captcha=1: the textarea reCAPTCHA's script injects, in its live shape
+    // (per-widget id suffix, display:none). No widget, no network.
+    .replace('<!--CAPTCHA-->', query.get('captcha')
+      ? '<textarea id="g-recaptcha-response-100000" name="g-recaptcha-response" class="g-recaptcha-response" style="display:none"></textarea>'
+      : '');
   return html;
 }
 

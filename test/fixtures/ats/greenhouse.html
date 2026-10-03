@@ -23,7 +23,8 @@
 
   Placeholders substituted by the server: WALL, TOP_APPLY, SUBMIT_IN_FORM,
   SUBMIT_OUTSIDE_FORM (the submit control is built by server.js, so a test can
-  vary its markup: typed, untyped inside the form, or form= outside it).
+  vary its markup: typed, untyped inside the form, or form= outside it), and
+  CAPTCHA (?captcha=1 adds reCAPTCHA's response textarea, as its script does).
 -->
 <html>
 <head>
@@ -101,8 +102,15 @@ and nothing entered here goes anywhere but a local test server that counts what 
       </div></div>
     </div></div>
 
-  <div class="field"><label for="resume">Resume/CV<span aria-hidden="true">*</span></label>
-    <input id="resume" name="resume" type="file" class="visually-hidden" accept=".pdf,.doc,.docx,.txt,.rtf"></div>
+  <!-- Upload markup as job-boards.greenhouse.io renders it (2026-10-03): the
+       input's own label is the hidden "Attach" of its button; the question is
+       the role=group's aria-labelledby, and the group carries aria-required. -->
+  <div class="field-wrapper"><div id="upload-label-resume" class="label upload-label">Resume/CV<span aria-hidden="true">*</span></div>
+    <div role="group" aria-labelledby="upload-label-resume" aria-required="true" class="file-upload">
+      <div class="secondary-button"><label class="visually-hidden" for="resume">Attach</label>
+        <input id="resume" name="resume" type="file" class="visually-hidden" accept=".pdf,.doc,.docx,.txt,.rtf"></div>
+      <p>Accepted file types: pdf, doc, docx, txt, rtf</p></div></div>
+  <!--CAPTCHA-->
 
   <div class="field"><label for="cover_letter_text">Cover Letter</label>
     <textarea id="cover_letter_text" name="cover_letter_text" maxlength="5000" rows="4"></textarea></div>

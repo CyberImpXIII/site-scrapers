@@ -449,6 +449,39 @@ test('formHash covers structure, not state: hasValue and placeholder do not chan
   assert.match(formHash(f), /^[0-9a-f]{16}$/);
 });
 
+test('formHash ignores CAPTCHA response fields, so a stored description that has one matches a live read that does not', () => {
+  const f = [{ selector: '#a', tag: 'input', type: 'text', name: 'a', label: 'A', required: true, role: null, ariaHidden: false }];
+  const cap = { selector: '#g-recaptcha-response-100000', tag: 'textarea', type: 'textarea', name: 'g-recaptcha-response', label: null, required: false, role: null, ariaHidden: false };
+  assert.equal(formHash([...f, cap]), formHash(f));
+  assert.equal(formHash([...f, { ...cap, name: null }]), formHash(f), 'matched by the id alone (suffixed widget id)');
+  assert.equal(formHash([...f, { ...cap, selector: 'textarea[name="h-captcha-response"]', name: 'h-captcha-response' }]), formHash(f));
+  // Control: an ordinary late field is still a change.
+  assert.notEqual(formHash([...f, { ...cap, selector: '#notes', name: 'notes' }]), formHash(f));
+});
+
+test('forms probe: a late reCAPTCHA textarea neither changes formHash nor appears as a field, and is counted', async () => {
+  const without = await describe(ats.url('greenhouse'));
+  const withCap = await describe(ats.url('greenhouse', 'captcha=1'));
+  // Control: the textarea really was on the page the second time.
+  assert.equal(withCap.captchaFieldsExcluded, 1);
+  assert.equal(without.captchaFieldsExcluded, 0);
+  assert.equal(withCap.formHash, without.formHash);
+  assert.ok(!withCap.fields.some(f => /recaptcha/i.test(f.selector || '')), 'the captcha field must not be offered for filling');
+  // fill_form's live read takes the same path: no formChanged, nothing undescribed.
+  const out = await run('fill_test_fill', { url: ats.url('greenhouse', 'captcha=1'), fields: without.fields, answers: {} });
+  assert.equal(out.fill.formChanged, false, JSON.stringify(out.fill).slice(0, 400));
+  assert.deepEqual(out.fill.undescribedFields, []);
+});
+
+test('forms probe: a file input in a role=group takes the group label and its aria-required (live Greenhouse markup)', async () => {
+  const forms = await describe(ats.url('greenhouse'));
+  const resume = forms.fields.find(f => f.selector === '#resume');
+  assert.ok(resume, 'resume not described');
+  assert.equal(resume.label, 'Resume/CV*', 'not the hidden "Attach" of its button');
+  assert.equal(resume.required, true);
+  assert.equal(resume.requiredEvidence, 'group aria-required');
+});
+
 // --- the published contract (docs/fill-output.md) ---------------------------
 
 const DOC = path.join(REPO_ROOT, 'docs', 'fill-output.md');

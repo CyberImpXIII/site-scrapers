@@ -186,7 +186,14 @@ needs its own), such as an attended handoff.
 Required-ness is reported with `requiredEvidence`, because Greenhouse and
 Lever mark it only with a `*`/`✱` in the label and leave the HTML attribute
 off. Trusting the attribute alone understated a 32-field form as almost
-entirely optional.
+entirely optional. A file input inside a `role=group` takes that group's
+`aria-labelledby` text as its label and its `aria-required` as evidence
+(`group aria-required`): Greenhouse's own `<label>` for an upload is the
+hidden "Attach" of its button, identical for resume and cover letter.
+CAPTCHA response fields (`g-recaptcha-response`, `h-captcha-response`,
+`cf-turnstile-response`) are left out of `fields` and of `formHash` and
+counted in `captchaFieldsExcluded`: reCAPTCHA injects its textarea late, and
+it made the same form hash differently between reads.
 
 **Recipes are versioned — use that instead of guessing what changed.** Every
 `register.js` call that actually alters a recipe snapshots it as a new minor

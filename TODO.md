@@ -127,21 +127,20 @@ fixture `test/fixtures/ats/`). Open:
   should skip debug capture.
 - **Lever/Ashby**: slots are commented in `test/fixtures/ats/server.js`
   (`ATS_FIXTURES`); add a fixture there and the per-ATS tests run for it.
-- **formHash unstable on live Greenhouse** (reported 2026-10-03 by the applications
-  agent, dry fill on the Discord posting, fake values): 1 of 3 identical fills lacked
-  the late-injected reCAPTCHA textarea, hash `8ac1c3261efa20e3`, `formChanged=true`;
-  3 describes and 4 no-answer fills stayed stable. A spurious formChanged sends a packet
-  back to needs-review. Wanted: exclude late-injected captcha elements from the hash
-  (or prove they are already excluded), with a fixture test.
-- **UNCONFIRMED (same report): upload inputs described as label "Attach",
-  required:false** while the live page shows "Resume/CV*". Probe read-only against the
-  live posting; fix the label/required reading in lib/probes.js if confirmed.
-  (The live dial-code Country matched only via the option-text suffix; applications
-  handles that on its side.)
-- **UNCONFIRMED: `test-prefer-recipes.sh` failed 3 cases once, then passed twice**
-  (reported 2026-10-03 by the knowledge-base agent, while this repo had uncommitted
-  edits to engine.js/register.js/fixtures). Re-run it alone on a clean tree to tell
-  contention from in-progress edits; if it flakes clean, gate that seam.
+- **Greenhouse form hashes shifted once on 2026-10-03** (captcha exclusion + upload
+  labels, both fixed that day, fixture-tested). Discord posting 8815116002: was
+  `d0bf2718bad97856` (and `8ac1c3261efa20e3` without the late captcha), now
+  `8312cdf56c2724f3` in 2 of 2 live describes, 32 fields, `captchaFieldsExcluded: 1`.
+  A packet prepared before then reads `formChanged=true` once (the cautious
+  direction); re-describe. The "Resume/CV*" part of the report did NOT reproduce
+  there: the group is `aria-required="false"` with no `*`, so `required:false` is
+  right for that posting; the label ("Attach" for both uploads) was the real bug.
+- **`test-prefer-recipes.sh` flake: not reproduced on a clean tree** (2026-10-03):
+  5 of 5 solo runs and 4 of 4 runs while `./dev.sh test` ran alongside all passed.
+  It picks its hosts from `query.js sites` live, so the likeliest cause of the one
+  failure is the DB changing under it (a gated register.js mid-rollback, which
+  flips rows and re-exports builtins) rather than the hook. Unconfirmed; if it
+  recurs, record which cases and what `query.js sites` returned at that moment.
 - **Delegation hooks**: this session started with no "Jacob's words" (SubagentStart
   `quote-words.sh` not wired; `./.claude/agents.sh wiring`). Reported to dispatcher.
 
