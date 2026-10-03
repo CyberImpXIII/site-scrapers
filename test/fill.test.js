@@ -35,6 +35,20 @@ const REPO_ROOT = path.join(__dirname, '..');
 // The Greenhouse recipe's entry selector: type=button only, so an "Apply"
 // that is really the submit control can never match.
 const SAFE_ENTRY = 'button[type=button]::-p-text(Apply), a::-p-text(Apply)';
+// open_apply_form's entry click, read from the export rather than copied, so
+// the late-entry control below cannot drift from the real selector.
+const OPEN_ENTRY_CLICK = (() => {
+  const def = require('../lib/builtinActions').BUILTIN_ACTIONS.find(a => a.name === 'open_apply_form');
+  const find = steps => steps.flatMap(s => (s.steps ? find(s.steps) : s.action === 'click' ? [s] : []));
+  const clicks = find(def.steps);
+  assert.equal(clicks.length, 1, 'open_apply_form should have exactly one click (its entry click)');
+  return clicks[0];
+})();
+const OPEN_DEFAULT_SELECTOR = OPEN_ENTRY_CLICK.default_selector;
+// The entry control of the late-entry test appears this long after the page
+// script runs: past the old window (dismiss_overlay ~1.4s + settle 0.2s + 5s
+// = ~6.6s), well inside the new one (~16.6s).
+const LATE_ENTRY_MS = 9000;
 
 let ats;
 let db;
@@ -164,6 +178,15 @@ test.before(async () => {
   recipe('fill_test_open_safe', [
     { action: 'goto', url: '{{url}}' },
     { action: 'run_generic_action', ref: 'open_apply_form', with: { entry_selector: SAFE_ENTRY, settle_ms: '200' } },
+  ]);
+  // CONTROL for the late-entry test: open_apply_form's click as it was before
+  // 2026-10-03 -- same steps, the click's window left at stop_if_missing's 5s.
+  recipe('fill_test_open_old_window', [
+    { action: 'goto', url: '{{url}}' },
+    { action: 'run_generic_action', ref: 'dismiss_overlay' },
+    { action: 'wait', ms: 200 },
+    { action: 'repeat', times: 1, steps: [{ action: 'click', selector: '{{entry_selector}}', default_selector: OPEN_DEFAULT_SELECTOR, stop_if_missing: true, timeout: 5000 }] },
+    { action: 'wait', ms: 1500 },
   ]);
   // CONTROL: deliberately clicks submit, to prove the counter sees it.
   recipe('fill_test_control_submit', [{ action: 'goto', url: '{{url}}' }, { action: 'click', selector: '#submit_app' }, { action: 'wait', ms: 300 }]);
@@ -313,6 +336,38 @@ for (const entry of ['typed', 'untyped', 'link']) {
     assert.equal(ats.submits(), 0, JSON.stringify(ats.counters));
   });
 }
+
+// The entry click's WINDOW. A miss is silent (the click is optional), so on a
+// board whose Apply control renders late, describe runs on the posting page and
+// reports 0 fields with success:true. Live Lever 2026-10-03: the link appeared
+// 4.5-4.9s into the old 5s window on 2 runs and missed it on 1. The fixture's
+// control renders LATE_ENTRY_MS after load: the real action must click it, and
+// the same click with the old 5s window must not (control: the delay is real,
+// so the pass is the timeout's doing and not a fast page).
+test(`open_apply_form waits long enough for a late entry control (appears after ${LATE_ENTRY_MS}ms)`, async () => {
+  for (const entry of ['typed', 'untyped', 'link']) {
+    const url = ats.url('greenhouse', `submit_text=Apply&submit=untyped&entry=${entry}&entry_delay_ms=${LATE_ENTRY_MS}`);
+    ats.reset();
+    const old = await run('fill_test_open_old_window', { url });
+    assert.equal(old.success, true, JSON.stringify(old).slice(0, 400));
+    assert.equal(ats.counters.entryClick, 0, `${entry}: the CONTROL (old 5s window) clicked the late entry, so the fixture is not late enough to prove anything`);
+    ats.reset();
+    const out = await run('fill_test_open_default', { url });
+    assert.equal(out.success, true, JSON.stringify(out).slice(0, 400));
+    assert.equal(ats.counters.entryClick, 1, `${entry}: the late entry control was not clicked: ${JSON.stringify(ats.counters)}`);
+    assert.equal(ats.submits(), 0, JSON.stringify(ats.counters));
+  }
+  // Behaviour first (above), so on a short window the failure names the miss.
+  assert.ok(Number(OPEN_ENTRY_CLICK.timeout) >= 15000, `entry click timeout is ${OPEN_ENTRY_CLICK.timeout}; a late Apply is missed silently`);
+});
+
+test('the late-entry fixture renders its control only after the delay (fixture self-check)', async () => {
+  const res = await fetch(ats.url('greenhouse', `entry=typed&entry_delay_ms=${LATE_ENTRY_MS}`));
+  const html = await res.text();
+  assert.ok(!/<button[^>]*data-entry/.test(html), 'the entry control is in the served HTML, so it is not late');
+  assert.match(html, /late-entry/);
+  assert.equal((await fetch(ats.url('greenhouse', 'entry=none&entry_delay_ms=100'))).status, 404, 'nothing to delay must be an error, not a silent pass');
+});
 
 test('the Greenhouse override (type=button / a) still clicks the entry and never the submit', async () => {
   for (const q of ['', 'submit_text=Apply&entry=typed']) {

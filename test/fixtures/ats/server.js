@@ -61,8 +61,17 @@ function render(ats, query) {
   // matching "Apply" can only find submit.
   const submitText = query.get('submit_text') || fx.submitText;
   const entry = query.get('entry');
-  const topApply = entry ? (entry === 'typed' ? fx.topApply : ENTRIES[entry]) : query.get('submit_text') ? '' : fx.topApply;
+  let topApply = entry ? (entry === 'typed' ? fx.topApply : ENTRIES[entry]) : query.get('submit_text') ? '' : fx.topApply;
   if (topApply === undefined) return null; // unknown ?entry= -> 404, never a silent default
+  // ?entry_delay_ms=N: the entry control is not in the served HTML; a script
+  // inserts it N ms after it runs, the way Lever's Apply link renders late
+  // (measured live 2026-10-03: 4.5-4.9s into open_apply_form's click window).
+  const delay = query.get('entry_delay_ms');
+  if (delay !== null) {
+    if (!/^\d+$/.test(delay) || !topApply) return null; // nothing to delay -> 404
+    const late = JSON.stringify(topApply).replace(/</g, '\\u003c');
+    topApply = `<div id="late-entry"></div><script>setTimeout(function () { document.getElementById('late-entry').innerHTML = ${late}; }, ${Number(delay)});</script>`;
+  }
   const submit = submitControl(query.get('submit'), submitText);
   html = html
     .replace('<!--WALL-->', wall)

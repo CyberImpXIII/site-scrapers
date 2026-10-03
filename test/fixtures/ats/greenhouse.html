@@ -181,8 +181,10 @@ and nothing entered here goes anywhere but a local test server that counts what 
   // --- the top Apply button: scrolls to the form, like Greenhouse's ---------
   // Every variant of it carries data-entry, and a click on one is counted, so
   // "the entry control was chosen" is measured rather than inferred.
-  var top = document.getElementById('top-apply');
-  if (top) top.addEventListener('click', function (e) {
+  // Delegated, so a control inserted late (?entry_delay_ms=) is counted too.
+  document.addEventListener('click', function (e) {
+    var top = e.target.closest && e.target.closest('[data-entry]');
+    if (!top) return;
     e.preventDefault();
     post('/entry-click', {});
     document.getElementById('application-form').scrollIntoView();
