@@ -337,6 +337,18 @@ success); a promise in a comment (check it, or delete the promise).
 Worked examples: `check-hooks.sh`, `test/hooks.test.js`, `audit.js units`,
 `lib/gate.js`, `lib/outputShape.js`.
 
+## Keeping these rules in sync
+
+The shared rules here (the TODO, report-to-owner and gate-the-seams sections,
+and the absolute constraints) also live in `../CLAUDE.md`,
+`../emailTools/CLAUDE.md`, `../scriptingTools/chronjobScheduler/CLAUDE.md`,
+`../scriptingTools/data-bridge/CLAUDE.md`, `../scripts/CLAUDE.md`,
+`../knowledge-base/CLAUDE.md` and `../applications/CLAUDE.md`. Each repo carries
+its own copy because a fresh clone won't have the parent file. **Change a shared
+rule in the copies you own, and ask the owner for the ones you don't** — and say
+which copies you updated and which you asked for. `test/rules-sync.test.js`
+checks this list against the top level's, both ways, in the workspace.
+
 ## Working in this repo
 
 **Check for a primary context before changing anything that exists.** More than
