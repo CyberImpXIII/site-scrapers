@@ -46,6 +46,7 @@ const {
   definitionHasPassingRun,
 } = require('./db');
 const { decideVerdict } = require('./lib/verdict');
+const { verdictInputsFromFill } = require('./lib/fillContract');
 const { authorizeAsync } = require('./lib/writeGuard');
 
 const REPO_ROOT = __dirname;
@@ -122,7 +123,15 @@ async function main() {
   // "Did it work" means records came back, not merely that nothing threw. A
   // timed-out run that still extracted everything counts — that is what
   // partialResults exists to say.
-  const count = result.count ?? (result.article ? 1 : 0);
+  // A fill_form action is judged on its fill (lib/fillContract.js): a field
+  // count from a run where nothing failed. The page loading is not evidence
+  // that a single answer landed, and `article` is dropped from a fill's output.
+  const fillVerdict = verdictInputsFromFill(result.fill);
+  const count = fillVerdict
+    ? fillVerdict.extracted
+      ? result.fill.counts.filled
+      : 0
+    : result.count ?? (result.article ? 1 : 0);
   const extracted = count > 0;
 
   // Zero records is ambiguous, and treating it as failure demoted a
@@ -146,8 +155,11 @@ async function main() {
   // "blocked-attn" (a property of what the agent has been able to work out).
   // The latter is a judgement about being out of moves, which nothing can
   // detect automatically — it has to be set deliberately, with notes.
-  let wall = null;
-  if (!extracted && result.debugDir) {
+  // A fill reports its own wall (it checks before touching anything), and that
+  // is used first: a fill that stopped at a wall exits cleanly, so there is no
+  // debugDir capture to read.
+  let wall = fillVerdict?.wall ?? null;
+  if (!wall && !extracted && result.debugDir) {
     try {
       const probes = JSON.parse(require('fs').readFileSync(path.join(result.debugDir, 'diagnostics.json'), 'utf8'));
       // The antibot probe is authoritative: it names the service, weighs
@@ -216,6 +228,18 @@ async function main() {
     failureContext: result.failureContext ?? null,
     debugDir: result.debugDir ?? null,
     previousStatus: site.status,
+    ...(result.fill
+      ? {
+          fill: {
+            status: result.fill.status,
+            error: result.fill.error ?? null,
+            counts: result.fill.counts,
+            formChanged: result.fill.formChanged,
+            wall: result.fill.wall,
+            failed: (result.fill.fields || []).filter(f => f.outcome === 'failed').map(f => `${f.selector}: ${f.reason}`),
+          },
+        }
+      : {}),
   };
 
   if (dry) {

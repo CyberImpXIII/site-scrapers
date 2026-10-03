@@ -1,0 +1,236 @@
+<!doctype html>
+<!--
+  OFFLINE FIXTURE mirroring the markup of a Greenhouse hosted application form
+  (job-boards.greenhouse.io, observed 2026-10-03 on a live posting). Every value
+  here is fake. Used by test/fill.test.js; served by test/fixtures/ats/server.js.
+
+  What is copied from the real form, because fill_form has to handle it:
+    - form#application-form, a plain "Apply" type=button OUTSIDE the form, and
+      a "Submit application" type=submit inside it;
+    - react-select comboboxes: input[role=combobox].select__input that opens a
+      listbox named by aria-controls, options [role=option], the chosen value
+      rendered in .select__single-value, and an aria-hidden `requiredInput`
+      companion with no id or name (the forms probe sees a bare `input`);
+    - a numeric EEO id (#4033064002) and a Rails-array checkbox id
+      (question_2002[]), both invalid CSS unless escaped;
+    - a phone field whose widget reformats digits, plus the widget's OWN
+      country listbox, which must never be mistaken for a combobox's options;
+    - a visually-hidden file input for the resume.
+  Added for the tests: a display:none honeypot, a native <select>, a textarea,
+  and instrumentation that reports every submit attempt and the form's state
+  to the server. The instrumentation never prevents a fill; it prevents the
+  page navigating away on submit, and counts it.
+
+  Placeholders substituted by the server: WALL, TOP_APPLY, SUBMIT_TEXT.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Job Application for Test Engineer (fixture) at Example Corp</title>
+<style>
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .select__menu { border: 1px solid #ccc; }
+  .field { margin: 8px 0; }
+</style>
+</head>
+<body>
+<!--WALL-->
+<h1>Test Engineer (fixture)</h1>
+<p>Example Corp is a fictional company used only by the site-scrapers test suite. This posting does not exist,
+and nothing entered here goes anywhere but a local test server that counts what happens to it.</p>
+<!--TOP_APPLY-->
+<form id="application-form" action="/apply" method="post">
+  <div class="field"><label for="first_name">First Name<span aria-hidden="true">*</span></label>
+    <input id="first_name" name="first_name" type="text" maxlength="255" aria-required="true" autocomplete="given-name"></div>
+  <div class="field"><label for="last_name">Last Name<span aria-hidden="true">*</span></label>
+    <input id="last_name" name="last_name" type="text" maxlength="255" aria-required="true"></div>
+  <div class="field"><label for="email">Email<span aria-hidden="true">*</span></label>
+    <input id="email" name="email" type="email" maxlength="255" aria-required="true"></div>
+  <div class="field"><label for="phone">Phone</label>
+    <div class="iti">
+      <ul role="listbox" id="iti-0__country-listbox" hidden>
+        <li role="option" id="iti-0__item-us">United States</li>
+        <li role="option" id="iti-0__item-gb">United Kingdom</li>
+        <li role="option" id="iti-0__item-ca">Canada</li>
+      </ul>
+      <input id="phone" name="phone" type="tel" maxlength="30">
+    </div></div>
+
+  <!-- Live Greenhouse's phone-country picker (labelled just "Country"):
+       options read "United States +1" but once chosen the control shows only
+       "+1". data-display="dial" reproduces that. With ?dead=phone_country an
+       option click does nothing and "+99" is already shown -- a stale value
+       that must NOT be read as the choice having landed. -->
+  <div class="field"><label for="phone_country" id="phone_country-label">Country</label>
+    <div class="select__container" data-display="dial" data-options='["Fixtureland +99","Testonia +98"]'>
+      <div class="select__control"><div class="select__value-container">
+        <div class="select__single-value"></div>
+        <div class="select__input-container"><input id="phone_country" class="select__input" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-labelledby="phone_country-label" autocomplete="off"></div>
+      </div></div>
+    </div></div>
+
+  <div class="field"><label for="country" id="country-label">Country<span aria-hidden="true">*</span></label>
+    <div class="select__container" data-options='["United States","United States Minor Outlying Islands","United Kingdom","Canada"]'>
+      <div class="select__control"><div class="select__value-container">
+        <div class="select__single-value"></div>
+        <input id="country" class="select__input" type="text" role="combobox" aria-required="true" aria-expanded="false" aria-autocomplete="list" aria-labelledby="country-label" autocomplete="off">
+      </div></div>
+      <input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">
+    </div></div>
+
+  <div class="field"><label for="question_1001" id="question_1001-label">Are you legally authorized to work in the fixture country?<span aria-hidden="true">*</span></label>
+    <div class="select__container" data-options='["Yes","No"]'>
+      <div class="select__control"><div class="select__value-container">
+        <div class="select__single-value"></div>
+        <!-- Live Greenhouse wraps the input alone in an *input-container*
+             (2026-10-03, discord posting). A readback that took the nearest
+             "*container" as the control saw no value there and reported a
+             landed choice as value_did_not_stick; this keeps that gated. -->
+        <div class="select__input-container"><input id="question_1001" class="select__input" type="text" role="combobox" aria-required="true" aria-expanded="false" aria-autocomplete="list" aria-labelledby="question_1001-label" autocomplete="off"></div>
+      </div></div>
+      <input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">
+    </div></div>
+
+  <div class="field"><label for="4033064002" id="4033064002-label">Gender</label>
+    <div class="select__container" data-options='["Male","Female","Non-binary","Decline To Self Identify"]'>
+      <div class="select__control"><div class="select__value-container">
+        <div class="select__single-value"></div>
+        <input id="4033064002" class="select__input" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-labelledby="4033064002-label" autocomplete="off">
+      </div></div>
+    </div></div>
+
+  <div class="field"><label for="resume">Resume/CV<span aria-hidden="true">*</span></label>
+    <input id="resume" name="resume" type="file" class="visually-hidden" accept=".pdf,.doc,.docx,.txt,.rtf"></div>
+
+  <div class="field"><label for="cover_letter_text">Cover Letter</label>
+    <textarea id="cover_letter_text" name="cover_letter_text" maxlength="5000" rows="4"></textarea></div>
+
+  <div class="field"><label for="source">How did you hear about this job?</label>
+    <select id="source" name="source">
+      <option value="">Select...</option>
+      <option value="1">LinkedIn</option>
+      <option value="2">Company website</option>
+      <option value="3">Referral</option>
+    </select></div>
+
+  <div class="field"><label><input type="checkbox" id="question_2002[]" name="question_2002[]" value="1">
+    I have read the fixture privacy notice</label></div>
+
+  <input type="text" id="website_hp" name="website_hp" style="display:none" autocomplete="off">
+
+  <button type="submit" id="submit_app" class="btn btn--pill">SUBMIT_TEXT</button>
+</form>
+
+<script>
+(function () {
+  // --- instrumentation: report to the test server, synchronously so nothing
+  // is lost to a navigation ---------------------------------------------------
+  function post(path, body) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open('POST', path, false);
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.send(JSON.stringify(body || {}));
+    } catch (e) { /* the counters are the point; never break the page */ }
+  }
+  function state() {
+    var out = {};
+    document.querySelectorAll('#application-form input, #application-form textarea, #application-form select').forEach(function (el) {
+      if (!el.id) return;
+      if (el.type === 'checkbox' || el.type === 'radio') out[el.id] = el.checked;
+      else if (el.type === 'file') out[el.id] = Array.prototype.map.call(el.files || [], function (f) { return f.name; });
+      else if (el.getAttribute('role') === 'combobox') {
+        out[el.id] = el.closest('.select__container').querySelector('.select__single-value').textContent;
+      } else out[el.id] = el.value;
+    });
+    return out;
+  }
+  function report() { post('/state', state()); }
+  document.addEventListener('input', report, true);
+  document.addEventListener('change', report, true);
+
+  // Every way a form gets submitted is counted: a click on a submit control,
+  // the submit event, Enter in a field, and (server side) a POST to /apply.
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest && e.target.closest('button, input');
+    if (!t) return;
+    var type = (t.getAttribute('type') || '').toLowerCase();
+    var submitish = (t.tagName === 'INPUT' && (type === 'submit' || type === 'image')) ||
+      (t.tagName === 'BUTTON' && (type === 'submit' || (!type && t.form)));
+    if (submitish) post('/submit-click', { id: t.id || null });
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') post('/enter-key', { id: (e.target && e.target.id) || null });
+  }, true);
+  document.getElementById('application-form').addEventListener('submit', function (e) {
+    post('/submit-event', {});
+    e.preventDefault();
+  });
+
+  // --- the top Apply button: scrolls to the form, like Greenhouse's ---------
+  var top = document.getElementById('top-apply');
+  if (top) top.addEventListener('click', function () { document.getElementById('application-form').scrollIntoView(); });
+
+  // --- phone widget: reformats US-style digits, like intl-tel-input ---------
+  var phone = document.getElementById('phone');
+  phone.addEventListener('input', function () {
+    var d = phone.value.replace(/\D/g, '');
+    if (d.length === 10) phone.value = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
+  });
+
+  // --- react-select lookalike -----------------------------------------------
+  var nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  var seq = 0;
+  document.querySelectorAll('.select__container').forEach(function (box) {
+    var input = box.querySelector('input[role="combobox"]');
+    var single = box.querySelector('.select__single-value');
+    var hidden = box.querySelector('.requiredInput');
+    var options = JSON.parse(box.getAttribute('data-options'));
+    var dial = box.getAttribute('data-display') === 'dial';
+    var dead = new URLSearchParams(location.search).get('dead') === input.id;
+    if (dead) single.textContent = options[0].split(' ').pop();
+    var n = seq++;
+    var listId = 'react-select-' + n + '-listbox';
+    function close() {
+      var m = box.querySelector('.select__menu');
+      if (m) m.remove();
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-controls');
+    }
+    function open(filter) {
+      close();
+      var f = filter.toLowerCase();
+      var shown = options.filter(function (o) { return o.toLowerCase().indexOf(f) !== -1; });
+      var menu = document.createElement('div');
+      menu.className = 'select__menu';
+      var list = document.createElement('div');
+      list.id = listId;
+      list.setAttribute('role', 'listbox');
+      shown.forEach(function (label, i) {
+        var o = document.createElement('div');
+        o.id = 'react-select-' + n + '-option-' + i;
+        o.setAttribute('role', 'option');
+        o.textContent = label;
+        o.addEventListener('click', function () {
+          if (dead) { close(); return; }
+          single.textContent = dial ? label.split(' ').pop() : label;
+          if (hidden) hidden.value = label;
+          nativeSet.call(input, '');
+          close();
+          report();
+        });
+        list.appendChild(o);
+      });
+      if (!shown.length) { var none = document.createElement('div'); none.className = 'select__menu-notice'; none.textContent = 'No options'; list.appendChild(none); }
+      menu.appendChild(list);
+      box.appendChild(menu);
+      input.setAttribute('aria-expanded', 'true');
+      input.setAttribute('aria-controls', listId);
+    }
+    input.addEventListener('input', function () { if (input.value) open(input.value); else close(); });
+    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  });
+})();
+</script>
+</body>
+</html>

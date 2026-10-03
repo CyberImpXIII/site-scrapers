@@ -83,6 +83,45 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## fill_application_form (PLAN-applications phase 1) — Greenhouse DONE 2026-10-03, open items
+
+Built: `fill_application_form` builtin + `job-boards.greenhouse.io#action:fill_application_form`
+(`working`, earned by a live verify on the discord posting with fake text answers,
+no upload). Contract `docs/fill-output.md`, gated by `test/fill.test.js` (offline
+fixture `test/fixtures/ats/`). Open:
+
+- **`open_apply_form`'s default entry selector `button::-p-text(Apply)` can match a
+  SUBMIT button** on a board whose submit reads "Apply" (Lever/Ashby likely). My
+  code, not fixed: the Greenhouse fill recipe overrides it with
+  `button[type=button]::-p-text(Apply), a::-p-text(Apply)`. Fix the default (exclude
+  `[type=submit]` and form-owned buttons) before any Lever/Ashby fill recipe.
+- **Live file upload unverified.** The fixture proves `#resume` upload; the live run
+  answered text and comboboxes only. Next live verify should attach a fake .txt.
+- **Multi-select comboboxes unsupported** (one answer string = one option). No
+  Greenhouse field seen needing it yet; a `multi-value` readback exists, the fill does not.
+- **The phone-country picker is labelled just "Country"** on live Greenhouse and its
+  options carry the dial code (`United States +1`). A caller matching on the label
+  will answer `United States` and get `no_matching_option` (detail lists offers).
+  deep-work should know; it is in the doc.
+- **describe output changed shape** (lib/probes.js): ids/names are `CSS.escape`d
+  (`#\34 033064002`), fields gain `role`/`ariaHidden`, forms gain
+  `formHash`/`totalFields`/`truncated`, forms cap 40 -> 80 (`MAX_FORM_FIELDS`;
+  card anatomy keeps `MAX_FIELDS` 40). Any consumer that
+  string-matched old selectors breaks; none known.
+- **Debug captures may hold filled values.** A failed fill run's screenshot/HTML in
+  `data/` (gitignored) shows what was typed. Not redacted; decide whether a fill
+  should skip debug capture.
+- **Lever/Ashby**: slots are commented in `test/fixtures/ats/server.js`
+  (`ATS_FIXTURES`); add a fixture there and the per-ATS tests run for it.
+- **Delegation hooks**: this session started with no "Jacob's words" (SubagentStart
+  `quote-words.sh` not wired; `./.claude/agents.sh wiring`). Reported to dispatcher.
+- **`./dev.sh check` hooks ERROR (not mine, reported to dispatcher 2026-10-03):**
+  `applications/.claude/hooks holds twinned hooks ... but is not in DECLARED
+  (check-hooks.sh)`. `applications/` is deep-work's new folder; the fix is adding it
+  to `DECLARED` once its owner confirms the folder is meant to carry the hooks.
+
+---
+
 ## Site primitives — slice 1 DONE, slices 2 and 3 next
 
 Slice 1 (2026-09-28): `node primitives.js show <hostname>` / `./dev.sh page

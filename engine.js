@@ -68,7 +68,12 @@ const { authorize: authorizeWrite } = require('./lib/writeGuard');
 // A run recording its own outcome is a sanctioned write, but a narrow one: this
 // authorizes the single insert rather than the whole run, so nothing else in
 // engine.js can write to the recipe DB under cover of it.
-const logRun = (db, run) => authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run));
+// Params are redacted first: an application's `answers` are Jacob's personal
+// data and scrape_runs is long-lived (lib/fillContract.js redactRunParams).
+const logRun = (db, run) =>
+  authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run && run.params ? { ...run, params: redactRunParams(run.params) } : run));
+const { fillForm } = require('./lib/fillForm');
+const { redactRunParams, verdictInputsFromFill } = require('./lib/fillContract');
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
@@ -110,6 +115,30 @@ function substitute(template, params) {
     const val = params[key];
     return val === undefined ? '' : toStr(val);
   });
+}
+
+// fill_form's `fields` and `answers` are structures, not text, so they are not
+// run through substitute() (which would stringify them). A step value that is
+// exactly "{{key}}" takes params[key] as given; a JSON string (how a value
+// arrives through ./scrape.sh or a `with`) is parsed. `fields` may also be the
+// whole `forms` probe object describe_application_form returned -- its
+// `.fields` is taken, so a caller can pass that output back unchanged.
+// Anything else is passed through, and fillForm reports it as an error rather
+// than guessing.
+function fillParam(stepValue, params, name) {
+  let v = stepValue;
+  const m = typeof v === 'string' ? v.match(/^\s*\{\{(\w+)\}\}\s*$/) : null;
+  if (m) v = params[m[1]];
+  else if (v === undefined) v = params[name];
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      /* left as a string: fillForm rejects it with a named error */
+    }
+  }
+  if (name === 'fields' && v && !Array.isArray(v) && Array.isArray(v.fields)) v = v.fields;
+  return v;
 }
 
 // For url_param nav: substitute with percent-encoding, since values are
@@ -569,6 +598,18 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         }
         break;
       }
+      case 'fill_form': {
+        // DRY FILL of an application form: lib/fillForm.js, which never
+        // submits. Output contract: lib/fillContract.js / docs/fill-output.md.
+        // Its result is a diagnostic like a probe's, and the action output
+        // lifts it to a top-level `fill` (see fillOf below).
+        const result = await fillForm(page, {
+          fields: fillParam(step.fields, params, 'fields'),
+          answers: fillParam(step.answers, params, 'answers'),
+        });
+        diagnostics.push(result);
+        break;
+      }
       default:
         throw new Error(`Unknown ui_steps action: ${step.action}`);
     }
@@ -822,7 +863,11 @@ async function main() {
   let params = {};
   if (paramsArg) {
     try {
-      params = JSON.parse(paramsArg);
+      // `@path.json` reads params from a file -- same convention as lab.js
+      // set. For a fill's `answers` this is the right way in: personal data
+      // on a command line is visible in `ps` and shell history, and a form
+      // description runs to kilobytes. (test/fill.test.js runs one fill this way.)
+      params = JSON.parse(paramsArg.startsWith('@') ? fs.readFileSync(paramsArg.slice(1), 'utf8') : paramsArg);
     } catch (e) {
       emitAndExit(JSON.stringify({ success: false, documented: false, error: `Bad JSON in params: ${e.message}` }), 1);
     }
@@ -1015,11 +1060,28 @@ async function main() {
       emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
     }
 
-    const success = !articleOutcome.timedOut && articleOutcome.blobLen > 0;
+    // A fill_form run is judged by its fill, not by page text: the page having
+    // text says nothing about whether a single answer landed. The fill is
+    // lifted to a top-level `fill` (the contract deep-work reads), and the
+    // page text is dropped -- it would echo every chosen option back into the
+    // caller's context for no use. See lib/fillContract.js.
+    const fills = (articleOutcome.probeResults || []).filter(d => d && d.kind === 'fill');
+    const fill = fills.length ? fills[fills.length - 1] : null;
+    if (fill) {
+      articleOutcome.probeResults = articleOutcome.probeResults.filter(d => !(d && d.kind === 'fill'));
+      if (fills.length > 1) {
+        fill.status = 'error';
+        fill.error = `the recipe ran fill_form ${fills.length} times; only the last result is reported, so the run is not trusted`;
+        fill.wall = null;
+      }
+      articleOutcome.record = null;
+    }
+    const success = fill ? fill.status === 'done' : !articleOutcome.timedOut && articleOutcome.blobLen > 0;
     // Same just-past-the-deadline case as the listing flow below.
-    const partialResults = isPartial(articleOutcome.timedOut, articleOutcome.blobLen);
+    const partialResults = !fill && isPartial(articleOutcome.timedOut, articleOutcome.blobLen);
 
     const output = {
+      ...(fill ? { fill } : {}),
       success,
       documented: true,
       timedOut: articleOutcome.timedOut,
@@ -1050,7 +1112,11 @@ async function main() {
       siteId: site.id,
       params,
       success,
-      resultCount: success ? 1 : 0,
+      // For a fill, a "result" is a field that landed -- and only from a run
+      // where none failed, the same bar verify.js applies (verdictInputsFromFill).
+      // This count feeds definitionHasPassingRun, so a run that filled nothing
+      // must not read as a passing one.
+      resultCount: fill ? (verdictInputsFromFill(fill).extracted ? fill.counts.filled : 0) : success ? 1 : 0,
       timedOut: articleOutcome.timedOut,
       durationMs: Date.now() - startedAt,
       versionId, versionLabel,
