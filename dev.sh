@@ -53,8 +53,11 @@ cd "$DIR"
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 1; }
 
 # Where `browser-ok` writes its marker. Under data/, which is gitignored, so an
-# override never travels to anyone else's clone.
-BROWSER_OK="$DIR/data/.browser-ok"
+# override never travels to anyone else's clone. SS_BROWSER_OK moves it, and
+# prefer-recipes.sh reads the same variable: the hook test sets it to a private
+# file so it never reads, races over, or deletes a real override. (Setting it
+# grants nothing new -- `./dev.sh browser-ok` already opens the door.)
+BROWSER_OK="${SS_BROWSER_OK:-$DIR/data/.browser-ok}"
 
 cmd="${1:-}"; shift || true
 
@@ -404,7 +407,7 @@ case "$cmd" in
     case "$mins" in ''|*[!0-9]*) echo "minutes must be a number"; exit 1 ;; esac
     mkdir -p "$DIR/data"
     date +%s > "$BROWSER_OK"
-    echo "interactive browsing allowed for ${mins}m (marker: data/.browser-ok)"
+    echo "interactive browsing allowed for ${mins}m (marker: ${BROWSER_OK#$DIR/})"
     echo "$mins" >> "$BROWSER_OK"
     ;;
 

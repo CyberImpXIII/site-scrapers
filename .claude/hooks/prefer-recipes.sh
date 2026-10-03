@@ -51,18 +51,20 @@ set -uo pipefail
 # and enforced nothing -- a guard that is present, reports no error, and does
 # not run. Each tool folder is its own repo at its own depth, so the layout has
 # to be discovered.
+#
+# Identified by its package.json NAME, the one thing only site-scrapers has.
+# "dev.sh and engine.js" was not unique: scriptingTools/data-bridge has both
+# (and a query.js), so its copy of this hook resolved to data-bridge, found no
+# recipes, and allowed everything -- present, silent, enforcing nothing.
+is_ss() { [ -f "$1/dev.sh" ] && grep -qE '"name"[[:space:]]*:[[:space:]]*"site-scrapers"' "$1/package.json" 2>/dev/null; }
 find_repo() {
   local d
   d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   while [ "$d" != "/" ] && [ -n "$d" ]; do
     # A sibling checkout, which is how every other tool folder sees it.
-    if [ -f "$d/site-scrapers/dev.sh" ] && [ -f "$d/site-scrapers/engine.js" ]; then
-      printf '%s\n' "$d/site-scrapers"; return 0
-    fi
-    # Or we are inside it already.
-    if [ -f "$d/dev.sh" ] && [ -f "$d/engine.js" ]; then
-      printf '%s\n' "$d"; return 0
-    fi
+    if is_ss "$d/site-scrapers"; then printf '%s\n' "$d/site-scrapers"; return 0; fi
+    # Or we are inside it already (whatever the clone's folder is called).
+    if is_ss "$d"; then printf '%s\n' "$d"; return 0; fi
     d="$(dirname "$d")"
   done
   return 1
@@ -90,7 +92,9 @@ host=$(printf '%s' "$url" | sed -nE 's#^[Hh][Tt][Tt][Pp][Ss]?://([^/?#]+).*#\1#p
 [ -n "$host" ] || exit 0
 
 # A deliberate, time-limited override from `./dev.sh browser-ok`.
-marker="$REPO/data/.browser-ok"
+# SS_BROWSER_OK moves it, exactly as it moves `dev.sh browser-ok`'s write: the
+# hook test points both at a private file instead of racing over the live one.
+marker="${SS_BROWSER_OK:-$REPO/data/.browser-ok}"
 if [ -f "$marker" ]; then
   started=$(sed -n 1p "$marker" 2>/dev/null)
   mins=$(sed -n 2p "$marker" 2>/dev/null)

@@ -406,18 +406,25 @@ before trusting or extending this.
   Now **seven** with `knowledge-base` (2026-10-02), all declared in
   `DECLARED` in `check-hooks.sh`; the top-level prose still needs the count.
 
-**Added 2026-10-02 (hook tests resolved the wrong repo) -- OPEN until synced:**
-- `test-prefer-recipes.sh` / `test-troubleshooting.sh` took any folder with a
-  `dev.sh` for site-scrapers. From knowledge-base (which has one) they queried
-  no recipes, skipped every block case (4 and 2) and printed "all cases
-  passed". Fixed here: same walk-up rule as the hooks (dev.sh AND engine.js),
-  plus a `recipes from:` line and a loud line when `query.js sites` is empty.
-  Regression test in `test/hooks.test.js`. Reported by the knowledge-base
-  reviewer via the dispatcher; reproduced here before fixing.
-- **The other six copies are NOT synced** (`./check-hooks.sh` shows both
-  test files DRIFTED, 2 implementations across 7 copies). `--sync` would write
-  into knowledge-base and other owners' folders, so it was left to a dispatch.
-  Delete this item once `./dev.sh hooks` is clean again.
+**Added 2026-10-02 (hooks resolved the wrong repo; browser-ok race) -- OPEN until synced:**
+- Two looser identity rules failed in turn. "Any dev.sh" (tests) took
+  knowledge-base; "dev.sh AND engine.js" (hooks AND tests, ec9f889) took
+  scriptingTools/data-bridge, so data-bridge's LIVE prefer-recipes.sh allowed
+  builtin.com (exit 0; 2 from here). Now identified by package.json name.
+  Resolution faults FAIL the hook tests instead of skipping.
+- The hook test wrote and deleted the live `data/.browser-ok`: 3 of 4
+  concurrent runs failed here, and every run deleted any real override. Now a
+  private `SS_BROWSER_OK` (honoured by the hook and `dev.sh browser-ok`).
+- Gated: `check-hooks.sh` section 4 runs every prefer-recipes.sh copy on a
+  covered host (it flags data-bridge today); mock-workspace tests in
+  `test/hooks.test.js` (fixtures in `test/fixtures/hook-workspace/`).
+- **The other six copies are NOT synced**: all four hook files drift until
+  they are (top level still holds the pre-ec9f889 tests). `--sync` writes into
+  other owners' folders, so it is left to a dispatch. Delete this item once
+  `./dev.sh hooks` is clean again.
+- Not probed: troubleshooting.sh per location (no blocked-attn recipe in the
+  real DB to probe with). Its find_repo is the same code as prefer-recipes',
+  and the mock-workspace test covers it, but check-hooks does not run it live.
 - Unconfirmed: both tests hardcode `NODE_BIN=$HOME/.nvm/versions/node/v22.20.0`.
   A machine without that exact node would get empty `sites` and skip (now
   loudly). Probe: run with that path absent.

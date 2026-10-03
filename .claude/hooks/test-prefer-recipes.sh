@@ -16,26 +16,39 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$DIR/prefer-recipes.sh"
 fails=0
 skips=0
-# site-scrapers is found by the SAME rule the hook uses (dev.sh AND engine.js,
-# walking up), not by "a folder with a dev.sh": knowledge-base has a dev.sh
-# too, so from there this used to query a folder with no recipes and skip every
-# block case while still printing "all cases passed".
+# site-scrapers is found by the SAME rule the hook uses: walking up, and
+# identified by its package.json name. Two looser rules already failed here:
+# "a folder with a dev.sh" took knowledge-base, and "dev.sh AND engine.js" took
+# scriptingTools/data-bridge. Either way this queried a folder with no recipes,
+# skipped every block case, and printed "all cases passed".
+#
+# So a resolution fault is a FAILURE, never a skip: not finding site-scrapers,
+# or its query.js answering nothing at all. (An empty DB answers `[]`, which is
+# a genuine absence of fixtures and still skips.)
+is_ss() { [ -f "$1/dev.sh" ] && grep -qE '"name"[[:space:]]*:[[:space:]]*"site-scrapers"' "$1/package.json" 2>/dev/null; }
 find_repo() {
   local d="$DIR"
   while [ "$d" != "/" ] && [ -n "$d" ]; do
-    if [ -f "$d/site-scrapers/dev.sh" ] && [ -f "$d/site-scrapers/engine.js" ]; then printf '%s\n' "$d/site-scrapers"; return 0; fi
-    if [ -f "$d/dev.sh" ] && [ -f "$d/engine.js" ]; then printf '%s\n' "$d"; return 0; fi
+    if is_ss "$d/site-scrapers"; then printf '%s\n' "$d/site-scrapers"; return 0; fi
+    if is_ss "$d"; then printf '%s\n' "$d"; return 0; fi
     d="$(dirname "$d")"
   done
   return 1
 }
 REPO="$(find_repo)" || REPO=""
 if [ -z "$REPO" ]; then
-  echo "site-scrapers NOT FOUND above $DIR -- every recipe-backed case below SKIPS"
+  echo "  FAIL  site-scrapers NOT FOUND above $DIR -- the hook enforces nothing from here"
+  fails=$((fails + 1))
   REPO="/nonexistent"
 else
   echo "recipes from: $REPO"
 fi
+# The override marker is PRIVATE to this run. The live one is shared: parallel
+# runs raced over it (one wrote, another deleted, the first then failed), and
+# every run deleted any real override Jacob had opened.
+SS_BROWSER_OK="$(mktemp "${TMPDIR:-/tmp}/ss-browser-ok.XXXXXX")" && rm -f "$SS_BROWSER_OK"
+export SS_BROWSER_OK
+trap 'rm -f "$SS_BROWSER_OK"' EXIT
 
 check() {
   local want="$1" desc="$2" tool="$3" url="$4"
@@ -57,7 +70,10 @@ skip() { printf '  SKIP  %-34s %s\n' "$1" "$2"; skips=$((skips + 1)); }
 # the documented CLI so this test needs no knowledge of the schema.
 NODE_BIN="$HOME/.nvm/versions/node/v22.20.0/bin/node"
 sites=$(cd "$REPO" && "$NODE_BIN" query.js sites 2>/dev/null)
-[ -n "$sites" ] || echo "query.js sites returned NOTHING from $REPO -- any SKIP below is for that reason, not an empty DB"
+if [ -z "$sites" ] && [ "$REPO" != /nonexistent ]; then
+  echo "  FAIL  query.js sites returned NOTHING from $REPO -- the hook cannot read recipes either"
+  fails=$((fails + 1))
+fi
 pick() { printf '%s' "$sites" | jq -r "$1" 2>/dev/null; }
 covered=$(pick 'map(select(.status == "working")) | .[0].hostname // empty')
 # Excludes the lab prober, which is internal scaffolding rather than a site.
@@ -105,14 +121,16 @@ fi
 
 echo "the override window:"
 if [ -n "$covered" ]; then
+  # Through the real `dev.sh browser-ok`, so its write and the hook's read are
+  # proven to agree on SS_BROWSER_OK.
   ( cd "$REPO" && ./dev.sh browser-ok 15 >/dev/null 2>&1 )
   check 0 "allowed while browser-ok is fresh" 'WebFetch' "https://$covered/x"
-  rm -f "$REPO/data/.browser-ok"
+  rm -f "$SS_BROWSER_OK"
   check 2 "blocks again once removed"         'WebFetch' "https://$covered/x"
   # An expired marker must not keep the door open. Epoch 0 is long past.
-  printf '0\n1\n' > "$REPO/data/.browser-ok"
+  printf '0\n1\n' > "$SS_BROWSER_OK"
   check 2 "an expired marker does not count"  'WebFetch' "https://$covered/x"
-  rm -f "$REPO/data/.browser-ok"
+  rm -f "$SS_BROWSER_OK"
 else
   skip "override cases" "no working recipe in this DB"
 fi

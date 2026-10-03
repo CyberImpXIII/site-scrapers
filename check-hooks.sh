@@ -255,12 +255,45 @@ for d in $locations; do
 done
 echo
 
+# --- 4. Each copy ENFORCES from where it is installed --------------------------
+# Logic-identical copies can still behave differently, because each resolves
+# site-scrapers from its OWN location. data-bridge's copy of prefer-recipes.sh
+# took data-bridge for site-scrapers (it has dev.sh and engine.js too), found no
+# recipes and allowed everything -- identical bytes, clean check, no
+# enforcement. So every copy is RUN on a host this repo has a working recipe
+# for and must refuse it. The override marker is pointed at a path that cannot
+# exist, so an open `./dev.sh browser-ok` window cannot make this pass or fail.
+echo "each prefer-recipes.sh copy blocks a covered host from where it is installed:"
+NODE_BIN="$HOME/.nvm/versions/node/v22.20.0/bin/node"
+[ -x "$NODE_BIN" ] || NODE_BIN="$(command -v node 2>/dev/null || true)"
+covered=""
+if [ -f "$REPO/query.js" ] && [ -n "$NODE_BIN" ]; then
+  covered=$(cd "$REPO" && "$NODE_BIN" query.js sites 2>/dev/null \
+    | jq -r 'map(select(.status == "working")) | .[0].hostname // empty' 2>/dev/null)
+fi
+if [ -z "$covered" ]; then
+  printf '  UNCHECKED  enforcement not probed -- no working recipe here to probe with\n'
+  unprobed=1
+else
+  unprobed=0
+  for d in $locations; do
+    [ -f "$d/prefer-recipes.sh" ] || continue
+    rc=0
+    printf '{"tool_name":"WebFetch","tool_input":{"url":"https://%s/"}}' "$covered" \
+      | SS_BROWSER_OK=/nonexistent/ss-browser-ok bash "$d/prefer-recipes.sh" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" = 2 ]; then ok "${d#$TOOLS/}/prefer-recipes.sh blocks $covered"
+    else err "${d#$TOOLS/}/prefer-recipes.sh does NOT enforce from there: exit $rc on $covered, which has a working recipe (it resolved some other folder as site-scrapers, or none)"; fi
+  done
+fi
+echo
+
 # The last line is what `./dev.sh check` shows on success, so an UNCHECKED
 # location must be counted HERE or a standalone run would read as full coverage.
 if [ "$errors" = 0 ]; then
   line="hooks: clean"
   [ "$notes" = 0 ] || line="$line, $notes note$( [ "$notes" = 1 ] || echo s)"
   [ "$unchecked" = 0 ] || line="$line, $unchecked declared location$( [ "$unchecked" = 1 ] || echo s) UNCHECKED (absent; standalone run)"
+  [ "$unprobed" = 0 ] || line="$line, enforcement UNCHECKED (no working recipe to probe with)"
   echo "$line"
   exit 0
 fi

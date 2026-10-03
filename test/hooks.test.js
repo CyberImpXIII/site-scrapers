@@ -122,41 +122,150 @@ test('every hook has a test script, and each one passes', () => {
   for (const name of hookFiles) {
     const testScript = path.join(HOOKS, `test-${name}`);
     assert.ok(fs.existsSync(testScript), `${name} has no test-${name} beside it`);
+    let out = '';
     try {
-      execFileSync('bash', [testScript], { encoding: 'utf8', stdio: 'pipe', timeout: 240000 });
+      out = execFileSync('bash', [testScript], { encoding: 'utf8', stdio: 'pipe', timeout: 240000 });
     } catch (e) {
       assert.fail(`test-${name} failed:\n${(e.stdout || '') + (e.stderr || '')}`);
     }
+    // A pass is only a pass if it read THIS repo's recipes. Skips are allowed
+    // only for fixtures this DB genuinely lacks (a fresh clone has none); the
+    // mock-workspace tests below cover every case with a fixed table.
+    const m = /^recipes from: (.*)$/m.exec(out);
+    if (m) assert.equal(fs.realpathSync(m[1]), fs.realpathSync(REPO), `test-${name} read recipes from ${m[1]}`);
   }
 });
 
-test('hook tests find site-scrapers from a sibling that ALSO has a dev.sh', () => {
-  // knowledge-base has its own dev.sh. The tests used to take any folder with a
-  // dev.sh for site-scrapers, so from knowledge-base they queried no recipes and
-  // skipped every block case while printing "all cases passed". Fixture:
-  // <tmp>/knowledge-base/{dev.sh,.claude/hooks/...} beside a <tmp>/site-scrapers
-  // link to this repo. Only the resolution line is asserted.
+// --- the hooks from OTHER tool folders, on a mock workspace -------------------
+//
+// Each copy resolves site-scrapers from its own location, so identical bytes
+// can still enforce nothing. Two siblings fooled it in turn: knowledge-base (it
+// has a dev.sh) and scriptingTools/data-bridge (it has dev.sh, engine.js AND
+// query.js). From data-bridge the LIVE hook allowed a covered host, and the
+// tests skipped every block case and printed "all cases passed".
+//
+// Mock: <tmp>/site-scrapers is test/fixtures/hook-workspace/site-scrapers (a
+// fake dev.sh and query.js over a fixed recipe table, so no real DB), beside a
+// data-bridge-shaped and a knowledge-base-shaped sibling holding copies of the
+// real hooks and their tests.
+
+const { spawn, spawnSync } = require('node:child_process');
+const FIXTURE_SS = path.join(__dirname, 'fixtures', 'hook-workspace', 'site-scrapers');
+const RECIPE_HOOKS = ['prefer-recipes.sh', 'troubleshooting.sh'];
+
+function mockWorkspace() {
   const os = require('node:os');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-kbfix-'));
-  try {
-    fs.symlinkSync(REPO, path.join(root, 'site-scrapers'));
-    const kb = path.join(root, 'knowledge-base');
-    const kbHooks = path.join(kb, '.claude', 'hooks');
-    fs.mkdirSync(kbHooks, { recursive: true });
-    fs.writeFileSync(path.join(kb, 'dev.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
-    for (const t of ['test-prefer-recipes.sh', 'test-troubleshooting.sh']) {
-      // Only the resolution prologue runs: everything after `fails=0` up to
-      // the "recipes from" echo, so no recipe query and no browser-ok marker.
-      const src = fs.readFileSync(path.join(HOOKS, t), 'utf8');
-      const end = src.indexOf('\nfi\n', src.indexOf('REPO="$(find_repo)"'));
-      assert.ok(end > 0, `${t}: find_repo prologue not found -- did the resolution move?`);
-      fs.writeFileSync(path.join(kbHooks, t), src.slice(0, end + 4), { mode: 0o755 });
-      const r = require('node:child_process').spawnSync('bash', [path.join(kbHooks, t)], { encoding: 'utf8' });
-      const out = `${r.stdout || ''}${r.stderr || ''}`;
-      assert.match(out, /recipes from: .*\/site-scrapers\n/, `${t} from knowledge-base:\n${out}`);
-      assert.doesNotMatch(out, /recipes from: .*knowledge-base/, out);
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ss-mockws-')));
+  const ss = path.join(root, 'site-scrapers');
+  fs.cpSync(FIXTURE_SS, ss, { recursive: true });
+  fs.mkdirSync(path.join(ss, 'data'));
+  const bridge = path.join(root, 'scriptingTools', 'data-bridge');
+  const kb = path.join(root, 'knowledge-base');
+  fs.mkdirSync(bridge, { recursive: true });
+  fs.mkdirSync(kb, { recursive: true });
+  // The decoys: what each sibling has that a looser rule mistook for site-scrapers.
+  for (const f of ['dev.sh', 'engine.js', 'query.js']) fs.writeFileSync(path.join(bridge, f), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bridge, 'package.json'), '{"name":"data-bridge"}');
+  fs.writeFileSync(path.join(kb, 'dev.sh'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  const where = {};
+  for (const [label, dir] of [['site-scrapers', ss], ['data-bridge', bridge], ['knowledge-base', kb]]) {
+    const h = path.join(dir, '.claude', 'hooks');
+    fs.mkdirSync(h, { recursive: true });
+    for (const n of RECIPE_HOOKS) for (const f of [n, `test-${n}`]) {
+      fs.copyFileSync(path.join(HOOKS, f), path.join(h, f));
+      fs.chmodSync(path.join(h, f), 0o755);
     }
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    where[label] = h;
+  }
+  return { root, ss, where, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+const env = extra => ({ ...process.env, SS_BROWSER_OK: '', ...extra });
+const webfetch = host => JSON.stringify({ tool_name: 'WebFetch', tool_input: { url: `https://${host}/jobs` } });
+
+test('the LIVE prefer-recipes hook blocks a covered host from every sibling, data-bridge included', () => {
+  const ws = mockWorkspace();
+  try {
+    for (const [label, h] of Object.entries(ws.where)) {
+      const r = spawnSync('bash', [path.join(h, 'prefer-recipes.sh')], { input: webfetch('example.test'), encoding: 'utf8', env: env() });
+      assert.equal(r.status, 2, `from ${label}: expected a block on a covered host, got exit ${r.status}\n${r.stdout}${r.stderr}`);
+      const ok = spawnSync('bash', [path.join(h, 'prefer-recipes.sh')], { input: webfetch('unknown.test'), encoding: 'utf8', env: env() });
+      assert.equal(ok.status, 0, `from ${label}: an unknown host must be allowed`);
+    }
+  } finally { ws.cleanup(); }
+});
+
+test('the hook TESTS run every case from every sibling: they resolve site-scrapers, never skip-and-pass', () => {
+  const ws = mockWorkspace();
+  try {
+    for (const [label, h] of Object.entries(ws.where)) {
+      for (const n of RECIPE_HOOKS) {
+        const r = spawnSync('bash', [path.join(h, `test-${n}`)], { encoding: 'utf8', env: env(), timeout: 120000 });
+        const out = `${r.stdout || ''}${r.stderr || ''}`;
+        assert.equal(r.status, 0, `test-${n} from ${label}:\n${out}`);
+        assert.ok(out.includes(`recipes from: ${ws.ss}\n`), `test-${n} from ${label} resolved elsewhere:\n${out}`);
+        // The fixture table has a working, a broken and a blocked-attn recipe,
+        // so the only case allowed to skip is prefer-recipes' subdomain one.
+        const skips = out.split('\n').filter(l => /^\s+SKIP/.test(l) && !/subdomain/.test(l));
+        assert.deepEqual(skips, [], `test-${n} from ${label} skipped cases it has fixtures for:\n${out}`);
+      }
+    }
+  } finally { ws.cleanup(); }
+});
+
+test('the hook tests FAIL, not skip, when site-scrapers cannot be found; the hook itself fails open', () => {
+  const ws = mockWorkspace();
+  try {
+    fs.rmSync(ws.ss, { recursive: true });
+    for (const n of RECIPE_HOOKS) {
+      const r = spawnSync('bash', [path.join(ws.where['data-bridge'], `test-${n}`)], { encoding: 'utf8', env: env(), timeout: 120000 });
+      const out = `${r.stdout || ''}${r.stderr || ''}`;
+      assert.equal(r.status, 1, `test-${n} must fail with no site-scrapers:\n${out}`);
+      assert.match(out, /FAIL\s+site-scrapers NOT FOUND/);
+      assert.doesNotMatch(out, /all cases passed/);
+    }
+    const live = spawnSync('bash', [path.join(ws.where['data-bridge'], 'prefer-recipes.sh')], { input: webfetch('example.test'), encoding: 'utf8', env: env() });
+    assert.equal(live.status, 0, 'with no site-scrapers the hook must fail OPEN');
+  } finally { ws.cleanup(); }
+});
+
+test('concurrent hook-test runs neither race nor touch a REAL browser-ok override', async () => {
+  // Six owners synced and ran test-prefer-recipes.sh at once: they wrote and
+  // deleted the one live marker under each other (3 of 4 parallel runs failed
+  // here on 2026-10-02), and every run deleted any override Jacob had open.
+  const ws = mockWorkspace();
+  try {
+    const live = path.join(ws.ss, 'data', '.browser-ok');
+    const content = `${Math.floor(Date.now() / 1000)}\n15\n`;
+    fs.writeFileSync(live, content); // a real, fresh override
+    const run = () => new Promise(resolve => {
+      const p = spawn('bash', [path.join(ws.where['data-bridge'], 'test-prefer-recipes.sh')], { env: env() });
+      let out = '';
+      p.stdout.on('data', d => { out += d; });
+      p.stderr.on('data', d => { out += d; });
+      p.on('close', status => resolve({ status, out }));
+    });
+    const results = await Promise.all([run(), run(), run(), run()]);
+    for (const r of results) assert.equal(r.status, 0, r.out);
+    // Untouched, and never READ either: had the hook seen this fresh override,
+    // the block cases above would have exited 0 and failed.
+    assert.equal(fs.readFileSync(live, 'utf8'), content, 'the real override was rewritten or deleted');
+  } finally { ws.cleanup(); }
+});
+
+test('the real dev.sh browser-ok writes where SS_BROWSER_OK says, not the live marker', () => {
+  const os = require('node:os');
+  const priv = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ss-bok-')), 'marker');
+  const live = path.join(REPO, 'data', '.browser-ok');
+  const before = fs.existsSync(live) ? fs.readFileSync(live, 'utf8') : null;
+  try {
+    spawnSync(path.join(REPO, 'dev.sh'), ['browser-ok', '1'], { cwd: REPO, encoding: 'utf8', env: env({ SS_BROWSER_OK: priv }) });
+    const lines = fs.existsSync(priv) ? fs.readFileSync(priv, 'utf8').trim().split('\n') : [];
+    assert.equal(lines.length, 2, 'expected <epoch>\\n<minutes> in the private marker');
+    assert.equal(lines[1], '1');
+    const after = fs.existsSync(live) ? fs.readFileSync(live, 'utf8') : null;
+    if (before === null && after !== null) fs.rmSync(live); // undo what a regression opened
+    assert.equal(after, before, 'browser-ok touched the live marker despite SS_BROWSER_OK');
+  } finally { fs.rmSync(path.dirname(priv), { recursive: true, force: true }); }
 });
 
 // --- check-hooks.sh: which hooks need a twin, on a fixture tools folder -------
@@ -238,9 +347,50 @@ test('check-hooks: a full workspace is clean and counts every declared copy', ()
     assert.equal(status, 0, out);
     assert.match(out, /declared locations \(workspace/);
     assert.match(out, /ok\s+knowledge-base\/\.claude\/hooks/);
-    assert.doesNotMatch(out, /UNCHECKED|ERROR/);
+    assert.doesNotMatch(out, /ERROR|UNCHECKED\s+\S+\/\.claude\/hooks is declared/);
+    // No recipes in this fixture, so the enforcement probe says so out loud.
+    assert.match(out.trim().split('\n').pop(), /enforcement UNCHECKED/);
     // top level + this repo + every sibling
     assert.match(out, new RegExp(`prefer-recipes\\.sh \\(${SIBLINGS.length + 2} copies\\)`));
+  } finally { fx.cleanup(); }
+});
+
+// Give the fixture repo the mock recipe table (working: example.test) so the
+// enforcement probe has a host to probe with.
+function withRecipes(fx) {
+  for (const f of ['dev.sh', 'query.js', 'package.json']) {
+    fs.copyFileSync(path.join(FIXTURE_SS, f), path.join(fx.repo, f));
+  }
+  fs.chmodSync(path.join(fx.repo, 'dev.sh'), 0o755);
+}
+
+test('check-hooks: a copy that is present, identical and does NOT block is an ERROR', () => {
+  // The fixture hooks are `exit 0` stubs: logic-identical everywhere, so the
+  // drift check is clean -- exactly data-bridge's state before the fix.
+  const fx = hookFixture({ workspace: true });
+  try {
+    withRecipes(fx);
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /ERROR\s+scriptingTools\/data-bridge\/\.claude\/hooks\/prefer-recipes\.sh does NOT enforce from there: exit 0 on example\.test/);
+    assert.doesNotMatch(out, /DRIFTED/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: the REAL prefer-recipes.sh blocks from every declared location, beside a data-bridge decoy', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    withRecipes(fx);
+    const bridge = path.join(fx.root, 'scriptingTools', 'data-bridge');
+    for (const f of ['dev.sh', 'engine.js', 'query.js']) fs.writeFileSync(path.join(bridge, f), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+    for (const d of [fx.top, ...SIBLINGS.map(l => path.join(fx.root, l, '.claude')), path.join(fx.repo, '.claude')]) {
+      fs.copyFileSync(path.join(HOOKS, 'prefer-recipes.sh'), path.join(d, 'hooks', 'prefer-recipes.sh'));
+    }
+    const { status, out } = fx.run();
+    assert.equal(status, 0, out);
+    assert.match(out, /ok\s+scriptingTools\/data-bridge\/\.claude\/hooks\/prefer-recipes\.sh blocks example\.test/);
+    assert.match(out, /hooks: clean/);
+    assert.doesNotMatch(out, /enforcement UNCHECKED/);
   } finally { fx.cleanup(); }
 });
 

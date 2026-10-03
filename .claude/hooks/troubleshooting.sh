@@ -42,16 +42,14 @@ set -uo pipefail
 # block in prefer-recipes.sh for why: a fixed "../.." resolved to nothing when
 # the hook was installed in another tool folder, so it exited 0 and enforced
 # nothing while still looking installed.
+# Identified by package.json NAME: data-bridge also has dev.sh and engine.js.
+is_ss() { [ -f "$1/dev.sh" ] && grep -qE '"name"[[:space:]]*:[[:space:]]*"site-scrapers"' "$1/package.json" 2>/dev/null; }
 find_repo() {
   local d
   d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   while [ "$d" != "/" ] && [ -n "$d" ]; do
-    if [ -f "$d/site-scrapers/dev.sh" ] && [ -f "$d/site-scrapers/engine.js" ]; then
-      printf '%s\n' "$d/site-scrapers"; return 0
-    fi
-    if [ -f "$d/dev.sh" ] && [ -f "$d/engine.js" ]; then
-      printf '%s\n' "$d"; return 0
-    fi
+    if is_ss "$d/site-scrapers"; then printf '%s\n' "$d/site-scrapers"; return 0; fi
+    if is_ss "$d"; then printf '%s\n' "$d"; return 0; fi
     d="$(dirname "$d")"
   done
   return 1

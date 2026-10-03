@@ -136,7 +136,12 @@ sibling listed in `DECLARED` in `check-hooks.sh` (knowledge-base included).
 all.** A declared copy that is absent is an ERROR in the workspace (detected by
 the top level's `.claude/agents.manifest.json`) and is printed as `UNCHECKED`,
 and counted in the final line, on a standalone clone — never passed silently.
-A new tool folder holding the hooks must be added to `DECLARED`. The top level
+A new tool folder holding the hooks must be added to `DECLARED`. Identical
+copies can still enforce nothing, because each finds site-scrapers from its own
+folder (by `package.json` name — data-bridge also has `dev.sh` and `engine.js`),
+so the check also RUNS every `prefer-recipes.sh` copy on a covered host and
+requires a block. `SS_BROWSER_OK` moves the `browser-ok` marker for the hook and
+`dev.sh` alike; the hook test uses a private one. The top level
 also has hooks of its own that exist only there by design (the dispatcher's
 delegation layer). `./check-hooks.sh` requires a twin only for the hooks this
 repo registers or holds, so a new top-level-only hook needs no exception.

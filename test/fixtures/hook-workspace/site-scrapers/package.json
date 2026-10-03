@@ -1,0 +1,5 @@
+{
+  "name": "site-scrapers",
+  "private": true,
+  "description": "FIXTURE for test/hooks.test.js: the identity the hooks resolve site-scrapers by."
+}
