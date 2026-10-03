@@ -130,7 +130,14 @@ test('forms caps how many fields it reports and truncates labels', async () => {
     hasValue: false,
   }));
   const result = await runProbe(fakePage(async () => ({ fields, submits: [] })), { kind: 'forms', label: 'forms' });
-  assert.ok(result.fields.length <= 60, `expected a capped field list, got ${result.fields.length}`);
+  // The forms cap is its own (MAX_FORM_FIELDS, 80 since 2026-10-03: a real
+  // Greenhouse form has 33). The cap must also be SAID: a page that omits
+  // totalFields still yields truncated:true, never a complete-looking list.
+  const { MAX_FORM_FIELDS } = require('../lib/probes');
+  assert.ok(MAX_FORM_FIELDS >= 40 && MAX_FORM_FIELDS <= 120, `forms cap out of the sane range: ${MAX_FORM_FIELDS}`);
+  assert.equal(result.fields.length, MAX_FORM_FIELDS, `expected a capped field list, got ${result.fields.length}`);
+  assert.equal(result.truncated, true);
+  assert.equal(result.totalFields, 200);
   for (const f of result.fields) {
     if (f.label) assert.ok(f.label.length <= 100, `label should be truncated, got ${f.label.length}`);
   }
