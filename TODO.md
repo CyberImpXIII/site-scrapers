@@ -104,7 +104,8 @@ fixture `test/fixtures/ats/`). Open:
   subprocesses re-seed from the file, so they were judging the OLD version). Gated
   only by the open_apply_form edit that exposed it (3 failures before, 92/0 after);
   no automated test drives a builtin edit end to end, since that writes the real
-  export. Rollback re-export: see the commit for the run that checked it.
+  export. The rollback re-export was probed once by hand: reinstating the old default
+  was rejected (3 failures), and the DB row and the export were both left unchanged.
 - **This machine runs x64 node under Rosetta** (Puppeteer prints a "Degraded
   performance" warning on every launch). Slower page loads widen every timing race
   above. Jacob's to decide (an arm64 node); not changed here.
@@ -160,12 +161,10 @@ Original wording kept below for the reasoning.
 
 Two things it turned up that are worth acting on:
 
-- **`jobs.lever.co`'s board has a consent dialog no recipe handles.**
-  `dismiss_overlay` measured `changed` (dialogs 1 -> 0, elements -14) on
-  `https://jobs.lever.co/palantir`. The listing recipe works anyway, so it is
-  not urgent — but it is an unhandled overlay on a page we scrape, and the
-  kind of thing that starts failing after a redesign. Compose
-  `dismiss_overlay` into that recipe, or record why not.
+- ~~Lever board consent dialog~~ **DECIDED 2026-10-03: not composed**, reason in the
+  recipe notes (v1.1, verify: `working`, 319 records). Non-modal dialog, read-only
+  recipe, 319 DOM cards = 319 records with it on screen; composing would force
+  url_param -> ui_steps for no measured gain.
 - **The other ATS boards have not been tried.** Running `try` against the
   Greenhouse and Ashby boards, and against the posting pages, would probably
   turn up the same class of thing. Cheap: one command per page.
@@ -722,12 +721,10 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
 
 ## 4. Loose ends
 
-- **`salesforce.wd12.myworkdayjobs.com`** is the one standing `audit.js units`
-  warn: a descendant `:has()` in its `card_selector`. It was checked and the
-  count is right, but it has never been written down *why*, so every session
-  re-checks it. Either tighten the selector to `:has(> ...)` or record the
-  verification in the recipe notes so the warning stops being re-investigated.
-- **Two of the three live audits still have never been run end to end.**
+- ~~`salesforce.wd12` descendant `:has()` warn~~ already recorded: an
+  `AUDIT-VERIFIED` waiver in its notes (2026-09-28: 20 matches = 20 title anchors,
+  `li` do not nest there), printed by `./dev.sh check` as `OK/W`. Nothing to do.
+- **The three live audits have all been run solo.**
   `node audit.js working` was run solo on 2026-09-28: **31 recipes, 30 `ok`,
   1 `PARTIAL` (glassdoor, section 0), no `INFRA` and no `LIAR`.** That also
   settled two things worth not re-deriving: `hiringcafe.com#listing` returned
@@ -762,10 +759,11 @@ Cleanly hooked, verified present, not extracted — add if a search would use th
   non-`ok` groups turned out to be audit defects rather than recipe faults, and
   both are now fixed — see section 5.
 
-  Still to run:
-  ```
-  node audit.js fixed-params   # does a hardcoded query param suppress results
-  ```
+  `node audit.js fixed-params` run solo 2026-10-03: 12 ui_steps recipes audited,
+  3 with a hardcoded param, all `ok` -- dice 34 with / 30 without, linkedin 60/60,
+  ziprecruiter 20/20. Same caveat as section 0d: it compares counts, so 60/60 and
+  20/20 are page-size caps, not proof the filter is inert or harmless.
+
   Never two at once: contention produces browser-teardown errors that look
   exactly like broken recipes, which is what the `INFRA` verdict is for. If you
   see `INFRA`, re-run that recipe alone before concluding anything.
