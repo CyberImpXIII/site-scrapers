@@ -338,6 +338,8 @@ test('check-hooks: DECLARED parses and names the knowledge-base copy', () => {
   assert.ok(SIBLINGS.length >= 5, `DECLARED read as: ${JSON.stringify(DECLARED)}`);
   assert.ok(DECLARED.includes('.'), 'the top level must be declared');
   assert.ok(SIBLINGS.includes('knowledge-base'), 'the knowledge-base copy must be declared');
+  // deep-work's applications repo (2026-10-03) carries the three twins too.
+  assert.ok(SIBLINGS.includes('applications'), 'the applications copy must be declared');
 });
 
 test('check-hooks: a full workspace is clean and counts every declared copy', () => {
@@ -426,16 +428,16 @@ test('check-hooks: one hook missing from knowledge-base fails', () => {
   } finally { fx.cleanup(); }
 });
 
-test('check-hooks: the WHOLE knowledge-base hook folder gone is reported, not skipped', () => {
+test('check-hooks: the WHOLE knowledge-base or applications hook folder gone is reported, not skipped', () => {
   // The case discovery alone missed: the remaining copies agree, so before
   // DECLARED this printed "clean" with one copy fewer.
-  for (const gone of [['knowledge-base', '.claude', 'hooks'], ['knowledge-base']]) {
+  for (const gone of [['knowledge-base', '.claude', 'hooks'], ['knowledge-base'], ['applications', '.claude', 'hooks'], ['applications']]) {
     const fx = hookFixture({ workspace: true });
     try {
       fs.rmSync(path.join(fx.root, ...gone), { recursive: true });
       const { status, out } = fx.run();
       assert.equal(status, 1, `removing ${gone.join('/')}:\n${out}`);
-      assert.match(out, /ERROR\s+knowledge-base\/\.claude\/hooks is DECLARED but absent/);
+      assert.match(out, new RegExp(`ERROR\\s+${gone[0]}/\\.claude/hooks is DECLARED but absent`));
       assert.doesNotMatch(out, /hooks: clean/);
     } finally { fx.cleanup(); }
   }

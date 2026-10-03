@@ -115,10 +115,6 @@ fixture `test/fixtures/ats/`). Open:
   (`ATS_FIXTURES`); add a fixture there and the per-ATS tests run for it.
 - **Delegation hooks**: this session started with no "Jacob's words" (SubagentStart
   `quote-words.sh` not wired; `./.claude/agents.sh wiring`). Reported to dispatcher.
-- **`./dev.sh check` hooks ERROR (not mine, reported to dispatcher 2026-10-03):**
-  `applications/.claude/hooks holds twinned hooks ... but is not in DECLARED
-  (check-hooks.sh)`. `applications/` is deep-work's new folder; the fix is adding it
-  to `DECLARED` once its owner confirms the folder is meant to carry the hooks.
 
 ---
 

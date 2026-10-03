@@ -131,7 +131,7 @@ broke every call would be worse than the habit it corrects.
 | `troubleshooting.sh` | re-running a `blocked-attn` recipe without `--attended` (rule 3) |
 
 These three live in one copy per tool folder — here, the top level, and every
-sibling listed in `DECLARED` in `check-hooks.sh` (knowledge-base included).
+sibling listed in `DECLARED` in `check-hooks.sh` (knowledge-base and applications included).
 `./check-hooks.sh --sync` pushes this repo's; **if you change one, sync them
 all.** A declared copy that is absent is an ERROR in the workspace (detected by
 the top level's `.claude/agents.manifest.json`) and is printed as `UNCHECKED`,

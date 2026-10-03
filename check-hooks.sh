@@ -58,7 +58,7 @@ unchecked=0
 #     claim coverage it does not have.
 # And the reverse direction: a location found holding a twinned hook but not
 # declared is an ERROR in the workspace (add it here), a note standalone.
-DECLARED=". emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge"
+DECLARED=". applications emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge"
 WORKSPACE_MARKER=".claude/agents.manifest.json"
 if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone; fi
 
