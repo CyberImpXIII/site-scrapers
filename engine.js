@@ -375,8 +375,16 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
     // offers one. This is what lets a generic action parameterise its
     // vocabulary without forcing every caller to restate it — the default
     // stays overridable instead of being baked in.
+    //
+    // substitute() turns a param the caller did not supply into '', so the
+    // EMPTY result is the normal "supplied nothing" case. Testing only for a
+    // surviving "{{param}}" made default_selector dead code from d85c3bc to
+    // 2026-10-03: open_apply_form's default never clicked anything, so the
+    // Lever and Ashby describe recipes silently described the posting page
+    // (0 fields, success:true) instead of the form. Gated by
+    // test/fill.test.js ("default entry selector still clicks ...").
     let sel = step.selector ? substitute(step.selector, params) : undefined;
-    if (sel !== undefined && /^\s*\{\{[^}]*\}\}\s*$/.test(sel)) {
+    if (sel !== undefined && (sel.trim() === '' || /^\s*\{\{[^}]*\}\}\s*$/.test(sel))) {
       // Still a placeholder, so the caller supplied nothing. Either fall back
       // to the step's default, or treat the step as not asked for and skip
       // it. Both let a generic action offer an OPTIONAL selector parameter —

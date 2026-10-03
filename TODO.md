@@ -90,11 +90,24 @@ Built: `fill_application_form` builtin + `job-boards.greenhouse.io#action:fill_a
 no upload). Contract `docs/fill-output.md`, gated by `test/fill.test.js` (offline
 fixture `test/fixtures/ats/`). Open:
 
-- **`open_apply_form`'s default entry selector `button::-p-text(Apply)` can match a
-  SUBMIT button** on a board whose submit reads "Apply" (Lever/Ashby likely). My
-  code, not fixed: the Greenhouse fill recipe overrides it with
-  `button[type=button]::-p-text(Apply), a::-p-text(Apply)`. Fix the default (exclude
-  `[type=submit]` and form-owned buttons) before any Lever/Ashby fill recipe.
+- **The `open_apply_form` entry click waits only 5s** (`stop_if_missing` default) after
+  a 2s settle. Measured 2026-10-03 on a live Lever posting (x64 node under Rosetta):
+  the Apply link appeared 4.5-4.9s into that window on 2 runs and missed it on 1. A
+  miss is SILENT: the step is optional, so describe runs on the posting page and
+  returns 0 fields with `success:true`. Consider `timeout: 15000` on that click
+  (wall clock is not a cost), verified live on Lever and Ashby after.
+- **A describe that finds 0 fields still reports `success:true`.** That is how the
+  dead `default_selector` (fixed 2026-10-03, engine.js) hid: Lever and Ashby
+  `#action:describe_application_form` stayed `working` while describing the posting
+  page instead of the form. Wanted: 0 form fields = not extracted, for verify.js.
+- **register.js builtin edits now export before the gate's tests** (the test
+  subprocesses re-seed from the file, so they were judging the OLD version). Gated
+  only by the open_apply_form edit that exposed it (3 failures before, 92/0 after);
+  no automated test drives a builtin edit end to end, since that writes the real
+  export. Rollback re-export: see the commit for the run that checked it.
+- **This machine runs x64 node under Rosetta** (Puppeteer prints a "Degraded
+  performance" warning on every launch). Slower page loads widen every timing race
+  above. Jacob's to decide (an arm64 node); not changed here.
 - **Live file upload unverified.** The fixture proves `#resume` upload; the live run
   answered text and comboboxes only. Next live verify should attach a fake .txt.
 - **Multi-select comboboxes unsupported** (one answer string = one option). No
@@ -113,6 +126,21 @@ fixture `test/fixtures/ats/`). Open:
   should skip debug capture.
 - **Lever/Ashby**: slots are commented in `test/fixtures/ats/server.js`
   (`ATS_FIXTURES`); add a fixture there and the per-ATS tests run for it.
+- **formHash unstable on live Greenhouse** (reported 2026-10-03 by the applications
+  agent, dry fill on the Discord posting, fake values): 1 of 3 identical fills lacked
+  the late-injected reCAPTCHA textarea, hash `8ac1c3261efa20e3`, `formChanged=true`;
+  3 describes and 4 no-answer fills stayed stable. A spurious formChanged sends a packet
+  back to needs-review. Wanted: exclude late-injected captcha elements from the hash
+  (or prove they are already excluded), with a fixture test.
+- **UNCONFIRMED (same report): upload inputs described as label "Attach",
+  required:false** while the live page shows "Resume/CV*". Probe read-only against the
+  live posting; fix the label/required reading in lib/probes.js if confirmed.
+  (The live dial-code Country matched only via the option-text suffix; applications
+  handles that on its side.)
+- **UNCONFIRMED: `test-prefer-recipes.sh` failed 3 cases once, then passed twice**
+  (reported 2026-10-03 by the knowledge-base agent, while this repo had uncommitted
+  edits to engine.js/register.js/fixtures). Re-run it alone on a clean tree to tell
+  contention from in-progress edits; if it flakes clean, gate that seam.
 - **Delegation hooks**: this session started with no "Jacob's words" (SubagentStart
   `quote-words.sh` not wired; `./.claude/agents.sh wiring`). Reported to dispatcher.
 

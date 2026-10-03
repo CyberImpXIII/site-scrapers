@@ -21,7 +21,9 @@
   to the server. The instrumentation never prevents a fill; it prevents the
   page navigating away on submit, and counts it.
 
-  Placeholders substituted by the server: WALL, TOP_APPLY, SUBMIT_TEXT.
+  Placeholders substituted by the server: WALL, TOP_APPLY, SUBMIT_IN_FORM,
+  SUBMIT_OUTSIDE_FORM (the submit control is built by server.js, so a test can
+  vary its markup: typed, untyped inside the form, or form= outside it).
 -->
 <html>
 <head>
@@ -118,8 +120,9 @@ and nothing entered here goes anywhere but a local test server that counts what 
 
   <input type="text" id="website_hp" name="website_hp" style="display:none" autocomplete="off">
 
-  <button type="submit" id="submit_app" class="btn btn--pill">SUBMIT_TEXT</button>
+  <!--SUBMIT_IN_FORM-->
 </form>
+<!--SUBMIT_OUTSIDE_FORM-->
 
 <script>
 (function () {
@@ -168,8 +171,14 @@ and nothing entered here goes anywhere but a local test server that counts what 
   });
 
   // --- the top Apply button: scrolls to the form, like Greenhouse's ---------
+  // Every variant of it carries data-entry, and a click on one is counted, so
+  // "the entry control was chosen" is measured rather than inferred.
   var top = document.getElementById('top-apply');
-  if (top) top.addEventListener('click', function () { document.getElementById('application-form').scrollIntoView(); });
+  if (top) top.addEventListener('click', function (e) {
+    e.preventDefault();
+    post('/entry-click', {});
+    document.getElementById('application-form').scrollIntoView();
+  });
 
   // --- phone widget: reformats US-style digits, like intl-tel-input ---------
   var phone = document.getElementById('phone');

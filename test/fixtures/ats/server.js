@@ -20,7 +20,7 @@ const ATS_FIXTURES = {
     file: path.join(__dirname, 'greenhouse.html'),
     // What the real board's markup puts in front of the form (mirrored from
     // job-boards.greenhouse.io): a type=button "Apply" that only scrolls.
-    topApply: '<button type="button" id="top-apply" class="btn btn--pill">Apply</button>',
+    topApply: '<button type="button" id="top-apply" class="btn btn--pill" data-entry>Apply</button>',
     submitText: 'Submit application',
   },
   // lever: { file: path.join(__dirname, 'lever.html'), ... }   -- not built yet
@@ -32,21 +32,49 @@ const WALLS = {
   login: '<form id="login-gate"><label for="pw">Password</label><input type="password" id="pw" name="pw"></form>',
 };
 
+// Entry controls (the thing open_apply_form should click), by ?entry=. Each
+// carries data-entry; the page counts a click on it as /entry-click. "typed"
+// is the fixture's own topApply. The others are the shapes seen live:
+// Ashby's untyped <button> outside any form, Lever's <a>.
+const ENTRIES = {
+  untyped: '<button id="top-apply" class="btn" data-entry>Apply for this Job</button>',
+  link: '<a href="#" id="top-apply" class="postings-btn" data-entry>Apply</a>',
+  none: '',
+};
+
+// Submit controls, by ?submit=. Every one of these submits the form when
+// clicked, and the page counts it: typed, a <button> with no type INSIDE the
+// form (submit by default), and a <button form=...> OUTSIDE it (form-owned).
+function submitControl(kind, text) {
+  if (kind === 'untyped') return { inForm: `<button id="submit_app" class="btn btn--pill">${text}</button>`, outside: '' };
+  if (kind === 'form_attr') return { inForm: '', outside: `<button form="application-form" id="submit_app" class="btn btn--pill">${text}</button>` };
+  return { inForm: `<button type="submit" id="submit_app" class="btn btn--pill">${text}</button>`, outside: '' };
+}
+
 function render(ats, query) {
   const fx = ATS_FIXTURES[ats];
   if (!fx) return null;
   let html = fs.readFileSync(fx.file, 'utf8');
   const wall = WALLS[query.get('wall')] || '';
-  // ?submit_text=Apply makes the submit control say "Apply" and removes the
-  // harmless top button, so a selector matching "Apply" can only find submit.
+  // ?submit_text=Apply makes the submit control say "Apply" and, unless
+  // ?entry= says otherwise, removes the harmless top button, so a selector
+  // matching "Apply" can only find submit.
   const submitText = query.get('submit_text') || fx.submitText;
-  const topApply = query.get('submit_text') ? '' : fx.topApply;
-  html = html.replace('<!--WALL-->', wall).replace('<!--TOP_APPLY-->', topApply).replace('SUBMIT_TEXT', submitText);
+  const entry = query.get('entry');
+  const topApply = entry ? (entry === 'typed' ? fx.topApply : ENTRIES[entry]) : query.get('submit_text') ? '' : fx.topApply;
+  if (topApply === undefined) return null; // unknown ?entry= -> 404, never a silent default
+  const submit = submitControl(query.get('submit'), submitText);
+  html = html
+    .replace('<!--WALL-->', wall)
+    .replace('<!--TOP_APPLY-->', topApply)
+    .replace('<!--SUBMIT_IN_FORM-->', submit.inForm)
+    .replace('<!--SUBMIT_OUTSIDE_FORM-->', submit.outside);
   return html;
 }
 
 function startAtsServer() {
-  const counters = { submitClick: 0, submitEvent: 0, enterKey: 0, applyPost: 0 };
+  // entryClick is NOT a submit: it counts clicks on the data-entry control.
+  const counters = { submitClick: 0, submitEvent: 0, enterKey: 0, applyPost: 0, entryClick: 0 };
   let lastState = null;
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
@@ -66,6 +94,7 @@ function startAtsServer() {
         else if (u.pathname === '/submit-event') counters.submitEvent += 1;
         else if (u.pathname === '/enter-key') counters.enterKey += 1;
         else if (u.pathname === '/apply') counters.applyPost += 1;
+        else if (u.pathname === '/entry-click') counters.entryClick += 1;
         res.setHeader('Content-Type', 'application/json');
         res.end('{}');
         return;

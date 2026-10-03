@@ -155,6 +155,16 @@ test.before(async () => {
   ]);
   // Same, with the bare step: isolates fill_form from open_apply_form.
   recipe('fill_test_step', [{ action: 'goto', url: '{{url}}' }, { action: 'fill_form', fields: '{{fields}}', answers: '{{answers}}' }]);
+  // open_apply_form alone: with its DEFAULT entry selector, and with the
+  // Greenhouse recipe's override.
+  recipe('fill_test_open_default', [
+    { action: 'goto', url: '{{url}}' },
+    { action: 'run_generic_action', ref: 'open_apply_form', with: { settle_ms: '200' } },
+  ]);
+  recipe('fill_test_open_safe', [
+    { action: 'goto', url: '{{url}}' },
+    { action: 'run_generic_action', ref: 'open_apply_form', with: { entry_selector: SAFE_ENTRY, settle_ms: '200' } },
+  ]);
   // CONTROL: deliberately clicks submit, to prove the counter sees it.
   recipe('fill_test_control_submit', [{ action: 'goto', url: '{{url}}' }, { action: 'click', selector: '#submit_app' }, { action: 'wait', ms: 300 }]);
 });
@@ -274,6 +284,44 @@ test('a submit control labelled "Apply" is never clicked by the fill path', asyn
   assertContract(out.fill, forms.fields);
   assert.equal(out.fill.status, 'done');
   assert.equal(ats.submits(), 0, JSON.stringify(ats.counters));
+});
+
+// open_apply_form's DEFAULT entry selector (no entry_selector passed). It used
+// to be `button::-p-text(Apply)`, which matches a submit control whose text is
+// "Apply". Every submit shape below submits the form when clicked, and the
+// page counts it; with no entry control on the page the default must find
+// NOTHING (the step is optional), not fall back to the submit.
+for (const submit of ['typed', 'untyped', 'form_attr']) {
+  test(`open_apply_form's default entry selector never clicks a submit control (${submit} submit reading "Apply")`, async () => {
+    ats.reset();
+    const out = await run('fill_test_open_default', { url: ats.url('greenhouse', `submit_text=Apply&submit=${submit}&entry=none`) });
+    assert.equal(out.success, true, JSON.stringify(out).slice(0, 400));
+    assert.equal(ats.submits(), 0, `the default entry selector submitted the form: ${JSON.stringify(ats.counters)}`);
+    assert.equal(ats.counters.entryClick, 0);
+  });
+}
+
+// ...and it still finds a real entry control, in each shape seen live, even
+// when the submit control ALSO reads "Apply" (the worst case: both match the
+// text, only one is safe).
+for (const entry of ['typed', 'untyped', 'link']) {
+  test(`open_apply_form's default entry selector still clicks an Apply entry control (${entry})`, async () => {
+    ats.reset();
+    const out = await run('fill_test_open_default', { url: ats.url('greenhouse', `submit_text=Apply&submit=untyped&entry=${entry}`) });
+    assert.equal(out.success, true, JSON.stringify(out).slice(0, 400));
+    assert.equal(ats.counters.entryClick, 1, `the entry control was not clicked: ${JSON.stringify(ats.counters)}`);
+    assert.equal(ats.submits(), 0, JSON.stringify(ats.counters));
+  });
+}
+
+test('the Greenhouse override (type=button / a) still clicks the entry and never the submit', async () => {
+  for (const q of ['', 'submit_text=Apply&entry=typed']) {
+    ats.reset();
+    const out = await run('fill_test_open_safe', { url: ats.url('greenhouse', q) });
+    assert.equal(out.success, true, JSON.stringify(out).slice(0, 400));
+    assert.equal(ats.counters.entryClick, 1, `${q || 'default page'}: ${JSON.stringify(ats.counters)}`);
+    assert.equal(ats.submits(), 0, `${q || 'default page'}: ${JSON.stringify(ats.counters)}`);
+  }
 });
 
 for (const wall of ['captcha', 'login']) {

@@ -443,6 +443,8 @@ function registerGenericAction(db, def) {
   const dependents = dependentsOf(db, def.name);
 
   let genericActionId;
+  const exportBuiltins = () =>
+    authorize(`export builtins for ${def.name}`, () => require('./lib/exportBuiltins').exportBuiltins(db));
   const gated = guardedChange(db, {
     target: `generic:${def.name}`,
     summary: def.note || `register generic action ${def.name}`,
@@ -460,6 +462,8 @@ function registerGenericAction(db, def) {
           steps: snap.steps,
         });
       }
+      // The export moved with the row in mutate(), so it moves back with it.
+      if (isBuiltin) exportBuiltins();
     },
     // The action itself plus everything downstream of it: a change that leaves
     // this action valid but breaks a dependent is still a broken change.
@@ -489,6 +493,14 @@ function registerGenericAction(db, def) {
         // every action with the PREVIOUS change note -- the reason would always
         // lag one edit behind.
         db.prepare("UPDATE generic_actions SET source = 'builtin' WHERE name = ?").run(def.name);
+        // ...but the FILE must already match the row while the gate's tests
+        // run: every test subprocess's openDb() re-seeds builtins from
+        // lib/builtinActions.js, so with the old export on disk the tests
+        // silently overwrote this change with the previous version and judged
+        // THAT. Found 2026-10-03: an open_apply_form edit was rejected by the
+        // very tests written to prove it. The provisional stamp is replaced by
+        // the export after the gate; a rollback re-exports the restored row.
+        exportBuiltins();
       }
     },
   });
