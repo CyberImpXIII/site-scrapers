@@ -343,11 +343,16 @@ test('check-hooks: DECLARED parses and names the knowledge-base copy', () => {
   // 2026-10-03: addon-bench and tools/setup (a NESTED repo) carry the twins too.
   assert.ok(SIBLINGS.includes('addon-bench'), 'the addon-bench copy must be declared');
   assert.ok(SIBLINGS.includes('tools/setup'), 'the tools/setup copy must be declared');
+  // 2026-10-04: four more nested repos under tools/ carry the twins (td-7).
+  for (const loc of ['tools/checks', 'tools/hooks', 'tools/hub', 'tools/todo']) {
+    assert.ok(SIBLINGS.includes(loc), `the ${loc} copy must be declared`);
+  }
 });
 
-// The copies added 2026-10-03, one flat and one nested: each must be able to
-// FAIL the check, or declaring it bought nothing.
-const NEW_COPIES = ['addon-bench', 'tools/setup'];
+// The copies added 2026-10-03 (one flat, one nested) and 2026-10-04 (four
+// nested under tools/): each must be able to FAIL the check, or declaring it
+// bought nothing.
+const NEW_COPIES = ['addon-bench', 'tools/setup', 'tools/checks', 'tools/hooks', 'tools/hub', 'tools/todo'];
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
 test('check-hooks: a DRIFTED addon-bench or tools/setup copy fails and is named', () => {
@@ -518,18 +523,111 @@ test('check-hooks: the WHOLE knowledge-base or applications hook folder gone is 
     [['knowledge-base', '.claude', 'hooks'], 'knowledge-base'], [['knowledge-base'], 'knowledge-base'],
     [['applications', '.claude', 'hooks'], 'applications'], [['applications'], 'applications'],
     [['addon-bench', '.claude', 'hooks'], 'addon-bench'], [['addon-bench'], 'addon-bench'],
-    [['tools', 'setup', '.claude', 'hooks'], 'tools/setup'], [['tools', 'setup'], 'tools/setup'], [['tools'], 'tools/setup'],
+    [['tools', 'setup', '.claude', 'hooks'], 'tools/setup'], [['tools', 'setup'], 'tools/setup'],
+    ...['checks', 'hooks', 'hub', 'todo'].flatMap(t => [
+      [['tools', t, '.claude', 'hooks'], `tools/${t}`], [['tools', t], `tools/${t}`],
+    ]),
+    // The whole tools/ folder: every nested repo under it is named, not just one.
+    [['tools'], ['tools/setup', 'tools/checks', 'tools/hooks', 'tools/hub', 'tools/todo']],
   ];
-  for (const [gone, loc] of cases) {
+  for (const [gone, locs] of cases) {
     const fx = hookFixture({ workspace: true });
     try {
       fs.rmSync(path.join(fx.root, ...gone), { recursive: true });
       const { status, out } = fx.run();
       assert.equal(status, 1, `removing ${gone.join('/')}:\n${out}`);
-      assert.match(out, new RegExp(`ERROR\\s+${loc.replace('/', '\\/')}/\\.claude/hooks is DECLARED but absent`));
+      for (const loc of [].concat(locs)) {
+        assert.match(out, new RegExp(`ERROR\\s+${reEsc(loc)}/\\.claude/hooks is DECLARED but absent`), `removing ${gone.join('/')}: ${loc}\n${out}`);
+      }
       assert.doesNotMatch(out, /hooks: clean/);
     } finally { fx.cleanup(); }
   }
+});
+
+// --- check-hooks.sh: "settings.json not applied yet" vs a real fault ----------
+//
+// A new tool repo ships `.claude/settings.proposed.json` and Jacob copies it to
+// settings.json himself. Until he does, the hooks there do not run -- still an
+// ERROR -- but it is HIS step, not drift, and the output must say which is which.
+// It counts as "not applied yet" only when the proposal is something worth
+// applying: valid JSON that wires every twin present there, each of which
+// exists, parses and fails open. Anything less is a real fault.
+
+function proposeInstead(fx, loc, proposal) {
+  const dir = path.join(fx.root, loc, '.claude');
+  fs.rmSync(path.join(dir, 'settings.json'));
+  if (proposal !== undefined) {
+    fs.writeFileSync(path.join(dir, 'settings.proposed.json'),
+      typeof proposal === 'string' ? proposal : JSON.stringify(proposal));
+  }
+}
+const proposalOf = names => ({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: names.map(hookCmd) }] } });
+const lastLine = out => out.trim().split('\n').pop();
+
+test('check-hooks: a valid settings.proposed.json not yet applied is labelled as Jacob\'s step, not drift', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    proposeInstead(fx, 'tools/todo', proposalOf(TWINS));
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out); // the hooks there still do not run
+    assert.match(out, /ERROR\s+\[not applied yet\] tools\/todo\/\.claude: no settings\.json; settings\.proposed\.json is valid/, out);
+    assert.doesNotMatch(out, /DRIFTED|is missing from/);
+    assert.match(lastLine(out), /^hooks: 1 ERROR -- 0 real; 1 only settings\.json not applied yet \(Jacob's step: copy settings\.proposed\.json to settings\.json in tools\/todo\/\.claude\)$/, out);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: pending settings and real drift together are counted apart', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    proposeInstead(fx, 'tools/hub', proposalOf(TWINS));
+    proposeInstead(fx, 'tools/checks', proposalOf(TWINS));
+    fs.appendFileSync(path.join(fx.root, 'tools', 'hooks', '.claude', 'hooks', 'prefer-recipes.sh'), 'echo drifted\n');
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /prefer-recipes\.sh has DRIFTED/);
+    assert.match(lastLine(out), /^hooks: 3 ERRORS -- 1 real; 2 only settings\.json not applied yet \(Jacob's step: copy settings\.proposed\.json to settings\.json in tools\/checks\/\.claude tools\/hub\/\.claude\)$/, out);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: no settings.json and NO proposal is a real error, unlabelled', () => {
+  const fx = hookFixture({ workspace: true });
+  try {
+    proposeInstead(fx, 'tools/todo');
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /ERROR\s+tools\/todo\/\.claude\/hooks has hooks but no settings\.json/);
+    assert.doesNotMatch(out, /not applied yet/);
+    assert.match(lastLine(out), /^hooks: 1 ERROR$/);
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks: a proposal that would not work is a real error, never "not applied yet"', () => {
+  const cases = [
+    ['not json {', /settings\.proposed\.json is not valid JSON/],
+    [proposalOf(['no-inline-blobs.sh', 'troubleshooting.sh']), /settings\.proposed\.json does not wire: prefer-recipes\.sh/],
+    [proposalOf([...TWINS, 'ghost.sh']), /tools\/todo\/\.claude\/settings\.proposed\.json names ghost\.sh but it does not exist/],
+  ];
+  for (const [proposal, why] of cases) {
+    const fx = hookFixture({ workspace: true });
+    try {
+      proposeInstead(fx, 'tools/todo', proposal);
+      const { status, out } = fx.run();
+      assert.equal(status, 1, out);
+      assert.match(out, why, out);
+      assert.doesNotMatch(out, /\[not applied yet\]/, out);
+      assert.match(lastLine(out), /^hooks: \d+ ERRORS?$/, out);
+    } finally { fx.cleanup(); }
+  }
+  // A proposed hook that does not fail open makes the proposal unfit too.
+  const fx = hookFixture({ workspace: true });
+  try {
+    proposeInstead(fx, 'tools/todo', proposalOf(TWINS));
+    fs.writeFileSync(path.join(fx.root, 'tools', 'todo', '.claude', 'hooks', 'troubleshooting.sh'), '#!/usr/bin/env bash\nexit 3\n', { mode: 0o755 });
+    const { status, out } = fx.run();
+    assert.equal(status, 1, out);
+    assert.match(out, /tools\/todo\/\.claude\/hooks\/troubleshooting\.sh does not fail open/);
+    assert.doesNotMatch(out, /\[not applied yet\]/, out);
+  } finally { fx.cleanup(); }
 });
 
 test('check-hooks: STANDALONE, an absent sibling is UNCHECKED out loud, not passed silently', () => {

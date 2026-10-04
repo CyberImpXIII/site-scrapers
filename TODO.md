@@ -143,6 +143,19 @@ fixture `test/fixtures/ats/`). Open:
   Lever palantir 56, Ashby supabase 13/13/13, all `working`; offline audit clean.
   Approval note: the coordinator relayed Jacob's "and 0-field fix"; it was not in
   the quoted "Jacob's words" this session received.
+- **tools/checks, tools/hooks, tools/hub, tools/todo hook copies: DECLARED 2026-10-04**
+  (todo's td-7). check-hooks went 8 ERRORS -> 4: the 4 left are each
+  `[not applied yet]` -- no settings.json, a settings.proposed.json that is valid,
+  wires all three twins and fails open. Copying it is Jacob's step (nobody else's);
+  the final line counts them apart from real faults (`0 real; 4 only ...`). A
+  proposal that is invalid, omits a twin, names a missing script or does not fail
+  open is a REAL error, never labelled pending (test/hooks.test.js). Cross-checked
+  read-only with `tools/hooks ./hooks copies`: "14 location(s), 85 file(s) ... agree",
+  matching check-hooks' 14 copies of each twin. Open: (a) replacing check-hooks with
+  `./hooks copies` / `hooks-installed` is NOT approved (PLAN-tools-folder.md §9 (2));
+  until then both lists exist and must be extended together. (b) the hooks tests
+  are slow (~10+ min for test/hooks.test.js): every removed-folder case builds a
+  full fixture workspace and runs check-hooks, now 13 declared locations each.
 - **addon-bench and tools/setup hook copies: DECLARED 2026-10-03** (check-hooks.sh,
   gated in test/hooks.test.js: drift, a missing twin, and the whole folder gone each
   fail for both). Declared locations are now checked at ANY depth (`all_locations`:

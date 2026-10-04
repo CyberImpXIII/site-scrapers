@@ -62,7 +62,10 @@ unchecked=0
 # A location may be nested (tools/setup is a repo two levels down). Declared
 # locations are checked wherever they are, not only as deep as discovery looks:
 # see all_locations below.
-DECLARED=". addon-bench applications emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/setup"
+#
+# 2026-10-04: tools/checks, tools/hooks, tools/hub and tools/todo (nested repos,
+# created that day with copies of the twins; tools/todo's report td-7 asked).
+DECLARED=". addon-bench applications emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/checks tools/hooks tools/hub tools/setup tools/todo"
 WORKSPACE_MARKER=".claude/agents.manifest.json"
 if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone; fi
 
@@ -105,6 +108,14 @@ if [ "${1:-}" = "--sync" ]; then
 fi
 
 err()  { printf '  ERROR  %s\n' "$*"; errors=$((errors + 1)); }
+# An ERROR that is only Jacob's step: a location whose settings.json is not
+# applied yet, though a settings.proposed.json fit to apply sits beside it (see
+# section 3). Still an error -- the hooks there do not run -- but counted and
+# labelled apart, so it is never read as drift and real faults are never hidden
+# among them.
+pending=0
+pending_locs=""
+pend() { printf '  ERROR  [not applied yet] %s\n' "$*"; errors=$((errors + 1)); pending=$((pending + 1)); }
 note() { printf '  note   %s\n' "$*"; notes=$((notes + 1)); }
 ok()   { printf '  ok     %s\n' "$*"; }
 
@@ -221,23 +232,49 @@ echo "each hook is wired, parses, and fails open:"
 for d in $locations; do
   loc="${d#$TOOLS/}"
   settings="$(dirname "$d")/settings.json"
+  proposed=""
+
+  # No settings.json, but a settings.proposed.json: a new repo whose wiring
+  # Jacob applies himself (he copies the proposal; no agent does). The PROPOSAL
+  # is checked exactly as settings.json would be -- the scripts it names exist,
+  # are executable, parse and fail open -- and it must wire every twin present
+  # here. Only if all of that holds is the error "not applied yet"; a proposal
+  # that would not work once applied is a real fault and says why.
+  if [ ! -f "$settings" ] && [ -f "$(dirname "$d")/settings.proposed.json" ]; then
+    settings="$(dirname "$d")/settings.proposed.json"
+    proposed=1
+  fi
+  sname="$(basename "$settings")"
+  errors_before=$errors
 
   if [ ! -f "$settings" ]; then
     err "$loc has hooks but no settings.json — none of them run"
     continue
   fi
   if ! jq -e . "$settings" >/dev/null 2>&1; then
-    err "$loc settings.json is not valid JSON — Claude Code silently ignores the whole file"
+    if [ -n "$proposed" ]; then
+      err "$loc has no settings.json, and its settings.proposed.json is not valid JSON — applying it would not help"
+    else
+      err "$loc settings.json is not valid JSON — Claude Code silently ignores the whole file"
+    fi
     continue
   fi
 
   wired=$(wired_scripts "$settings")
+  if [ -n "$proposed" ]; then
+    unwired=""
+    for name in $twinned; do
+      [ -f "$d/$name" ] || continue
+      printf '%s\n' "$wired" | grep -qxF "$name" || unwired="$unwired $name"
+    done
+    [ -z "$unwired" ] || err "$loc has no settings.json, and its settings.proposed.json does not wire:$unwired — applying it would leave those rules off"
+  fi
   for name in $wired; do
     f="$d/$name"
     if [ ! -f "$f" ]; then
       # The dangerous direction: Claude Code reads a non-zero exit as a block,
       # so a named-but-absent hook command refuses every matching tool call.
-      err "$(dirname "$loc")/settings.json names $name but it does not exist — every matching tool call will be REFUSED"
+      err "$(dirname "$loc")/$sname names $name but it does not exist — every matching tool call will be REFUSED"
       continue
     fi
     [ -x "$f" ] || err "$loc/$name is not executable (chmod +x it, or it cannot run)"
@@ -260,7 +297,7 @@ for d in $locations; do
     [ -f "$f" ] || continue
     name="$(basename "$f")"
     case "$name" in test-*) continue ;; esac
-    printf '%s\n' "$wired" | grep -qx "$name" || note "$loc/$name is present but not wired in settings.json"
+    printf '%s\n' "$wired" | grep -qx "$name" || note "$loc/$name is present but not wired in $sname"
   done
 
   # Every hook needs a test beside it, and every test needs its hook.
@@ -270,6 +307,13 @@ for d in $locations; do
     case "$name" in test-*) continue ;; esac
     [ -f "$d/test-$name" ] || note "$loc/$name has no test-$name beside it"
   done
+
+  # The proposal passed everything above with no new error: what is left is
+  # only the copy, which is Jacob's to make.
+  if [ -n "$proposed" ] && [ "$errors" = "$errors_before" ]; then
+    pend "$(dirname "$loc"): no settings.json; settings.proposed.json is valid, wires every twin here, and each fails open -- the hooks here do not run until Jacob copies it to settings.json"
+    pending_locs="$pending_locs $(dirname "$loc")"
+  fi
 done
 echo
 
@@ -315,5 +359,9 @@ if [ "$errors" = 0 ]; then
   echo "$line"
   exit 0
 fi
-echo "hooks: $errors ERROR$( [ "$errors" = 1 ] || echo S)"
+line="hooks: $errors ERROR$( [ "$errors" = 1 ] || echo S)"
+# Say which errors are only Jacob's step, so "N ERRORS" is never read as N
+# faults -- and never lets a real one hide among them.
+[ "$pending" = 0 ] || line="$line -- $((errors - pending)) real; $pending only settings.json not applied yet (Jacob's step: copy settings.proposed.json to settings.json in${pending_locs})"
+echo "$line"
 exit 1

@@ -136,7 +136,11 @@ sibling listed in `DECLARED` in `check-hooks.sh` (knowledge-base and application
 all.** A declared copy that is absent is an ERROR in the workspace (detected by
 the top level's `.claude/agents.manifest.json`) and is printed as `UNCHECKED`,
 and counted in the final line, on a standalone clone — never passed silently.
-A new tool folder holding the hooks must be added to `DECLARED`. Identical
+A new tool folder holding the hooks must be added to `DECLARED`. A folder with
+no `settings.json` but a `settings.proposed.json` that is fit to apply (valid,
+wires every twin there, each fails open) is still an ERROR, labelled
+`[not applied yet]` and counted apart in the final line: copying it is Jacob's
+step, never an agent's, and it is not drift. Identical
 copies can still enforce nothing, because each finds site-scrapers from its own
 folder (by `package.json` name — data-bridge also has `dev.sh` and `engine.js`),
 so the check also RUNS every `prefer-recipes.sh` copy on a covered host and
