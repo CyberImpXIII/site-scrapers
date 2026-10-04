@@ -24,7 +24,9 @@
   Placeholders substituted by the server: WALL, TOP_APPLY, SUBMIT_IN_FORM,
   SUBMIT_OUTSIDE_FORM (the submit control is built by server.js, so a test can
   vary its markup: typed, untyped inside the form, or form= outside it), and
-  CAPTCHA (?captcha=1 adds reCAPTCHA's response textarea, as its script does).
+  CAPTCHA (?captcha=1 adds reCAPTCHA's response textarea, as its script does),
+  and GROUPS (?groups=1 adds a multi-option checkbox question and a radio
+  question, in the live Greenhouse and Lever markup; see server.js).
 -->
 <html>
 <head>
@@ -126,6 +128,8 @@ and nothing entered here goes anywhere but a local test server that counts what 
   <div class="field"><label><input type="checkbox" id="question_2002[]" name="question_2002[]" value="1">
     I have read the fixture privacy notice</label></div>
 
+  <!--GROUPS-->
+
   <input type="text" id="website_hp" name="website_hp" style="display:none" autocomplete="off">
 
   <!--SUBMIT_IN_FORM-->
@@ -147,6 +151,13 @@ and nothing entered here goes anywhere but a local test server that counts what 
   function state() {
     var out = {};
     document.querySelectorAll('#application-form input, #application-form textarea, #application-form select').forEach(function (el) {
+      // Lever's options carry no id: keyed name=value instead, or name=label
+      // text where the option has no value attribute either (Lever checkboxes).
+      if (!el.id && (el.type === 'checkbox' || el.type === 'radio') && el.name) {
+        var key = el.getAttribute('value') || (el.closest('label') ? el.closest('label').textContent.trim() : '');
+        out[el.name + '=' + key] = el.checked;
+        return;
+      }
       if (!el.id) return;
       if (el.type === 'checkbox' || el.type === 'radio') out[el.id] = el.checked;
       else if (el.type === 'file') out[el.id] = Array.prototype.map.call(el.files || [], function (f) { return f.name; });

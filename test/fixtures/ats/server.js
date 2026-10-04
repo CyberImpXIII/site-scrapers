@@ -42,6 +42,32 @@ const ENTRIES = {
   none: '',
 };
 
+// ?groups=1: multi-option questions, in the two live shapes measured
+// 2026-10-03. Greenhouse (twitch/jobs/8623401002): a fieldset whose legend is
+// the question, aria-required on the fieldset, and `required` on EVERY option
+// although one ticked answers it; each option has an id and its own label.
+// Lever (palantir/ac978161...): options with NO id, sharing one name, each
+// wrapped in its label; the question is a sibling block marked with a "✱".
+// Lever's radios carry a value attribute; its checkboxes (a 33-option
+// language question) carry NONE, so nothing but position tells them apart.
+const GROUPS =
+  '<div class="field-wrapper"><fieldset class="checkbox" id="question_3003[]" aria-required="true">' +
+  '<legend>Which fixture platforms have you used?<span aria-hidden="true">*</span></legend>' +
+  ['Alpha', 'Beta', 'None']
+    .map((t, i) => `<div class="checkbox__wrapper"><div class="checkbox__input"><input required type="checkbox" id="question_3003[]_${i}" name="question_3003[]" value="${i}"></div><label for="question_3003[]_${i}">${t}</label></div>`)
+    .join('') +
+  '</fieldset></div>' +
+  '<ul><li class="application-question custom-question"><div>' +
+  '<div class="application-label">Are you authorized to work in Fixtureland?<span class="required">✱</span></div>' +
+  '<div class="application-field full-width required-field"><ul>' +
+  ['Yes', 'No'].map(t => `<li><label><input type="radio" name="cards[fx-0001][field0]" value="${t}" required="required">${t}</label></li>`).join('') +
+  '</ul></div></div></li>' +
+  '<li class="application-question custom-question"><div>' +
+  '<div class="application-label">Which fixture languages do you speak?<span class="required">✱</span></div>' +
+  '<div class="application-field full-width required-field"><ul>' +
+  ['Fixtish', 'Testese', 'Mockian'].map(t => `<li><label><input type="checkbox" name="cards[fx-0001][field1]" required="">${t}</label></li>`).join('') +
+  '</ul></div></div></li></ul>';
+
 // Submit controls, by ?submit=. Every one of these submits the form when
 // clicked, and the page counts it: typed, a <button> with no type INSIDE the
 // form (submit by default), and a <button form=...> OUTSIDE it (form-owned).
@@ -78,6 +104,7 @@ function render(ats, query) {
     .replace('<!--TOP_APPLY-->', topApply)
     .replace('<!--SUBMIT_IN_FORM-->', submit.inForm)
     .replace('<!--SUBMIT_OUTSIDE_FORM-->', submit.outside)
+    .replace('<!--GROUPS-->', query.get('groups') ? GROUPS : '')
     // ?captcha=1: the textarea reCAPTCHA's script injects, in its live shape
     // (per-widget id suffix, display:none). No widget, no network.
     .replace('<!--CAPTCHA-->', query.get('captcha')
@@ -151,4 +178,4 @@ function startAtsServer() {
   });
 }
 
-module.exports = { startAtsServer, ATS_FIXTURES, WALLS };
+module.exports = { startAtsServer, ATS_FIXTURES, WALLS, GROUPS };

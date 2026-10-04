@@ -90,6 +90,33 @@ Built: `fill_application_form` builtin + `job-boards.greenhouse.io#action:fill_a
 no upload). Contract `docs/fill-output.md`, gated by `test/fill.test.js` (offline
 fixture `test/fixtures/ats/`). Open:
 
+- **Multi-option questions are groups (DONE 2026-10-03, contract `/2`).** Reported by
+  the applications agent: Greenhouse twitch/jobs/8623401002 `question_37220519002[]`
+  described as 6 checkboxes, each `required:true`, no question text, so no answer
+  could make the packet ready. Confirmed live; Lever (palantir) was worse: id-less
+  options shared one `input[name=…]` selector, so `selector_not_unique` on every
+  option. Fixed in `lib/probes.js` (`group` {name, question, required, size};
+  option `required:false`; `hasValue` = checked; id-less options get a
+  value-qualified selector, else an `:nth-child` path), `lib/fillForm.js` (`requiredGroupsNotFilled`, group read from
+  the live page after the fill), `lib/formHash.js` (required hashed as field OR
+  group, so stored GREENHOUSE descriptions do not flip `formChanged`). Gated by
+  `test/option-groups.test.js` (both shapes in fixture `?groups=1`). Live after
+  the fix: twitch 59 fields, the question's 6 options grouped with its text,
+  formHash `c2094073540661d7` unchanged; Lever palantir 56 fields, 0 duplicate
+  selectors (was a 33-option language question on one selector), 4 groups with
+  their question text. Not yet run live: a FILL against either. Open:
+  (a) a stored LEVER description DOES flip formChanged (its option selectors
+  changed); that is correct -- those options could not be answered anyway --
+  but applications must re-describe; (b) the question text is found by
+  fieldset/legend, role=group, then a climb to the nearest non-option text: on
+  an unknown layout it may be `null` (honest) or, if two questions share an
+  ancestor with no other field between, take the wrong neighbour's text --
+  unmeasured beyond Greenhouse/Lever; (c) Ashby measured only with a single
+  checkbox, no group seen yet; (d) `requiredNotFilled` is capped at 50, and the
+  validator's "group options are also in requiredNotFilled" check would
+  misfire past that cap. **Reported to the coordinator**: applications reconciles
+  against `fill_application_form/1` and must re-run against `/2`.
+
 - **UNCONFIRMED SUSPICION: rolling screenshots break the Ashby entry click.** The 15s
   entry window (4124cda) fixed Lever: 5/5 live runs gave 56 fields. Ashby supabase
   with default `scrape.sh` still gave 0 fields on 5 of 16 runs (13 otherwise); with

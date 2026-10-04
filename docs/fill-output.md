@@ -1,7 +1,7 @@
 # `fill_application_form` — output contract
 
 For the `applications/` repo (and anything else) that calls the dry fill through
-`./scrape.sh`. Contract id: **`fill_application_form/1`**. The code that owns it
+`./scrape.sh`. Contract id: **`fill_application_form/2`**. The code that owns it
 is `lib/fillContract.js` (`validateFillResult` is exported — use it, or port it).
 `test/fill.test.js` fails if this page and the code disagree: the reason table
 below is parsed and compared with the code both ways, and both JSON examples
@@ -58,7 +58,7 @@ chosen options back.
 ```json
 {
   "kind": "fill",
-  "contract": "fill_application_form/1",
+  "contract": "fill_application_form/2",
   "status": "done",
   "error": null,
   "dryRun": true,
@@ -69,13 +69,18 @@ chosen options back.
   "formChanged": false,
   "navigatedDuringFill": false,
   "fields": [
-    { "index": 0, "selector": "#first_name", "label": "First Name*", "required": true, "control": "text", "outcome": "filled", "reason": null, "detail": null },
-    { "index": 1, "selector": "#country", "label": "Country*", "required": true, "control": "combobox", "outcome": "failed", "reason": "no_matching_option", "detail": "3 options offered, none matches exactly" },
-    { "index": 2, "selector": "input", "label": null, "required": true, "control": "text", "outcome": "unfilled", "reason": "not_user_fillable", "detail": "aria-hidden: part of a widget, not a question" },
-    { "index": 3, "selector": "#cover_letter_text", "label": "Cover Letter", "required": false, "control": "textarea", "outcome": "unfilled", "reason": "no_answer", "detail": null }
+    { "index": 0, "selector": "#first_name", "label": "First Name*", "required": true, "group": null, "control": "text", "outcome": "filled", "reason": null, "detail": null },
+    { "index": 1, "selector": "#country", "label": "Country*", "required": true, "group": null, "control": "combobox", "outcome": "failed", "reason": "no_matching_option", "detail": "3 options offered, none matches exactly" },
+    { "index": 2, "selector": "input", "label": null, "required": true, "group": null, "control": "text", "outcome": "unfilled", "reason": "not_user_fillable", "detail": "aria-hidden: part of a widget, not a question" },
+    { "index": 3, "selector": "#cover_letter_text", "label": "Cover Letter", "required": false, "group": null, "control": "textarea", "outcome": "unfilled", "reason": "no_answer", "detail": null },
+    { "index": 4, "selector": "#question_3003\\[\\]_0", "label": "Alpha", "required": false, "group": "question_3003[]", "control": null, "outcome": "unfilled", "reason": "no_answer", "detail": null },
+    { "index": 5, "selector": "#question_3003\\[\\]_1", "label": "Beta", "required": false, "group": "question_3003[]", "control": null, "outcome": "unfilled", "reason": "no_answer", "detail": null }
   ],
-  "counts": { "filled": 1, "failed": 1, "unfilled": 2, "total": 4 },
-  "requiredNotFilled": ["#country"],
+  "counts": { "filled": 1, "failed": 1, "unfilled": 4, "total": 6 },
+  "requiredNotFilled": ["#country", "#question_3003\\[\\]_0", "#question_3003\\[\\]_1"],
+  "requiredGroupsNotFilled": [
+    { "name": "question_3003[]", "question": "Which platforms have you used?*", "selectors": ["#question_3003\\[\\]_0", "#question_3003\\[\\]_1"] }
+  ],
   "undescribedFields": [],
   "unknownAnswerKeys": []
 }
@@ -91,13 +96,48 @@ chosen options back.
 | `formHash` | fingerprint of the live form when the fill started (`lib/formHash.js`, 16 hex) |
 | `descriptionHash` | the same fingerprint of the `fields` you passed |
 | `formChanged` | `formHash !== descriptionHash`: the form is not the one that was described. **Send the packet back to review** (PLAN §3.5). `null` if the live form could not be read. |
-| `requiredNotFilled` | selectors of required, person-fillable fields that did not end up `filled` |
+| `fields[].group` | the `group.name` of the multi-option question this field is one option of (see below), else `null` |
+| `requiredNotFilled` | selectors of required, person-fillable fields that did not end up `filled`, **plus every option of a required question with no option ticked**. Empty = nothing required is open. |
+| `requiredGroupsNotFilled` | each required multi-option question with no option ticked after the fill, once: `{name, question, selectors}` |
 | `undescribedFields` | live fields absent from your description (person-fillable only) |
 | `unknownAnswerKeys` | answer keys that match no described selector — usually a stale or hand-typed key |
 | `navigatedDuringFill` | `true` means something left the page; status is then `error`. Check by hand whether anything was sent. |
 
 The `describe_application_form` output now carries the same `formHash` on its
 `forms` diagnostic, so a packet can store it and compare without re-hashing.
+
+### Multi-option questions (new in `/2`)
+
+Checkboxes or radios sharing a `name`, two or more, are one QUESTION. In the
+description each option is its own field, `label` is the option's own text, and
+it carries `group`:
+
+```json
+{ "selector": "#question_3003\\[\\]_1", "type": "checkbox", "name": "question_3003[]", "label": "Beta",
+  "required": false, "hasValue": false,
+  "group": { "name": "question_3003[]", "question": "Which platforms have you used?*", "required": true, "requiredEvidence": "group aria-required", "size": 3 } }
+```
+
+- **The question text is `group.question`**, never in `label`. `null` if no
+  question text could be found near the options (say so; do not guess one).
+- **Required-ness is the group's.** An option's own `required` is `false`;
+  `group.required` says whether the question must be answered. (Greenhouse puts
+  `required` on every option, which read as "tick all of them".)
+- **Answer by choosing options**: `{ "<option selector>": true }` for each
+  option to tick. Ticking ANY one answers a required question. Options not
+  answered stay `unfilled`/`no_answer`, and that is fine.
+- `hasValue` on an option is whether it is ticked.
+- An option with no `id` (Lever) gets a selector qualified by its `value`
+  attribute (`input[name="cards[…][field0]"][value="Yes"]`), or, with no value
+  attribute either (Lever's checkboxes), by its position (an `:nth-child` path
+  still anchored on the name), so each option is answerable on its own.
+- `requiredCount` on the `forms` diagnostic counts a required question once.
+
+**A description stored under `/1`** has no `group`, and every Greenhouse option
+`required: true`. Its `formHash` still matches a live read (the hash reads
+`required` as "the field, or its question, is required"), so it is not flagged
+`formChanged` -- but the fill cannot know the options form one question and lists
+every unticked one in `requiredNotFilled`. **Re-describe** to get groups.
 
 **"Did it work" for verification** (`verify.js`, and a fair default for callers):
 `status == "done"`, `counts.filled > 0` and `counts.failed == 0`.
@@ -137,7 +177,7 @@ look": do not retry unattended.
 ```json
 {
   "kind": "fill",
-  "contract": "fill_application_form/1",
+  "contract": "fill_application_form/2",
   "status": "blocked-attn",
   "error": null,
   "dryRun": true,
@@ -152,10 +192,11 @@ look": do not retry unattended.
   "formChanged": null,
   "navigatedDuringFill": false,
   "fields": [
-    { "index": 0, "selector": "#first_name", "label": "First Name*", "required": true, "control": null, "outcome": "unfilled", "reason": "blocked_by_wall", "detail": null }
+    { "index": 0, "selector": "#first_name", "label": "First Name*", "required": true, "group": null, "control": null, "outcome": "unfilled", "reason": "blocked_by_wall", "detail": null }
   ],
   "counts": { "filled": 0, "failed": 0, "unfilled": 1, "total": 1 },
   "requiredNotFilled": ["#first_name"],
+  "requiredGroupsNotFilled": [],
   "undescribedFields": [],
   "unknownAnswerKeys": []
 }
