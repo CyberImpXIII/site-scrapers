@@ -340,6 +340,88 @@ test('check-hooks: DECLARED parses and names the knowledge-base copy', () => {
   assert.ok(SIBLINGS.includes('knowledge-base'), 'the knowledge-base copy must be declared');
   // deep-work's applications repo (2026-10-03) carries the three twins too.
   assert.ok(SIBLINGS.includes('applications'), 'the applications copy must be declared');
+  // 2026-10-03: addon-bench and tools/setup (a NESTED repo) carry the twins too.
+  assert.ok(SIBLINGS.includes('addon-bench'), 'the addon-bench copy must be declared');
+  assert.ok(SIBLINGS.includes('tools/setup'), 'the tools/setup copy must be declared');
+});
+
+// The copies added 2026-10-03, one flat and one nested: each must be able to
+// FAIL the check, or declaring it bought nothing.
+const NEW_COPIES = ['addon-bench', 'tools/setup'];
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+test('check-hooks: a DRIFTED addon-bench or tools/setup copy fails and is named', () => {
+  for (const loc of NEW_COPIES) {
+    for (const name of TWINS) {
+      const fx = hookFixture({ workspace: true });
+      try {
+        fs.appendFileSync(path.join(fx.root, loc, '.claude', 'hooks', name), 'echo drifted\n');
+        const { status, out } = fx.run();
+        assert.equal(status, 1, `${loc}/${name}:\n${out}`);
+        assert.match(out, new RegExp(`${reEsc(name)} has DRIFTED`));
+        assert.match(out, new RegExp(`${reEsc(loc)}/\\.claude/hooks/${reEsc(name)}`));
+      } finally { fx.cleanup(); }
+    }
+  }
+});
+
+test('check-hooks: a twin missing from addon-bench or tools/setup fails', () => {
+  for (const loc of NEW_COPIES) {
+    const fx = hookFixture({ workspace: true });
+    try {
+      fs.rmSync(path.join(fx.root, loc, '.claude', 'hooks', 'prefer-recipes.sh'));
+      const { status, out } = fx.run();
+      assert.equal(status, 1, out);
+      assert.match(out, new RegExp(`ERROR\\s+prefer-recipes\\.sh is missing from: ${reEsc(loc)}/\\.claude/hooks`));
+    } finally { fx.cleanup(); }
+  }
+});
+
+// A declared location is checked wherever it is. Discovery stops at depth 4
+// below the tools folder; a declared copy deeper than that used to read "ok"
+// in section 0 (its directory exists) while nothing compared, probed or synced
+// it. The fixture's check-hooks.sh copy gets one extra, deep DECLARED entry.
+function withDeepDeclared(fx, deep) {
+  const f = path.join(fx.repo, 'check-hooks.sh');
+  const src = fs.readFileSync(f, 'utf8');
+  const patched = src.replace(/^DECLARED="([^"]*)"/m, (_, l) => `DECLARED="${l} ${deep}"`);
+  assert.notEqual(patched, src, 'could not patch DECLARED in the fixture copy');
+  fs.writeFileSync(f, patched);
+  for (const n of TWINS) fx.script(path.join(fx.root, deep, '.claude', 'hooks'), n);
+  fs.writeFileSync(path.join(fx.root, deep, '.claude', 'settings.json'), JSON.stringify({ hooks: {
+    PreToolUse: [{ matcher: 'Bash', hooks: TWINS.map(hookCmd) }],
+  } }));
+}
+
+test('check-hooks: a declared copy deeper than discovery reaches is still compared, and its drift fails', () => {
+  const deep = 'a/b/c/deeptool';
+  const fx = hookFixture({ workspace: true });
+  try {
+    withDeepDeclared(fx, deep);
+    let { status, out } = fx.run();
+    assert.equal(status, 0, out);
+    // top level + this repo + every sibling + the deep one
+    assert.match(out, new RegExp(`prefer-recipes\\.sh \\(${SIBLINGS.length + 3} copies\\)`), out);
+    fs.appendFileSync(path.join(fx.root, deep, '.claude', 'hooks', 'troubleshooting.sh'), 'echo drifted\n');
+    ({ status, out } = fx.run());
+    assert.equal(status, 1, out);
+    assert.match(out, new RegExp(`${reEsc(deep)}/\\.claude/hooks/troubleshooting\\.sh`));
+  } finally { fx.cleanup(); }
+});
+
+test('check-hooks --sync reaches a declared copy deeper than discovery, and only the set it checks', () => {
+  const deep = 'a/b/c/deeptool';
+  const fx = hookFixture({ workspace: true });
+  try {
+    withDeepDeclared(fx, deep);
+    const target = path.join(fx.root, deep, '.claude', 'hooks', 'troubleshooting.sh');
+    fs.appendFileSync(target, 'echo drifted\n');
+    const r = require('node:child_process').spawnSync('bash', [path.join(fx.repo, 'check-hooks.sh'), '--sync'], { encoding: 'utf8' });
+    const out = `${r.stdout || ''}${r.stderr || ''}`;
+    assert.match(out, new RegExp(`synced troubleshooting\\.sh -> ${reEsc(deep)}/\\.claude/hooks`), out);
+    assert.equal(fs.readFileSync(target, 'utf8'), fs.readFileSync(path.join(fx.repo, '.claude', 'hooks', 'troubleshooting.sh'), 'utf8'));
+    assert.equal(r.status, 0, out);
+  } finally { fx.cleanup(); }
 });
 
 test('check-hooks: a full workspace is clean and counts every declared copy', () => {
@@ -431,13 +513,20 @@ test('check-hooks: one hook missing from knowledge-base fails', () => {
 test('check-hooks: the WHOLE knowledge-base or applications hook folder gone is reported, not skipped', () => {
   // The case discovery alone missed: the remaining copies agree, so before
   // DECLARED this printed "clean" with one copy fewer.
-  for (const gone of [['knowledge-base', '.claude', 'hooks'], ['knowledge-base'], ['applications', '.claude', 'hooks'], ['applications']]) {
+  // [path removed, the declared location it takes away]
+  const cases = [
+    [['knowledge-base', '.claude', 'hooks'], 'knowledge-base'], [['knowledge-base'], 'knowledge-base'],
+    [['applications', '.claude', 'hooks'], 'applications'], [['applications'], 'applications'],
+    [['addon-bench', '.claude', 'hooks'], 'addon-bench'], [['addon-bench'], 'addon-bench'],
+    [['tools', 'setup', '.claude', 'hooks'], 'tools/setup'], [['tools', 'setup'], 'tools/setup'], [['tools'], 'tools/setup'],
+  ];
+  for (const [gone, loc] of cases) {
     const fx = hookFixture({ workspace: true });
     try {
       fs.rmSync(path.join(fx.root, ...gone), { recursive: true });
       const { status, out } = fx.run();
       assert.equal(status, 1, `removing ${gone.join('/')}:\n${out}`);
-      assert.match(out, new RegExp(`ERROR\\s+${gone[0]}/\\.claude/hooks is DECLARED but absent`));
+      assert.match(out, new RegExp(`ERROR\\s+${loc.replace('/', '\\/')}/\\.claude/hooks is DECLARED but absent`));
       assert.doesNotMatch(out, /hooks: clean/);
     } finally { fx.cleanup(); }
   }

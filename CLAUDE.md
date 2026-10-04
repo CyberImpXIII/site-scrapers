@@ -343,7 +343,9 @@ The shared rules here (the TODO, report-to-owner and gate-the-seams sections,
 and the absolute constraints) also live in `../CLAUDE.md`,
 `../emailTools/CLAUDE.md`, `../scriptingTools/chronjobScheduler/CLAUDE.md`,
 `../scriptingTools/data-bridge/CLAUDE.md`, `../scripts/CLAUDE.md`,
-`../knowledge-base/CLAUDE.md` and `../applications/CLAUDE.md`. Each repo carries
+`../knowledge-base/CLAUDE.md`, `../applications/CLAUDE.md`,
+`../addon-bench/CLAUDE.md` and `../tools/setup/CLAUDE.md` (whose shared block is
+generated from `tools/setup/templates/shared-rules.md`). Each repo carries
 its own copy because a fresh clone won't have the parent file. **Change a shared
 rule in the copies you own, and ask the owner for the ones you don't** — and say
 which copies you updated and which you asked for. `test/rules-sync.test.js`

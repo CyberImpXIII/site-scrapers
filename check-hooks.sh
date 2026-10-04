@@ -58,9 +58,29 @@ unchecked=0
 #     claim coverage it does not have.
 # And the reverse direction: a location found holding a twinned hook but not
 # declared is an ERROR in the workspace (add it here), a note standalone.
-DECLARED=". applications emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge"
+#
+# A location may be nested (tools/setup is a repo two levels down). Declared
+# locations are checked wherever they are, not only as deep as discovery looks:
+# see all_locations below.
+DECLARED=". addon-bench applications emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/setup"
 WORKSPACE_MARKER=".claude/agents.manifest.json"
 if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone; fi
+
+declared_dir() { if [ "$1" = . ]; then printf '%s\n' "$TOOLS/.claude/hooks"; else printf '%s\n' "$TOOLS/$1/.claude/hooks"; fi; }
+
+# Every .claude/hooks directory to check: what `find` discovers (depth 4 reaches
+# scriptingTools/chronjobScheduler and tools/setup) UNION every declared
+# location that exists, at any depth, UNION this repo. Discovery alone had a
+# depth horizon: a declared copy one level deeper than it looked would have
+# been reported "ok" by section 0 (the directory exists) and then compared,
+# synced and probed by nothing. Used by --sync and by every section below, so
+# the set synced is the set checked.
+all_locations() {
+  { find "$TOOLS" -maxdepth 4 -type d -path "*/.claude/hooks" -not -path "*/node_modules/*" 2>/dev/null
+    for loc in $DECLARED; do d="$(declared_dir "$loc")"; [ -d "$d" ] && printf '%s\n' "$d"; done
+    [ -d "$REPO/.claude/hooks" ] && printf '%s\n' "$REPO/.claude/hooks"
+  } | sort -u
+}
 
 # --sync copies this repo's hooks over every other location, because that chore
 # recurs on every hook change and was already got wrong once: the find_repo fix
@@ -70,7 +90,7 @@ if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone;
 # settings.json is a deliberate act, and the check below reports it if missing.
 if [ "${1:-}" = "--sync" ]; then
   synced=0
-  for d in $(find "$TOOLS" -maxdepth 4 -type d -path "*/.claude/hooks" -not -path "*/node_modules/*" 2>/dev/null | sort); do
+  for d in $(all_locations); do
     [ "$d" = "$REPO/.claude/hooks" ] && continue
     for f in "$REPO"/.claude/hooks/*.sh; do
       name="$(basename "$f")"
@@ -103,9 +123,8 @@ wired_scripts() {
     | sed -n 's#.*\.claude/hooks/\([^[:space:]]*\).*#\1#p' | sort -u
 }
 
-# Every .claude/hooks directory in the tools folder, this repo included. Depth 3
-# covers a nested repo such as scriptingTools/chronjobScheduler.
-locations=$(find "$TOOLS" -maxdepth 4 -type d -path "*/.claude/hooks" -not -path "*/node_modules/*" 2>/dev/null | sort)
+# Every .claude/hooks directory in the tools folder, this repo included.
+locations=$(all_locations)
 [ -n "$locations" ] || locations="$REPO/.claude/hooks"
 
 echo "hook locations:"
@@ -115,8 +134,7 @@ echo
 # --- 0. Declared locations: present, or said out loud ------------------------
 echo "declared locations ($mode -- marker $WORKSPACE_MARKER $( [ "$mode" = workspace ] && echo present || echo absent)):"
 for loc in $DECLARED; do
-  if [ "$loc" = . ]; then d="$TOOLS/.claude/hooks"; label=".claude/hooks"
-  else d="$TOOLS/$loc/.claude/hooks"; label="$loc/.claude/hooks"; fi
+  d="$(declared_dir "$loc")"; label="${d#$TOOLS/}"
   if [ -d "$d" ]; then
     ok "$label"
   elif [ "$mode" = workspace ]; then

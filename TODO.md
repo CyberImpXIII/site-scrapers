@@ -143,11 +143,24 @@ fixture `test/fixtures/ats/`). Open:
   Lever palantir 56, Ashby supabase 13/13/13, all `working`; offline audit clean.
   Approval note: the coordinator relayed Jacob's "and 0-field fix"; it was not in
   the quoted "Jacob's words" this session received.
-- **REPORTED to the dispatcher 2026-10-03, not fixed: `./dev.sh check` hooks section
-  shows 2 ERRORS** -- `addon-bench/.claude/hooks` and `tools/setup/.claude/hooks` hold
-  the twinned hooks but are not in `DECLARED` (check-hooks.sh). Both folders are new
-  and not ours; whoever created them decides whether they are permanent tool folders
-  (then add to DECLARED) or should not carry the hooks.
+- **addon-bench and tools/setup hook copies: DECLARED 2026-10-03** (check-hooks.sh,
+  gated in test/hooks.test.js: drift, a missing twin, and the whole folder gone each
+  fail for both). Declared locations are now checked at ANY depth (`all_locations`:
+  find depth 4 UNION every declared dir), and `--sync` uses the same set. All 10
+  copies logic-identical; every copy's own test-*.sh passes from addon-bench and
+  tools/setup. Both CLAUDE.md copies added to the rules-sync list (the top level
+  had added them during the same session). Still open, NOT ours:
+  (a) the brief said knowledge-base has "its own check-hooks.sh with the same
+  DECLARED list" -- it has none (`grep -rn DECLARED knowledge-base` is empty; its
+  `./dev.sh hooks` checks only its own folder). Its `./dev.sh sync` compares its
+  CLAUDE.md list to the top level's, so it now needs `../addon-bench/CLAUDE.md` and
+  `../tools/setup/CLAUDE.md`. Reported via the dispatcher 2026-10-03.
+  (b) unverified, observed by heading grep only: `emailTools/CLAUDE.md` has no
+  "## Report a problem in someone else's code" heading, and
+  `scriptingTools/data-bridge` and `scripts` have no "## Gate the seams" heading;
+  they may carry the rule under another heading. Settle: read each file's
+  sections. The rules-sync test checks the LIST only, not that each copy carries
+  the shared sections.
 - **register.js builtin edits now export before the gate's tests** (the test
   subprocesses re-seed from the file, so they were judging the OLD version). Gated
   only by the open_apply_form edit that exposed it (3 failures before, 92/0 after);
@@ -514,6 +527,12 @@ before trusting or extending this.
   Prose belongs to the dispatcher; reported in the 2026-10-02 handback.
   Now **seven** with `knowledge-base` (2026-10-02), all declared in
   `DECLARED` in `check-hooks.sh`; the top-level prose still needs the count.
+  **Ten** as of 2026-10-03 (+ applications, addon-bench, tools/setup).
+- `addon-bench/candidates/graphify/work/src/emailTools/.claude/hooks` holds a
+  fourth-level copy of the twins (a benchmark's work tree, depth 7). Discovery
+  does not reach it and it is not declared, on purpose: it is a fixture, not a
+  tool folder. If addon-bench ever runs a session from there, its hooks are
+  unchecked.
 
 **Added 2026-10-02 (hooks resolved the wrong repo; browser-ok race) -- OPEN until synced:**
 - Two looser identity rules failed in turn. "Any dev.sh" (tests) took
