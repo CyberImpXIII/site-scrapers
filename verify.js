@@ -19,6 +19,10 @@
 //   real records extracted        -> working
 //   ran, but produced nothing     -> broken, with the debugDir to read
 //
+// What counts as a record depends on the recipe: a fill_form run counts the
+// answers that landed (lib/fillContract.js), a describe_form recipe the fields
+// it described (lib/describeVerdict.js), anything else its records/article.
+//
 // Verification is per-DEFINITION, not per-recipe. Edit a working recipe and
 // it needs re-verifying, because the thing that passed no longer exists.
 // Promoting does not invalidate it: promoteVersion copies the definition
@@ -47,6 +51,7 @@ const {
 } = require('./db');
 const { decideVerdict } = require('./lib/verdict');
 const { verdictInputsFromFill } = require('./lib/fillContract');
+const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
 const { authorizeAsync } = require('./lib/writeGuard');
 
 const REPO_ROOT = __dirname;
@@ -126,12 +131,18 @@ async function main() {
   // A fill_form action is judged on its fill (lib/fillContract.js): a field
   // count from a run where nothing failed. The page loading is not evidence
   // that a single answer landed, and `article` is dropped from a fill's output.
+  // A describe_form action is judged on the fields it described
+  // (lib/describeVerdict.js): `article` is the posting page's text whether or
+  // not the form was ever reached, so it says nothing about a describe.
   const fillVerdict = verdictInputsFromFill(result.fill);
+  const describeVerdict = fillVerdict ? null : verdictInputsFromDescribe(site.action_type, result.diagnostics);
   const count = fillVerdict
     ? fillVerdict.extracted
       ? result.fill.counts.filled
       : 0
-    : result.count ?? (result.article ? 1 : 0);
+    : describeVerdict
+      ? describeVerdict.fields
+      : result.count ?? (result.article ? 1 : 0);
   const extracted = count > 0;
 
   // Zero records is ambiguous, and treating it as failure demoted a
@@ -228,6 +239,7 @@ async function main() {
     failureContext: result.failureContext ?? null,
     debugDir: result.debugDir ?? null,
     previousStatus: site.status,
+    ...(describeVerdict ? { describe: { fields: describeVerdict.fields, url: result.url ?? null } } : {}),
     ...(result.fill
       ? {
           fill: {

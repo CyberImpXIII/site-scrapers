@@ -86,6 +86,14 @@ function render(ats, query) {
   return html;
 }
 
+// /posting: a job posting with NO form -- what describe reads when the entry
+// click misses (Lever and Ashby, 2026-10-03). Plenty of text, an Apply link,
+// zero form fields; the shape that let a describe stay `working` on nothing.
+const POSTING_HTML =
+  '<!doctype html><html><head><meta charset="utf-8"><title>Fixture Engineer</title></head><body>' +
+  '<h1>Fixture Engineer</h1><p>About the role: build test fixtures. This page is a posting, not an application form.</p>' +
+  '<ul><li>Remote</li><li>Full time</li></ul><a href="#" id="top-apply" data-entry>Apply for this job</a></body></html>';
+
 function startAtsServer() {
   // entryClick is NOT a submit: it counts clicks on the data-entry control.
   const counters = { submitClick: 0, submitEvent: 0, enterKey: 0, applyPost: 0, entryClick: 0 };
@@ -114,7 +122,7 @@ function startAtsServer() {
         return;
       }
       const m = u.pathname.match(/^\/([a-z]+)\/form$/);
-      const html = m ? render(m[1], u.searchParams) : null;
+      const html = m ? render(m[1], u.searchParams) : u.pathname === '/posting' ? POSTING_HTML : null;
       if (!html) {
         res.statusCode = 404;
         res.end('not found');
@@ -129,6 +137,7 @@ function startAtsServer() {
       const base = `http://127.0.0.1:${server.address().port}`;
       resolve({
         url: (ats, query = '') => `${base}/${ats}/form${query ? `?${query}` : ''}`,
+        postingUrl: () => `${base}/posting`,
         counters,
         submits: () => counters.submitClick + counters.submitEvent + counters.enterKey + counters.applyPost,
         state: () => lastState,

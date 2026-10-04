@@ -74,6 +74,7 @@ const logRun = (db, run) =>
   authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run && run.params ? { ...run, params: redactRunParams(run.params) } : run));
 const { fillForm } = require('./lib/fillForm');
 const { redactRunParams, verdictInputsFromFill } = require('./lib/fillContract');
+const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
@@ -1115,6 +1116,7 @@ async function main() {
       debugDir: articleOutcome.debugDir ?? null,
     };
     const outputJson = JSON.stringify(output);
+    const describeVerdict = fill ? null : verdictInputsFromDescribe(site.action_type, output.diagnostics);
 
     logRun(db, {
       siteId: site.id,
@@ -1124,7 +1126,14 @@ async function main() {
       // where none failed, the same bar verify.js applies (verdictInputsFromFill).
       // This count feeds definitionHasPassingRun, so a run that filled nothing
       // must not read as a passing one.
-      resultCount: fill ? (verdictInputsFromFill(fill).extracted ? fill.counts.filled : 0) : success ? 1 : 0,
+      // For a describe_form recipe a result is a described field, the same bar
+      // verify.js applies (lib/describeVerdict.js): a run that read the posting
+      // page and found no form must not read as a passing one either.
+      resultCount: fill
+        ? verdictInputsFromFill(fill).extracted ? fill.counts.filled : 0
+        : describeVerdict
+          ? (success ? describeVerdict.fields : 0)
+          : success ? 1 : 0,
       timedOut: articleOutcome.timedOut,
       durationMs: Date.now() - startedAt,
       versionId, versionLabel,

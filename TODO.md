@@ -90,16 +90,37 @@ Built: `fill_application_form` builtin + `job-boards.greenhouse.io#action:fill_a
 no upload). Contract `docs/fill-output.md`, gated by `test/fill.test.js` (offline
 fixture `test/fixtures/ats/`). Open:
 
-- **The `open_apply_form` entry click waits only 5s** (`stop_if_missing` default) after
-  a 2s settle. Measured 2026-10-03 on a live Lever posting (x64 node under Rosetta):
-  the Apply link appeared 4.5-4.9s into that window on 2 runs and missed it on 1. A
-  miss is SILENT: the step is optional, so describe runs on the posting page and
-  returns 0 fields with `success:true`. Consider `timeout: 15000` on that click
-  (wall clock is not a cost), verified live on Lever and Ashby after.
-- **A describe that finds 0 fields still reports `success:true`.** That is how the
-  dead `default_selector` (fixed 2026-10-03, engine.js) hid: Lever and Ashby
-  `#action:describe_application_form` stayed `working` while describing the posting
-  page instead of the form. Wanted: 0 form fields = not extracted, for verify.js.
+- **UNCONFIRMED SUSPICION: rolling screenshots break the Ashby entry click.** The 15s
+  entry window (4124cda) fixed Lever: 5/5 live runs gave 56 fields. Ashby supabase
+  with default `scrape.sh` still gave 0 fields on 5 of 16 runs (13 otherwise); with
+  `rollingFrames:0` 13/13 gave 13, and a trace script without rolling capture 5/5.
+  The failing runs were FAST (18-21s vs 25-42s) and stayed on the posting URL: the
+  button was present and clicked, nothing opened. Suspect `lib/debug.js`
+  `startRollingCapture` (`page.screenshot` every 2s, maybe a re-layout under
+  Rosetta) racing Ashby's client-side click handler. Probe that settles it: 20 runs
+  each of `{"rollingFrames":0}` vs default, interleaved, alone on the machine. If
+  confirmed, decide whether rolling capture should pause around a click step. Since
+  2026-10-03 such a run reports `broken`/`inconclusive` under verify.js instead of
+  `working` (lib/describeVerdict.js), so it is no longer silent there.
+- **describe 0-field verdict (DONE 2026-10-03, lib/describeVerdict.js).** A recipe typed
+  `describe_form` is judged on described fields, in verify.js AND the engine's
+  logged `result_count`. Limits left open: (a) keyed on the declared action_type, so
+  a describer typed otherwise escapes it -- gated by `test/describe-verdict.test.js`
+  over the stored recipes; (b) ">= 1 field" is a floor -- a posting page carrying a
+  newsletter form would pass; (c) OLD `scrape_runs` rows from 0-field describes still
+  carry result_count 1, so `definitionHasPassingRun` stays true for those definitions
+  and a 0-field verify reads `inconclusive`, not `broken`, until the definition
+  changes. Telemetry is not rewritten. (d) a describe that hits a wall reports no
+  wall: 0 fields leaves no debugDir capture for verify.js to read.
+  No flips: live `verify.js --dry` after the change gave Greenhouse twitch 59 fields,
+  Lever palantir 56, Ashby supabase 13/13/13, all `working`; offline audit clean.
+  Approval note: the coordinator relayed Jacob's "and 0-field fix"; it was not in
+  the quoted "Jacob's words" this session received.
+- **REPORTED to the dispatcher 2026-10-03, not fixed: `./dev.sh check` hooks section
+  shows 2 ERRORS** -- `addon-bench/.claude/hooks` and `tools/setup/.claude/hooks` hold
+  the twinned hooks but are not in `DECLARED` (check-hooks.sh). Both folders are new
+  and not ours; whoever created them decides whether they are permanent tool folders
+  (then add to DECLARED) or should not carry the hooks.
 - **register.js builtin edits now export before the gate's tests** (the test
   subprocesses re-seed from the file, so they were judging the OLD version). Gated
   only by the open_apply_form edit that exposed it (3 failures before, 92/0 after);

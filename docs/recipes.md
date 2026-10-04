@@ -174,7 +174,10 @@ posting to the point where its form is on screen (dismiss overlay →
 optional Apply click → wait → dismiss again), and `describe_form` reports
 every field with selector, type, label and whether it is required. Together
 they hand you a structured form description to decide what to enter.
-Verified against real Greenhouse, Lever and Ashby postings, whose recipes
+Give such a recipe `action_type: "describe_form"`: verify.js then judges it on
+the fields it described, so a run that never got past the posting page (0
+fields) is not `working` -- judged on page text, Lever and Ashby stayed
+`working` while describing nothing (`lib/describeVerdict.js`). Verified against real Greenhouse, Lever and Ashby postings, whose recipes
 are now byte-identical 3-step definitions. **Neither action fills or submits
 anything.** Applications are prepare-then-confirm (CLAUDE.md, Absolute
 constraints): an agent may fill the form, upload documents and answer the
