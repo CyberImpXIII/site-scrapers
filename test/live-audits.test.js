@@ -319,6 +319,69 @@ test('a hardcoded value that merely filters is reported as ok, never as a defect
   assert.equal(f.recordsWithout, 25);
 });
 
+// TODO.md 0d / 0g: counts cannot tell an ignored filter from a working one.
+const recs = (prefix, n, track = '') =>
+  Array.from({ length: n }, (_, i) => ({ title: `${prefix} ${i}`, href: `https://liveaudit.test/jobs/${prefix}-${i}?trackingId=${track}${i}` }));
+
+test('a hardcoded filter the site IGNORES (same records without it) is filter_ignored', async () => {
+  // linkedin's f_WT=2: 60 cards with it, 60 without, the SAME 60 -- the
+  // count-only audit called that an ok filter. Tracking ids differ per run
+  // (as linkedin's do) and must not hide the sameness.
+  const target = fixture('f_ignored', {
+    nav_template: 'https://liveaudit.test/jobs?k={{q}}&f_WT=2',
+    nav_params_schema: '{"q":"keywords"}',
+    param_probe_values: JSON.stringify([{ q: 'nurse' }]),
+  });
+  let n = 0;
+  const findings = await auditFixedParams(db, {
+    run: async t => (t === target ? { records: recs('nurse', 60, `r${n++}-`) } : { count: 10 }),
+  });
+  const f = find(findings, target);
+  assert.ok(f);
+  assert.equal(f.result, 'filter_ignored');
+  assert.equal(f.severity, 'warn');
+  assert.equal(f.recordsWith, 60);
+  assert.equal(f.recordsWithout, 60);
+});
+
+test('a hardcoded filter that changes WHICH records come back at the same count is ok, by identity', async () => {
+  // dice's Remote filter: 34 vs 33, filtering correctly.
+  const target = fixture('f_same_count', {
+    nav_template: 'https://liveaudit.test/jobs?k={{q}}&remote=1',
+    nav_params_schema: '{"q":"keywords"}',
+    param_probe_values: JSON.stringify([{ q: 'nurse' }]),
+  });
+  const findings = await auditFixedParams(db, {
+    run: async t => (t === target ? { records: recs(/remote=1/.test(templateOf(t)) ? 'remote' : 'any', 60) } : { count: 10 }),
+  });
+  const f = find(findings, target);
+  assert.equal(f.severity, 'ok');
+  assert.equal(f.identity, 'differs');
+});
+
+test('a site that rotates results run to run is INCONCLUSIVE, not ignored and not ok', async () => {
+  const target = fixture('f_rotating', {
+    nav_template: 'https://liveaudit.test/jobs?k={{q}}&remote=1',
+    nav_params_schema: '{"q":"keywords"}',
+    param_probe_values: JSON.stringify([{ q: 'nurse' }]),
+  });
+  let n = 0;
+  const findings = await auditFixedParams(db, {
+    run: async t => (t === target ? { records: recs(`batch${n++}`, 20) } : { count: 10 }),
+  });
+  const f = find(findings, target);
+  assert.equal(f.result, 'INCONCLUSIVE');
+  assert.equal(f.severity, 'warn');
+});
+
+test('recordIdentities drops per-run tracking but keeps distinct postings apart', () => {
+  const { recordIdentities, sameRecords } = require('../lib/outputShape');
+  assert.ok(!sameRecords(['a', 'b'], ['b', 'a']), 'order is part of the identity: a sort param changes order only');
+  const a = recordIdentities({ records: [{ title: 'A', href: 'https://x.test/j/1?trk=9' }, { title: 'B', href: 'https://x.test/j/1?trk=9' }, {}] });
+  assert.deepEqual(a, ['https://x.test/j/1|A', 'https://x.test/j/1|B'], 'same path, different title: two postings; no href or title: skipped');
+  assert.deepEqual(recordIdentities({ count: 5 }), [], 'a count is not an identity');
+});
+
 test('a recipe the audit could NOT exercise is absent, not silently ok', async () => {
   // The other half of making the output readable: "ok" has to mean checked.
   // A recipe with no probe values cannot be run, so it must not appear at all

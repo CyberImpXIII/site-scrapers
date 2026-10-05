@@ -86,7 +86,11 @@ which returned 0 records where removing it returned 25 — and it survived a
 full investigation that ruled out selectors, walls and rendering before a
 human simply looked at the page and said the search had no results. The audit
 runs each recipe with and without each hardcoded value and flags any whose
-removal unlocks results.
+removal unlocks results. Since 2026-10-04 it also compares record IDENTITY
+(href path + title; tracking query strings dropped): the same records with and
+without the value is `filter_ignored` (linkedin's `f_WT=2` returned the same 60
+cards both ways, a count read as fine), and a site whose two runs as written
+already differ is `INCONCLUSIVE` rather than either verdict.
 
 For `action` recipes specifically, prefer keeping them within the small
 `action_types` taxonomy (`node query.js action-types`) rather than inventing

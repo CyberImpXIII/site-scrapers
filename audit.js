@@ -37,7 +37,7 @@ process.removeAllListeners('warning');
 
 const { openDb, listSites, getSite, listGenericActions } = require('./db');
 const { expandSteps, refKey, applyWith } = require('./lib/composeActions');
-const { recordsOf, countOf } = require('./lib/outputShape');
+const { countOf, recordIdentities, sameRecords } = require('./lib/outputShape');
 
 const MIN_SEQUENCE = 2;   // a single shared step is not worth extracting
 const MIN_RECIPES = 2;    // "reused" means more than one caller
@@ -715,13 +715,14 @@ async function auditParameters(db, { run = defaultRunner() } = {}) {
     }
 
     const [ra, rb] = [await run(target, probes[0]), await run(target, probes[1])];
-    const ids = r => JSON.stringify(recordsOf(r).map(j => j.href ?? j.title ?? '').slice(0, 25));
+    // One identity (lib/outputShape.js): tracking query strings dropped, order kept.
+    const ids = r => recordIdentities(r).slice(0, 25);
     // Counted through countOf, which handles the article case `r.count` alone
     // misses — see lib/outputShape.js. Reading `count` here made every article
     // recipe look like it returned nothing on both runs.
     const n = countOf;
     const bothEmpty = n(ra) === 0 && n(rb) === 0;
-    const identical = ids(ra) === ids(rb);
+    const identical = sameRecords(ids(ra), ids(rb));
     // Two probe values that LANDED ON THE SAME PAGE say nothing about the
     // parameter — the parameter was honoured, the values were synonyms. `url`
     // is the final URL after redirects, so this is visible for free.
@@ -857,14 +858,20 @@ async function auditWorking(db, { run = defaultRunner() } = {}) {
 // is a defect. The threshold is "the recipe returned nothing and removing it
 // returned something", plus a large-increase case, so an ordinary filter does
 // not get reported.
+//
+// It also compares record IDENTITY (TODO.md 0d, 2026-10-04): a filter that
+// changes WHICH records come back without changing how many passes a count
+// blind (dice: 34 vs 33, filtering correctly), and one the site IGNORES
+// returns the page size both ways (linkedin f_WT=2: 60 vs 60, removed in
+// 30ab828). Same records in the same order with and without the value =
+// `filter_ignored` (identity: lib/outputShape.js recordIdentities). A
+// second run as written is the noise floor: a site that rotates results run
+// to run cannot show either, and says so rather than guess.
 async function auditFixedParams(db, { run = defaultRunner() } = {}) {
-  const countFor = async (target, params) => {
+  const runFor = async (target, params) => {
     const r = await run(target, params);
-    // Through countOf for the same reason auditParameters is: `count` is 0 on
-    // an article run that extracted its one record.
-    return r && typeof r === 'object' ? countOf(r) : null;
+    return r && typeof r === 'object' ? r : null;
   };
-
 
   const findings = [];
   for (const { site, target } of eachRecipe(db, s => ['working', 'needs-review', 'broken'].includes(s.status))) {
@@ -881,8 +888,15 @@ async function auditFixedParams(db, { run = defaultRunner() } = {}) {
     const params = (Array.isArray(probes) && probes[0]) || {};
     if (unfillablePlaceholders(site.nav_template, params).length) continue; // cannot exercise it
 
-    const baseline = await countFor(target, params);
-    if (baseline === null) continue;
+    const baseRun = await runFor(target, params);
+    if (baseRun === null) continue;
+    // Through countOf for the same reason auditParameters is: `count` is 0 on
+    // an article run that extracted its one record.
+    const baseline = countOf(baseRun);
+    const baseIds = recordIdentities(baseRun);
+    // The noise floor, only when identity is available to compare at all.
+    const againIds = baseIds.length ? recordIdentities((await runFor(target, params)) || {}) : [];
+    const stable = baseIds.length > 0 && sameRecords(baseIds, againIds);
 
     for (const p of fixed) {
       const original = site.nav_template;
@@ -891,16 +905,43 @@ async function auditFixedParams(db, { run = defaultRunner() } = {}) {
       // Swap the template in place for one run, then always restore it — a
       // crash here must not leave a recipe silently rewritten.
       db.prepare('UPDATE sites SET nav_template = ? WHERE id = ?').run(stripped, site.id);
-      let without = null;
+      let withoutRun = null;
       try {
-        without = await countFor(target, params);
+        withoutRun = await runFor(target, params);
       } finally {
         db.prepare('UPDATE sites SET nav_template = ? WHERE id = ?').run(original, site.id);
       }
-      if (without === null) continue;
+      if (withoutRun === null) continue;
+      const without = countOf(withoutRun);
+      const withoutIds = recordIdentities(withoutRun);
 
       const unlocks = baseline === 0 && without > 0;
       const bigIncrease = baseline > 0 && without >= baseline * 3;
+      const identityKnown = baseIds.length > 0 && withoutIds.length > 0;
+      if (!unlocks && !bigIncrease && identityKnown && !stable) {
+        findings.push({
+          recipe: target,
+          param: `${p.key}=${p.value}`,
+          recordsWith: baseline,
+          recordsWithout: without,
+          severity: 'warn',
+          result: 'INCONCLUSIVE',
+          why: 'two runs AS WRITTEN returned different records, so a with/without comparison cannot say whether this value filters anything. Not evidence either way.',
+        });
+        continue;
+      }
+      if (!unlocks && !bigIncrease && identityKnown && sameRecords(baseIds, withoutIds)) {
+        findings.push({
+          recipe: target,
+          param: `${p.key}=${p.value}`,
+          recordsWith: baseline,
+          recordsWithout: without,
+          severity: 'warn',
+          result: 'filter_ignored',
+          why: `removing this hardcoded parameter returns the SAME ${baseIds.length} records: the site ignores it, OR it equals what the site does anyway for this run (a location matching this machine's region reads the same way). Either way it filters nothing here. If it is meant as a filter, drop it and say so in nav_params_schema or find the real mechanism; if it only pins a default, say that in nav_params_schema.`,
+        });
+        continue;
+      }
       if (unlocks || bigIncrease) {
         findings.push({
           recipe: target,
@@ -925,7 +966,12 @@ async function auditFixedParams(db, { run = defaultRunner() } = {}) {
           recordsWith: baseline,
           recordsWithout: without,
           severity: 'ok',
-          why: `deliberate filter: ${baseline} records with it, ${without} without — removing it does not unlock anything`,
+          // `identity` says what was actually shown: a different record set
+          // (it filters), or only counts (no identities to compare).
+          identity: identityKnown ? 'differs' : 'unknown',
+          why: identityKnown
+            ? `deliberate filter: ${baseline} records with it, ${without} without, and a different record set — it changes which records come back`
+            : `deliberate filter: ${baseline} records with it, ${without} without — removing it does not unlock anything (counts only: no record identities to compare)`,
         });
       }
     }

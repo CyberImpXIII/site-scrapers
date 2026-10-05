@@ -40,7 +40,7 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const path = require('path');
 const { openDb, getSite, getFields, insertField, parseSiteArg, snapshotVersionIfChanged } = require('./db');
-const { recordsOf } = require('./lib/outputShape');
+const { recordsOf, countOf, recordIdentities, sameRecords } = require('./lib/outputShape');
 const { distinctByField, crossFieldValues } = require('./lib/distinctValues');
 const { grepRaw, searchableCount } = require('./lib/rawGrep');
 
@@ -508,8 +508,10 @@ async function main() {
     // site filters client-side and never reads ?s=. That is worse than a
     // broken recipe — it answers the wrong question without complaining.
     const [ra, rb] = [await runEngine(a, JSON.parse(b)), await runEngine(a, JSON.parse(c))];
-    const ids = r => JSON.stringify(recordsOf(r).map(j => j.href ?? j.title ?? '').slice(0, 25));
-    const inert = ra.count > 0 && ids(ra) === ids(rb);
+    // One identity (lib/outputShape.js): raw hrefs carried linkedin's per-run
+    // trackingId, so an ignored param read as "changes the result set".
+    const ids = r => recordIdentities(r).slice(0, 25);
+    const inert = countOf(ra) > 0 && sameRecords(ids(ra), ids(rb));
     out({
       target: a,
       a: { params: JSON.parse(b), url: ra.url, count: ra.count },
