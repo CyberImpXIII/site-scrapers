@@ -16,7 +16,7 @@
 // after a clone, `data/` is empty and nothing tells you that.
 //
 // What it does NOT do: create recipes. Those are yours, they live only in
-// data/scrapers.db, and that file is gitignored on purpose — it holds your
+// the recipe DB (db.js's DB_PATH, under data/), and that file is gitignored on purpose — it holds your
 // search history and the sites you care about. A clone starts with the shared
 // library and no recipes, which is the correct split.
 
@@ -88,7 +88,7 @@ function main() {
 
   const report = {
     createdDatabases: [
-      ...(before.scrapers ? [] : ['data/scrapers.db']),
+      ...(before.scrapers ? [] : [require('path').relative(__dirname, require('./db').DB_PATH)]),
       ...(before.failures ? [] : ['data/failures.db']),
     ],
     sharedLibrary: {

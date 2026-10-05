@@ -1,17 +1,17 @@
-// A SECOND database, separate from scrapers.db, holding what has gone wrong
-// before and what fixed it.
+// A SECOND database, separate from the recipe DB (db.js), holding what has
+// gone wrong before and what fixed it.
 //
-// Why a separate file rather than more tables in scrapers.db:
-//   - Different lifecycle. scrapers.db is this environment's recipe state;
+// Why a separate file rather than more tables in the recipe DB:
+//   - Different lifecycle. The recipe DB is this environment's recipe state;
 //     this is accumulated troubleshooting knowledge, worth exporting and
 //     sharing between machines on its own.
 //   - Different write pattern. Failures are recorded exactly when a scrape
-//     is failing, which is often when scrapers.db is busiest. Separate
+//     is failing, which is often when the recipe DB is busiest. Separate
 //     files mean separate locks and no added contention on the hot path.
 //   - Different blast radius. Deleting or rebuilding one should never risk
 //     the other.
 //
-// As with scrapers.db, the FILE is gitignored (it accumulates hostnames,
+// As with the recipe DB, the FILE is gitignored (it accumulates hostnames,
 // selectors and error text) while the TAXONOMY lives in code, so a fresh
 // clone still knows the vocabulary even though it starts with no history.
 

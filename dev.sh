@@ -164,7 +164,7 @@ case "$cmd" in
     # Exits non-zero if the suite fails, so it can gate rather than just report.
     #
     # REFUSES TO RUN CONCURRENTLY. Two overlapping checks share one
-    # data/scrapers.db: the suite's fixtures are inserted and deleted by both
+    # recipe DB (db.js): the suite's fixtures are inserted and deleted by both
     # at once, so each run sees the other's half-built state and reports
     # failures that have nothing to do with the code. Observed 2026-09-29 --
     # two overlapping runs reported 15 failures and 5 failures on a tree whose

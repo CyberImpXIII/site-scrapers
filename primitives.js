@@ -11,7 +11,7 @@
 // Three pages here already carry two recipes each, and each pair was
 // characterised twice because nothing connected them.
 //
-// Derived from scrapers.db and failures.db on every call — see lib/primitives.js
+// Derived from the recipe DB and failures.db on every call — see lib/primitives.js
 // for why there is no table behind it.
 
 process.removeAllListeners('warning');

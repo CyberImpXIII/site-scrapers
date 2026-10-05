@@ -1,0 +1,8 @@
+{
+  "_comment": "Parameters for the shared checks (tools/checks): {\"<check>\": {\"<param>\": value}}. Keys starting with _ are comments.",
+  "_accessor": "store.sh is the CLI cli.json names. db.js is the one module that opens the recipe DB (DB_PATH, openDb): every CLI here (query, lab, register, verify, engine, failures, primitives, init) reads it through db.js, never by path. store.js and lib/storeExport.js are store.sh's own modules. .gitignore must name the file to ignore it. Prose elsewhere says 'the recipe DB' rather than the file name, so a real read of the file anywhere else stays a finding. data/failures.db is NOT declared: it is a second store behind its own CLI (failures.js via failuresDb.js), and cli.json has one `cli`; tools/checks' open decision (its TODO, 'One CLI per repo').",
+  "accessor": {
+    "impl": ["db.js", "store.js", "lib/storeExport.js"],
+    "exclude": [".gitignore"]
+  }
+}
