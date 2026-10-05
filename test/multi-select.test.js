@@ -56,10 +56,18 @@ function recipe(name, steps) {
 async function run(name, params) {
   const args = ['engine.js', `${HOST}#action:${name}`, JSON.stringify({ noSession: true, noDiagnostics: true, ...params })];
   let stdout;
+  let stderr = '';
+  let exit = 0;
   try {
-    ({ stdout } = await execFileAsync(process.execPath, args, { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+    ({ stdout, stderr } = await execFileAsync(process.execPath, args, { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
   } catch (e) {
-    stdout = e.stdout;
+    ({ stdout, stderr = '' } = e);
+    exit = e.code ?? e.signal;
+  }
+  // A run that printed nothing failed in the full suite once (2026-10-05,
+  // under load) as a bare "Unexpected end of JSON input": say what it DID say.
+  if (!stdout || !stdout.trim()) {
+    throw new Error(`engine printed no JSON (exit ${exit}); stderr tail: ${String(stderr).slice(-600)}`);
   }
   return JSON.parse(stdout);
 }

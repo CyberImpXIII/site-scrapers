@@ -158,6 +158,13 @@ test that registers a non-working row on a host another test covers will
 trip it again. Better fix: the pick should require that no row for the host
 is working (`./dev.sh known <host>` has none `working`).
 
+**Flake (unconfirmed cause): multi-select.test.js:156 once got NO stdout from
+the engine** in the final full `./dev.sh check` of 2026-10-05 (507/508; the
+only failure), while addon-bench's `check --json` ran at the same time. Green
+alone, twice. The test threw away stderr, so the cause is unknown; it now
+reports the exit and stderr tail when the engine prints nothing. Next time it
+fails, read that before re-running.
+
 **Suspicion (unconfirmed): `emitAndExit` does not stop `main()`.** It exits
 in stdout's write callback, and no caller returns after it, so the code below
 keeps running until the write drains: the article path falls through into the
