@@ -334,24 +334,49 @@ Evidence on this side, before any new run:
   the blind spot in 0d (60 is the page size). Nothing stops a remote param from
   being re-added and silently ignored again except `audit.js params`, which
   needs the param to exist.
-**Bug found while planning this (2026-10-04), NOT fixed:** `substitute()` in
-engine.js puts a param into a `url_param` template RAW, unencoded. So
-`keywords: "R&D support"` sends `keywords=R` plus a stray `D support` param:
-a silent wrong search, `success:true`. Same for `#`, `+`, `%`. A blanket
-`encodeURIComponent` is not safe either: some templates may take a path
-segment or a pre-encoded value (glassdoor's slug). Needs a per-placeholder
-decision (query value vs path) and a test with `&` in a value; check every
-url_param recipe's placeholders first.
+(Retracted 2026-10-04: an earlier note here said url_param params go into the
+URL unencoded. Wrong -- url_param navigation uses `buildUrl()`, which
+`encodeURIComponent`s every value; a live run with `keywords:"x&f_WT=2"` sent
+`keywords=x%26f_WT%3D2`. `substitute()` is raw, but it is not on that path.)
 
 **Small bug seen 2026-10-04, NOT fixed:** `node lab.js new bandcamp.com#article`
 prints a skeleton with `hostname: "bandcamp.com#article"` and `page_type:
 "listing"`: it does not parse the target with `parseSiteArg`.
 
-Open: does the guest search honour `f_WT=2` TODAY, by record identity (not
-count)? If yes, a `remote` param with probe values that change the records; if
-no, the notes are fixed and the result recorded here. Status below as it lands.
+**Settled 2026-10-04: f_WT=2 is IGNORED, by identity.** Registered
+`linkedin.com#listing:remote` (needs-review, = default + `&f_WT=2`) as the
+measurement. Live, alone, `technical support`: default x2 and remote x2 all
+60 records, 60/60 the same records, both arms stable; locations 59 city + 1
+metro in both, 0 remote. `node audit.js fixed-params` (new identity gate)
+then reported `filter_ignored` on `f_WT=2`. Default recipe's stale notes fixed
+(`lab.js set`). Gate: `audit.js fixed-params` identity comparison +
+`test/live-audits.test.js` (filter_ignored / differs / INCONCLUSIVE). emailTools
+should trim its TODO line (told via the report). Still open:
+(a) the same sweep says `location=United%20States` on both LinkedIn recipes is
+also `filter_ignored` -- most likely it equals what LinkedIn does for a US IP
+anyway (unverified: from a non-US IP it would matter); the finding's wording
+now says "ignored OR equal to the default for this run". Not changed.
+(b) dice `filters.workplaceTypes=Remote` and ziprecruiter `location=Remote` came
+back INCONCLUSIVE: both rotate results run to run, so identity cannot judge
+them. A remote filter there is unproven either way. A filter that only shows
+on a stable site is the gate's known limit.
+(c) a remote-only LinkedIn search would need the logged-in page (different DOM)
+or another site; not attempted.
 
 ## 0f. New recipe requested: bandcamp.com article (release date) — LOW PRIORITY
+
+**BUILT 2026-10-04: `bandcamp.com#article` is `working`** (verify.js on the C418
+album; `lab.js params` album vs track: not inert). Output: title, artist,
+release_state (`released` = out, `releases` = pre-order -- the page's own verb),
+release_date as written, credits. Track pages carry the album's date ("from
+<album>, released <date>"). Gates: `test/bandcamp-release.test.js` runs the
+STORED fields through the engine on local pages (album, track, pre-order, a
+later "released" that must give null, a "|" in the title);
+`test/prefer-recipes-subdomain.test.js` proves a parent-host recipe blocks the
+browser on `*.<host>`. Open: (a) no LIVE pre-order page seen -- the `releases`
+branch is proven offline only; (b) label and tags not extracted; (c) rate
+tolerance unmeasured, no batch run made; (d) tell emailTools it exists (report).
+The original request follows.
 
 Asked for by the `gmailsenderscript` session on Jacob's behalf, 2026-09-29. Not
 urgent; nothing is blocked on it.
