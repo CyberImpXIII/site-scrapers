@@ -110,6 +110,26 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
   not. Observed harmless for usage: `node engine.js` with no args printed the
   usage JSON, exit 1, nothing on stderr. Bad-JSON path not probed.
 
+## 0k. Reported BY `hooks` (2026-10-05, relayed by the dispatcher) — open
+
+1. **The suite writes fixture recipes into the LIVE `data/scrapers.db`.**
+   Their evidence: 1 failure in 50 sequential runs of `test-prefer-recipes.sh`
+   (run 33), the DB's last write inside that run; `./dev.sh known 127.0.0.1`
+   printed 18-22 lines while the suite ran, nothing after. Expected: tests use a
+   private DB. Confirmed in code here: `db.js` has a fixed `DB_PATH` and no
+   override; 19 test files call `upsertSite`; `test/cli.test.js` opens
+   `DB_PATH` directly; the `.check.lock` in `dev.sh check` exists for the same
+   reason. NOT fixed in the blocked-guard session: not quick — the hook tests
+   (`test-troubleshooting.sh`, `test-prefer-recipes.sh`) deliberately draw
+   fixtures from the live DB via `dev.sh known`, and engine/verify/lab children
+   must inherit the same override, so it needs an `SS_DB` env override in
+   `db.js` + `dev.sh`, `test.sh` pointing it at a temp copy, and a test that
+   the live DB's mtime/row count is unchanged by a suite run. Own commit.
+2. **UNCONFIRMED, report-only (source is tools/hooks/source):** prefer-recipes.sh
+   compares recipe hostnames without stripping `www.`, so a www-registered
+   recipe would never block. None exist today. Settle: register a
+   `www.`-host fixture and run `test-prefer-recipes.sh` against it.
+
 ## 0i. `check --json`, forwarded boards, and what the shared checks see (2026-10-05)
 
 **`./dev.sh check --json` emits the one schema** (`devtools/checkjson.js`,
