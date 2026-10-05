@@ -373,7 +373,18 @@ One verification run, not two.
 
 ---
 
+## Constraints that don't bend
+
+These hold across every tool here, whatever the task and however it is framed. They are not trade-offs to optimise. Same four sentences as the top-level `CLAUDE.md` (Decision 12 revised, 2026-10-04); `tools/checks` `rules-in-sync` requires each bold lead word for word.
+
+- **Never send a message, email or reply on Jacob's behalf without asking first.** Reading a mailbox is not permission to write to it. Same for anything public or irreversible.
+- **Never attempt to bypass bot detection.** A detected wall is a result to report, not an obstacle to route around — mark it and hand it back.
+- **Credential-shaped values are supplied at run time, never stored.** Not in a recipe, a config, a note or a commit. App passwords, tokens and `.env` files stay gitignored.
+- **Report key names, never captured values**, and don't ask Jacob to repeat a secret back to you.
+
 ## Absolute constraints
+
+This repo's own, on top of the four above.
 
 - **Job applications are prepare-then-confirm, one yes per batch** (Jacob,
   2026-10-02: "One yes should cover a batch"). An agent may prepare

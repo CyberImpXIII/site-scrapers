@@ -37,3 +37,14 @@ data/failures.db
 data/failures.db-wal
 data/failures.db-shm
 .check.lock
+
+# environment files -- may hold credentials; credential-shaped values are
+# supplied at run time, never stored (CLAUDE.md "Constraints that don't
+# bend"). An example/sample/template file carries key names only and is
+# committed. Checked by tools/checks `no-secrets` and test/gitignore-env.test.js.
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+!.env.template
