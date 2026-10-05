@@ -200,7 +200,10 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
   `tools/usage/.claude/hooks` holding twinned hooks without being in
   `DECLARED`. Reported as failures by `--json`, not fixed. The two undeclared
   folders are new since 0h; adding them to DECLARED is ours, but their copies
-  then join the drift question, so it waits with it.
+  then join the drift question, so it waits with it. **2026-10-05 later: 11
+  ERRORS** — 8 drifted hooks (no-inline-blobs, troubleshooting and 6 test-*.sh)
+  plus 3 undeclared folders: income, tools/usage, and now tools/transcripts.
+  Suite 529/529 in the same run. Not touched by the store-export session.
 
 **`accessor` (tools/checks) is red on site-scrapers** — `tools/checks/checks
 one accessor site-scrapers`. Since 0l added `cli.json` (store data/scrapers.db,
