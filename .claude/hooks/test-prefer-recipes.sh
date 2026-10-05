@@ -35,17 +35,24 @@ find_repo() {
   done
   return 1
 }
+# Not finding it at all is a different thing: a lone clone (this test run from
+# tools/hooks/source with no workspace around it) has no recipes to test
+# against. That is UNCHECKED, exit 3, said out loud: neither "all cases passed"
+# nor a failure of the hook. The fixture-free cases below still run, and still
+# fail the run if they fail. `hooks tests` treats UNCHECKED as red inside a
+# workspace, where site-scrapers should be found.
+unchecked=""
 REPO="$(find_repo)" || REPO=""
 if [ -z "$REPO" ]; then
-  echo "  FAIL  site-scrapers NOT FOUND above $DIR -- the hook enforces nothing from here"
-  fails=$((fails + 1))
+  unchecked="site-scrapers not found above $DIR: the recipe cases did not run"
+  echo "  UNCHECKED  $unchecked"
   REPO="/nonexistent"
 else
   echo "recipes from: $REPO"
 fi
 # The override marker is PRIVATE to this run. The live one is shared: parallel
 # runs raced over it (one wrote, another deleted, the first then failed), and
-# every run deleted any real override Jacob had opened.
+# every run deleted any real override the owner had opened.
 SS_BROWSER_OK="$(mktemp "${TMPDIR:-/tmp}/ss-browser-ok.XXXXXX")" && rm -f "$SS_BROWSER_OK"
 export SS_BROWSER_OK
 trap 'rm -f "$SS_BROWSER_OK"' EXIT
@@ -60,6 +67,15 @@ check() {
     printf '  ok    %-34s (exit %s)\n' "$desc" "$got"
   else
     printf '  FAIL  %-34s expected exit %s, got %s\n' "$desc" "$want" "$got"
+    # Says whether the fixture still holds NOW, so a reader can tell the live
+    # DB moving under the test from the hook being wrong. Still a failure.
+    local host
+    host=$(printf '%s' "$url" | sed -nE 's#^https?://(www\.)?([^/?#:]+).*#\2#p')
+    if [ -n "$host" ] && [ "$REPO" != /nonexistent ]; then
+      printf '        now: %s working of %s recipe(s) for %s in the live DB\n' \
+        "$("$REPO/dev.sh" known "$host" 2>/dev/null | awk -F'\t' '$2 == "working"' | wc -l | tr -d ' ')" \
+        "$("$REPO/dev.sh" known "$host" 2>/dev/null | wc -l | tr -d ' ')" "$host"
+    fi
     fails=$((fails + 1))
   fi
 }
@@ -74,10 +90,75 @@ if [ -z "$sites" ] && [ "$REPO" != /nonexistent ]; then
   echo "  FAIL  query.js sites returned NOTHING from $REPO -- the hook cannot read recipes either"
   fails=$((fails + 1))
 fi
+# Fixtures come only from STABLE hosts: a real domain, never test scaffolding.
+# site-scrapers' own suite writes fixture recipes into the same live DB and
+# deletes them when it ends, all on 127.0.0.1, a bare label, or a reserved name
+# (.test .invalid .example .internal .localhost). The first `working` host
+# sorts as 127.0.0.1, so this test used to pick a host whose working recipes
+# could vanish between the `query.js sites` snapshot and the hook's own
+# `dev.sh known` -- the hook then (correctly) allowed, and a block case FAILED
+# (2026-10-03 in site-scrapers, 2026-10-05 in knowledge-base, never alone).
+# The other way round too: a test flipping a fixture to `broken` made
+# 127.0.0.1 look "registered but not working" while its other fixtures kept
+# it covered. Not a clock race: the expired-marker case writes epoch 0.
+# The filters are jq defs so the self-check below runs them on a planted list.
+PICK_DEFS='
+  def stable: (.hostname // "") as $h
+    | ($h | contains("."))
+      and ($h | test("^[0-9.]+$") | not)
+      and ($h | test("[:\\[\\]]") | not)
+      and ($h | test("(^|\\.)(test|invalid|example|internal|localhost|local)$"; "i") | not);
+  def working_hosts: map(select(.status == "working") | .hostname);
+  def covers($w; $h): $h == $w or ($h | endswith("." + $w));
+'
+# A working recipe on a stable host.
+PICK_COVERED="$PICK_DEFS"' map(select(.status == "working" and stable)) | .[0].hostname // empty'
+# A stable host with a non-working recipe and NO working recipe covering it
+# (itself or a parent), or the hook would block it for that recipe instead.
+PICK_NOTWORKING="$PICK_DEFS"' working_hosts as $w
+  | map(select(.status != "working" and stable)
+        | select(.hostname as $h | [$w[] | select(covers(.; $h))] | length == 0))
+  | .[0].hostname // empty'
+# A working recipe on a stable multi-label host (its parent is the ALLOW case).
+PICK_SUB="$PICK_DEFS"' map(select(.status == "working" and stable and ((.hostname | split(".") | length) > 2))) | .[0].hostname // empty'
 pick() { printf '%s' "$sites" | jq -r "$1" 2>/dev/null; }
-covered=$(pick 'map(select(.status == "working")) | .[0].hostname // empty')
-# Excludes the lab prober, which is internal scaffolding rather than a site.
-notworking=$(pick 'map(select(.status != "working" and (.hostname | test("internal$") | not))) | .[0].hostname // empty')
+
+# Self-check of the pickers on a planted list (fixture-free: runs in a lone
+# clone too). Scaffolding first, as the live DB sorts it; each line is a host
+# the old `.[0]` pick took and lost to the suite's churn.
+planted='[
+  {"hostname":"127.0.0.1","status":"working"},
+  {"hostname":"127.0.0.1","status":"broken"},
+  {"hostname":"x","status":"working"},
+  {"hostname":"cycle.test","status":"needs-review"},
+  {"hostname":"bandcamp-release.internal","status":"working"},
+  {"hostname":"jobs.subdomain-cover.internal","status":"working"},
+  {"hostname":"cli-test.invalid","status":"working"},
+  {"hostname":"matchtest.example","status":"working"},
+  {"hostname":"linkedin.com","status":"needs-review"},
+  {"hostname":"linkedin.com","status":"working"},
+  {"hostname":"careers.linkedin.com","status":"blocked"},
+  {"hostname":"indeed.com","status":"blocked-attn"},
+  {"hostname":"jobs.lever.co","status":"working"}
+]'
+selfcheck() {
+  local desc="$1" filter="$2" want="$3" got
+  got=$(printf '%s' "$planted" | jq -r "$filter" 2>&1)
+  if [ "$got" = "$want" ]; then
+    printf '  ok    %-34s (%s)\n' "$desc" "$got"
+  else
+    printf '  FAIL  %-34s expected %s, got %s\n' "$desc" "$want" "${got:-nothing}"
+    fails=$((fails + 1))
+  fi
+}
+echo "the fixture pickers skip test scaffolding (planted list):"
+selfcheck "covered host is a real domain"   "$PICK_COVERED"    "linkedin.com"
+selfcheck "not-working host has no cover"   "$PICK_NOTWORKING" "indeed.com"
+selfcheck "subdomain host is a real domain" "$PICK_SUB"        "jobs.lever.co"
+
+covered=$(pick "$PICK_COVERED")
+notworking=$(pick "$PICK_NOTWORKING")
+echo "fixtures: covered=${covered:-none} not-working=${notworking:-none}"
 
 echo "must BLOCK (exit 2) — a working recipe already covers the site:"
 if [ -n "$covered" ]; then
@@ -93,7 +174,7 @@ echo "must ALLOW (exit 0):"
 # recipe made this refuse lever.co/about -- Lever's marketing site, nothing to
 # do with the job board. A false positive in a blocking hook is worse than a
 # miss, because it gets the hook switched off.
-sub=$(pick 'map(select(.status == "working" and (.hostname | contains(".") and (split(".") | length) > 2))) | .[0].hostname // empty')
+sub=$(pick "$PICK_SUB")
 if [ -n "$sub" ]; then
   parent="${sub#*.}"
   # Only meaningful if the parent has no recipe of its own.
@@ -137,4 +218,6 @@ fi
 
 echo
 [ "$skips" = 0 ] || echo "$skips skipped (fixtures absent, not failures)"
-if [ "$fails" = 0 ]; then echo "all cases passed"; else echo "$fails FAILED"; exit 1; fi
+if [ "$fails" != 0 ]; then echo "$fails FAILED"; exit 1; fi
+if [ -n "$unchecked" ]; then echo "UNCHECKED: $unchecked"; exit 3; fi
+echo "all cases passed"

@@ -38,6 +38,11 @@ data/failures.db-wal
 data/failures.db-shm
 .check.lock
 
+# tools/setup's proposal for settings.json (written by `setup ... --only hooks`).
+# Applying it is Jacob's step, never an agent's; it is regenerated on every run.
+# Same line as tools/hooks and addon-bench.
+.claude/settings.proposed.json
+
 # environment files -- may hold credentials; credential-shaped values are
 # supplied at run time, never stored (CLAUDE.md "Constraints that don't
 # bend"). An example/sample/template file carries key names only and is

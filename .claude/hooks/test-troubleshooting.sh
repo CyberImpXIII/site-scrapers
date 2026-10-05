@@ -38,15 +38,25 @@ find_repo() {
   done
   return 1
 }
+# Not finding it at all is a different thing: a lone clone (this test run from
+# tools/hooks/source with no workspace around it) has no recipes to test
+# against. That is UNCHECKED, exit 3, said out loud: neither "all cases passed"
+# nor a failure of the hook. The fixture-free cases below still run, and still
+# fail the run if they fail. `hooks tests` treats UNCHECKED as red inside a
+# workspace, where site-scrapers should be found.
+unchecked=""
 REPO="$(find_repo)" || REPO=""
 if [ -z "$REPO" ]; then
-  echo "  FAIL  site-scrapers NOT FOUND above $DIR -- the hook enforces nothing from here"
-  fails=$((fails + 1))
+  unchecked="site-scrapers not found above $DIR: the recipe cases did not run"
+  echo "  UNCHECKED  $unchecked"
   REPO="/nonexistent"
 else
   echo "recipes from: $REPO"
 fi
 
+# 20000 lines (~300KB) of harmless filler for the long-command cases: more than
+# a pipe buffer holds (64KB), or printf finishes before grep exits.
+FILLER="$(printf '\n: filler %s' $(seq 1 20000))"
 check() {
   local want="$1" desc="$2" cmd="$3"
   printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(printf '%s' "$cmd" | jq -Rs .)" \
@@ -78,6 +88,10 @@ if [ -n "$attn" ]; then
   check 2 "verify.js without --attended"          "node verify.js $attn '{}'"
   check 2 "engine.js directly"                    "node engine.js $attn '{\"allowUnverified\":true}'"
   check 2 "qualified target"                      "node lab.js peek $attn#listing '{}'"
+  # A long command: under pipefail, `printf | grep -q` read a MATCH on a large
+  # input as no match (grep exits early, printf takes SIGPIPE, status 141), so
+  # the run below went through. Found 2026-10-04 in no-inline-blobs.sh.
+  check 2 "blocked run early in a long command"   "./scrape.sh $attn '{}'$FILLER"
 else
   skip "blocked-attn cases" "no blocked-attn recipe in this DB"
 fi
@@ -87,6 +101,7 @@ if [ -n "$attn" ]; then
   # The sanctioned next step for this state. Blocking it would leave the recipe
   # permanently stuck, since nothing else can move it.
   check 0 "verify.js --attended is the way OUT"   "node verify.js $attn '{}' --attended"
+  check 0 "--attended early in a long command"    "node verify.js $attn '{}' --attended$FILLER"
   # Reading about it must never be blocked.
   check 0 "query.js site on the same recipe"      "node query.js site $attn"
   check 0 "dev.sh blocked"                        './dev.sh blocked'
@@ -102,6 +117,66 @@ check 0 "a command with no target at all"         'node query.js sites'
 check 0 "an unregistered host"                    "node lab.js peek example.invalid '{}'"
 check 0 "empty command"                           ''
 
+# The block message's statement of the CLI's rule. Fixture-free, so it runs in
+# a lone clone too: a copy of the hook in a scratch tree beside a stand-in
+# site-scrapers whose `dev.sh known` reports one recipe as blocked-attn. The
+# message once said engine.js refuses "only when allowUnverified is absent";
+# since site-scrapers c6e4243 (blocked-guard) the CLI refuses a blocked-attn
+# recipe unless the run is attended, whatever allowUnverified says. A message
+# that tells an agent the wrong way through is a wrong answer, so its wording
+# is pinned here: the old sentence fails the first check below.
+echo "the block message states the CLI's rule (stand-in site-scrapers):"
+SCRATCH="$(mktemp -d)" || SCRATCH=""
+if [ -z "$SCRATCH" ]; then
+  echo "  FAIL  mktemp -d failed: the message cases did not run"
+  fails=$((fails + 1))
+else
+  trap 'rm -rf "$SCRATCH"' EXIT
+  mkdir -p "$SCRATCH/site-scrapers" "$SCRATCH/.claude/hooks"
+  printf '{ "name": "site-scrapers" }\n' > "$SCRATCH/site-scrapers/package.json"
+  printf 'attn-fixture.example#listing:default\tblocked-attn\n' > "$SCRATCH/site-scrapers/known.tsv"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    '[ "$1" = known ] && cat "$(dirname "$0")/known.tsv"' 'exit 0' > "$SCRATCH/site-scrapers/dev.sh"
+  chmod +x "$SCRATCH/site-scrapers/dev.sh"
+  cp "$HOOK" "$SCRATCH/.claude/hooks/troubleshooting.sh"
+  stand_in() {  # $1 command; prints "<exit>\t<stderr on one line>"
+    local err got
+    err=$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(printf '%s' "$1" | jq -Rs .)" \
+      | bash "$SCRATCH/.claude/hooks/troubleshooting.sh" 2>&1 >/dev/null)
+    got=$?
+    printf '%s\t%s' "$got" "$(printf '%s' "$err" | tr '\n' ' ')"
+  }
+  msg_check() {  # $1 desc, $2 want present (1) or absent (0), $3 fixed phrase, $4 output
+    local present=0
+    grep -qF -- "$3" <<< "$4" && present=1
+    if [ "$present" = "$2" ]; then
+      printf '  ok    %-40s\n' "$1"
+    else
+      printf '  FAIL  %-40s %s: "%s"\n' "$1" "$([ "$2" = 1 ] && echo missing || echo still present)" "$3"
+      fails=$((fails + 1))
+    fi
+  }
+  out=$(stand_in "./scrape.sh attn-fixture.example '{}'")
+  if [ "${out%%$'\t'*}" != 2 ]; then
+    echo "  FAIL  stand-in blocked-attn run                 expected exit 2, got ${out%%$'\t'*}"
+    fails=$((fails + 1))
+  else
+    printf '  ok    %-40s (exit 2)\n' "stand-in blocked-attn run"
+  fi
+  msg_check "says the CLI refuses unless --attended"   1 "refuses a blocked-attn recipe unless --attended is given" "$out"
+  msg_check "says allowUnverified does not open it"   1 "allowUnverified does not open it" "$out"
+  msg_check "drops the old allowUnverified claim"     0 "only when allowUnverified is absent" "$out"
+  out=$(stand_in "./scrape.sh attn-fixture.example '{}' --attended")
+  if [ "$out" != "0"$'\t' ]; then
+    echo "  FAIL  stand-in --attended run                   expected exit 0 and silence, got: $out"
+    fails=$((fails + 1))
+  else
+    printf '  ok    %-40s (exit 0, silent)\n' "stand-in --attended run"
+  fi
+fi
+
 echo
 [ "$skips" = 0 ] || echo "$skips skipped (fixtures absent, not failures)"
-if [ "$fails" = 0 ]; then echo "all cases passed"; else echo "$fails FAILED"; exit 1; fi
+if [ "$fails" != 0 ]; then echo "$fails FAILED"; exit 1; fi
+if [ -n "$unchecked" ]; then echo "UNCHECKED: $unchecked"; exit 3; fi
+echo "all cases passed"

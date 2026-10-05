@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
+# hooks: applies_to=all
 # Blocks an interactive browser call against a site that already has a working
 # recipe. PreToolUse hook on the Claude-in-Chrome tools and WebFetch; see
 # ../settings.json. Tests: bash .claude/hooks/test-prefer-recipes.sh
 #
-# THIS FILE IS COPIED INTO EVERY TOOL FOLDER'S .claude/hooks/, because a hook
-# only fires when Claude Code's project dir is the one holding it -- so a rule
+# THIS FILE IS INSTALLED INTO EVERY REPO'S .claude/hooks/, because a hook only
+# fires when Claude Code's project dir is the one holding it -- so a rule
 # enforced in only one folder is not enforced when a session starts in another.
-# site-scrapers holds the canonical copy (it is the committed, tested one);
-# `./check-hooks.sh --sync` pushes it everywhere and `./check-hooks.sh` fails if
-# the copies' logic diverges or a location is missing one.
+# The source is tools/hooks (source/hooks/); setup installs from it, and
+# `hooks copies` there fails when a copy differs from it in meaning or a repo
+# lacks one. Change the source, never a copy. The `# hooks:` line above is
+# where this file says it applies (tools/hooks vocab.json).
 #
 # Copies rather than symlinks: a hook whose command is missing exits non-zero,
 # which Claude Code reads as a block, so a dangling link would refuse every

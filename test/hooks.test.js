@@ -186,7 +186,7 @@ test('the LIVE prefer-recipes hook blocks a covered host from every sibling, dat
   const ws = mockWorkspace();
   try {
     for (const [label, h] of Object.entries(ws.where)) {
-      const r = spawnSync('bash', [path.join(h, 'prefer-recipes.sh')], { input: webfetch('example.test'), encoding: 'utf8', env: env() });
+      const r = spawnSync('bash', [path.join(h, 'prefer-recipes.sh')], { input: webfetch('example.com'), encoding: 'utf8', env: env() });
       assert.equal(r.status, 2, `from ${label}: expected a block on a covered host, got exit ${r.status}\n${r.stdout}${r.stderr}`);
       const ok = spawnSync('bash', [path.join(h, 'prefer-recipes.sh')], { input: webfetch('unknown.test'), encoding: 'utf8', env: env() });
       assert.equal(ok.status, 0, `from ${label}: an unknown host must be allowed`);
@@ -212,18 +212,26 @@ test('the hook TESTS run every case from every sibling: they resolve site-scrape
   } finally { ws.cleanup(); }
 });
 
-test('the hook tests FAIL, not skip, when site-scrapers cannot be found; the hook itself fails open', () => {
+// Contract changed 2026-10-05 with the copies themselves: tools/hooks/source
+// (79703b6) reports "site-scrapers not found" as UNCHECKED, exit 3, where the
+// old copies said FAIL, exit 1. The copies were re-rendered from that source by
+// `tools/setup/setup site-scrapers --only hooks --rebuild` (Jacob's yes,
+// PLAN-repo-setup.md §7.12), so this asserts the source's contract. What it
+// guards is unchanged: a run that tested no recipes never exits 0 and never
+// says "all cases passed".
+test('the hook tests do NOT pass (UNCHECKED, exit 3) when site-scrapers cannot be found; the hook itself fails open', () => {
   const ws = mockWorkspace();
   try {
     fs.rmSync(ws.ss, { recursive: true });
     for (const n of RECIPE_HOOKS) {
       const r = spawnSync('bash', [path.join(ws.where['data-bridge'], `test-${n}`)], { encoding: 'utf8', env: env(), timeout: 120000 });
       const out = `${r.stdout || ''}${r.stderr || ''}`;
-      assert.equal(r.status, 1, `test-${n} must fail with no site-scrapers:\n${out}`);
-      assert.match(out, /FAIL\s+site-scrapers NOT FOUND/);
+      assert.equal(r.status, 3, `test-${n} must report UNCHECKED (exit 3) with no site-scrapers:\n${out}`);
+      assert.match(out, /UNCHECKED\s+site-scrapers not found/);
+      assert.doesNotMatch(out, /recipes from:/);
       assert.doesNotMatch(out, /all cases passed/);
     }
-    const live = spawnSync('bash', [path.join(ws.where['data-bridge'], 'prefer-recipes.sh')], { input: webfetch('example.test'), encoding: 'utf8', env: env() });
+    const live = spawnSync('bash', [path.join(ws.where['data-bridge'], 'prefer-recipes.sh')], { input: webfetch('example.com'), encoding: 'utf8', env: env() });
     assert.equal(live.status, 0, 'with no site-scrapers the hook must fail OPEN');
   } finally { ws.cleanup(); }
 });
@@ -444,7 +452,7 @@ test('check-hooks: a full workspace is clean and counts every declared copy', ()
   } finally { fx.cleanup(); }
 });
 
-// Give the fixture repo the mock recipe table (working: example.test) so the
+// Give the fixture repo the mock recipe table (working: example.com) so the
 // enforcement probe has a host to probe with.
 function withRecipes(fx) {
   for (const f of ['dev.sh', 'query.js', 'package.json']) {
@@ -461,7 +469,7 @@ test('check-hooks: a copy that is present, identical and does NOT block is an ER
     withRecipes(fx);
     const { status, out } = fx.run();
     assert.equal(status, 1, out);
-    assert.match(out, /ERROR\s+scriptingTools\/data-bridge\/\.claude\/hooks\/prefer-recipes\.sh does NOT enforce from there: exit 0 on example\.test/);
+    assert.match(out, /ERROR\s+scriptingTools\/data-bridge\/\.claude\/hooks\/prefer-recipes\.sh does NOT enforce from there: exit 0 on example\.com/);
     assert.doesNotMatch(out, /DRIFTED/);
   } finally { fx.cleanup(); }
 });
@@ -477,7 +485,7 @@ test('check-hooks: the REAL prefer-recipes.sh blocks from every declared locatio
     }
     const { status, out } = fx.run();
     assert.equal(status, 0, out);
-    assert.match(out, /ok\s+scriptingTools\/data-bridge\/\.claude\/hooks\/prefer-recipes\.sh blocks example\.test/);
+    assert.match(out, /ok\s+scriptingTools\/data-bridge\/\.claude\/hooks\/prefer-recipes\.sh blocks example\.com/);
     assert.match(out, /hooks: clean/);
     assert.doesNotMatch(out, /enforcement UNCHECKED/);
   } finally { fx.cleanup(); }

@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
+# hooks: applies_to=all
 # Enforces the troubleshooting order: don't retry what is already known to need
 # a person, and don't re-derive a recipe without reading what broke last time.
 # PreToolUse hook on Bash; see ../settings.json.
 # Tests: bash .claude/hooks/test-troubleshooting.sh
 #
-# COPIED INTO EVERY TOOL FOLDER'S .claude/hooks/, because a hook only fires when
-# Claude Code's project dir is the one holding it. site-scrapers holds the
-# canonical copy; `./check-hooks.sh --sync` pushes it everywhere and
-# `./check-hooks.sh` fails on drift or a missing install. Copies rather than
+# INSTALLED INTO EVERY REPO'S .claude/hooks/, because a hook only fires when
+# Claude Code's project dir is the one holding it. The source is tools/hooks
+# (source/hooks/); setup installs from it, and `hooks copies` there fails when
+# a copy differs from it in meaning or a repo lacks one. Change the source,
+# never a copy. The `# hooks:` line above is where this file says it applies
+# (tools/hooks vocab.json). Copies rather than
 # symlinks: a missing hook command exits non-zero, which is read as a block, so a
 # dangling link would refuse every Bash call.
 #
 # WHY THIS IS A HOOK AND NOT A RULE. Two documented rules that nothing enforced:
 #
 #   1. CLAUDE.md rule 3 on `blocked-attn`: "you are stuck; the next step needs
-#      the user. Do NOT retry, that already failed." engine.js DOES refuse a
-#      non-working recipe -- but only when `allowUnverified` is absent, and
+#      the user. Do NOT retry, that already failed." engine.js's status gate
+#      refused a non-working recipe only when `allowUnverified` was absent, and
 #      lab.js passes `allowUnverified: true` on every run by design, because
 #      that is how a candidate gets exercised at all. So the one documented
 #      "never do this" was reachable through the tool an agent troubleshooting a
-#      recipe reaches for first. That is the gap this closes.
+#      recipe reaches for first. That is the gap this closed. Since site-scrapers
+#      c6e4243 (blocked-guard) the CLI itself refuses a blocked-attn recipe
+#      unless the run is attended (`--attended` or {"attended":true}), whatever
+#      `allowUnverified` says; this hook stays as the earlier layer that says
+#      why and names the next step. The block message states that rule, and
+#      test-troubleshooting.sh pins its wording.
 #
 #   2. docs/diagnosing.md opens with "Check what has broken before, first" --
 #      `node failures.js match <hostname>`. A second database exists purely to
@@ -65,9 +73,9 @@ command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/nul
 # shell and none of this hook's business.
 runs=false
 edits=false
-printf '%s' "$command" | grep -qE '(scrape\.sh|engine\.js|verify\.js)([[:space:]]|$)' && runs=true
-printf '%s' "$command" | grep -qE 'lab\.js[[:space:]]+(peek|raw|match|params)([[:space:]]|$)' && runs=true
-printf '%s' "$command" | grep -qE '(lab\.js[[:space:]]+set|register\.js)([[:space:]]|$)' && edits=true
+grep -qE '(scrape\.sh|engine\.js|verify\.js)([[:space:]]|$)' <<< "$command" && runs=true
+grep -qE 'lab\.js[[:space:]]+(peek|raw|match|params)([[:space:]]|$)' <<< "$command" && runs=true
+grep -qE '(lab\.js[[:space:]]+set|register\.js)([[:space:]]|$)' <<< "$command" && edits=true
 [ "$runs" = true ] || [ "$edits" = true ] || exit 0
 
 # The target: a hostname-shaped token, optionally #page_type:recipe_name. Taken
@@ -109,7 +117,7 @@ status=$(printf '%s' "$known" | awk -F'\t' -v t="$full" '$1 == t { print $2 }' |
 # An attended run is the SANCTIONED next step for this state, so it is the one
 # thing that must not be blocked.
 if [ "$runs" = true ] && [ "$status" = "blocked-attn" ] \
-   && ! printf '%s' "$command" | grep -q -- '--attended'; then
+   && ! grep -q -- '--attended' <<< "$command"; then
   {
     echo "BLOCKED: ${target} is status=\"blocked-attn\" — this was already tried and failed."
     echo
@@ -127,9 +135,10 @@ if [ "$runs" = true ] && [ "$status" = "blocked-attn" ] \
     echo
     echo "Otherwise surface it to the user and move on to other work."
     echo
-    echo "engine.js refuses a non-working recipe on its own, but only when"
-    echo "allowUnverified is absent — and lab.js sets it on every run, which is how"
-    echo "this state stayed reachable."
+    echo "The CLI refuses this run too (site-scrapers blocked-guard): engine.js, and"
+    echo "so scrape.sh, lab.js and verify.js, refuses a blocked-attn recipe unless"
+    echo "--attended is given (or \"attended\": true in the params); allowUnverified"
+    echo "does not open it. This hook says why before the run starts."
   } >&2
   exit 2
 fi

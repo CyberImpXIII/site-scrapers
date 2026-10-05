@@ -9,9 +9,9 @@ BROWSER_OK="${SS_BROWSER_OK:-$DIR/data/.browser-ok}"
 case "${1:-}" in
   known)
     case "${2:-}" in
-      example.test|*.example.test) printf 'example.test#listing:default\tworking\n' ;;
-      broken.test)                 printf 'broken.test#listing:default\tbroken\n' ;;
-      attn.test)                   printf 'attn.test#listing:default\tblocked-attn\n' ;;
+      example.com|*.example.com) printf 'example.com#listing:default\tworking\n' ;;
+      example.net)               printf 'example.net#listing:default\tbroken\n' ;;
+      example.org)               printf 'example.org#listing:default\tblocked-attn\n' ;;
     esac
     ;;
   failures) : ;;

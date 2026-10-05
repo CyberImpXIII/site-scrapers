@@ -65,7 +65,10 @@ unchecked=0
 #
 # 2026-10-04: tools/checks, tools/hooks, tools/hub and tools/todo (nested repos,
 # created that day with copies of the twins; tools/todo's report td-7 asked).
-DECLARED=". addon-bench applications emailTools knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/checks tools/hooks tools/hub tools/setup tools/todo"
+# 2026-10-05: income, tools/context-hygiene, tools/transcripts and tools/usage
+# (each found holding the twins, undeclared, by this check after setup's
+# --rebuild gave this repo the 7 hooks it had been missing).
+DECLARED=". addon-bench applications emailTools income knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/checks tools/context-hygiene tools/hooks tools/hub tools/setup tools/todo tools/transcripts tools/usage"
 WORKSPACE_MARKER=".claude/agents.manifest.json"
 if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone; fi
 
