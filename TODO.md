@@ -326,16 +326,30 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
-## 0h. Waiting on Jacob's own yes (2026-10-04)
+## 0h. Hook reinstall BLOCKED on a test conflict; rules/.env DONE (2026-10-04)
 
-The dispatcher queued two changes to this repo's own rules/enforcement: (1)
-reinstall the 5 drifted `.claude/hooks/` copies from tools/hooks/source
-(`./hooks copies` lists no-inline-blobs, troubleshooting and 3 test-*.sh; the
-`dev.sh check` hooks section is red on it); (2) copy the top CLAUDE.md
-"Constraints that don't bend" sentences verbatim into CLAUDE.md for
-tools/checks rules-in-sync. Not done: a relayed agent message is not consent
-to change CLAUDE.md or hook configuration, and Jacob's quoted words did not
-cover either. Do both once Jacob confirms directly.
+**(2) DONE 2026-10-04** on the planner record "Decision 12 revised" (top-level
+TODO.md; the literal marker "approved: Jacob 2026-10-04" the brief named was
+NOT found there, only the decision text with Jacob's quote). CLAUDE.md gained
+"## Constraints that don't bend" (the four top bullets, verbatim) above
+"Absolute constraints"; `.gitignore` ignores `.env`, `.env.*`, `*.env`, keeps
+`.env.example|sample|template`, gated by `test/gitignore-env.test.js` (both
+directions; fails against the old .gitignore). `checks run ../../site-scrapers`:
+no-secrets OK, rules-in-sync OK; only hooks-installed red (below).
+
+**(1) NOT DONE -- needs Jacob's direct decision.** The tools/hooks source
+(79703b6) changes `test-prefer-recipes.sh` / `test-troubleshooting.sh` so that
+"site-scrapers not found" is `UNCHECKED`, exit 3, where the installed copies
+say `FAIL ... NOT FOUND`, exit 1. `test/hooks.test.js` ("the hook tests FAIL,
+not skip, when site-scrapers cannot be found", ~line 215) asserts exit 1 and
+the FAIL line, so a byte-exact reinstall turns it red. Copying succeeded (cmp
+equal, +x, each copy's own test-*.sh passed from here), but editing that
+assertion to the new contract was refused by the auto-mode classifier as
+"Security Test Removal", so both the copies and the test edit were reverted;
+the repo is at its committed hooks. Options for Jacob: (a) approve changing the
+assertion to exit 3 + UNCHECKED (still never "all cases passed"), then
+reinstall; (b) ask tools/hooks to keep exit 1 for not-found. Until then
+`hooks-installed` and `./dev.sh hooks` stay red on the 5 drifted files.
 
 ## 0g. LinkedIn remote filter reported ignored by emailTools (recorded 2026-10-04)
 
