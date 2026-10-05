@@ -562,7 +562,21 @@ refuses keys it does not write. Open:
   greenhouse frame, even after accepting OneTrust and reloading). antibot saw a
   reCAPTCHA widget, present, not blocking; not a wall, not routed around. Pantheon
   8177795 (applications/job-urls.json) is CLOSED. Told applications via the report.
-- **Employer hosts need fill recipes too** (posit.co has describe only).
+- **posit.co#action:fill_application_form registered and `working`
+  (2026-10-05)** -- describe's steps + Greenhouse fill's type=button
+  entry_selector. Live on gh_jid=7999513003 with 3 fake text answers: filled
+  3, failed 0, wallCheck clear, formHash 995e5996b122f252 = description,
+  `dryRun:true`, `navigatedDuringFill:false`, final URL = the iframe's job_app
+  src. Other employer hosts embedding an ATS still need their own pair.
+  Open: (a) the form has a required "Just to ensure that you're human, on
+  https://p3m.dev, what a..." text question (#question_32848993003) -- an
+  applicant answer, not an engine-detected wall, but whether an agent may
+  answer a human-check question is Jacob's call; told applications via the
+  report. (b) verify.js takes params only inline (no `@path.json` as
+  engine.js has), so a fill verify puts answers on argv; fake values here,
+  but real ones must not go that way. (c) verify.js's `fill` report omits
+  `dryRun` and `navigatedDuringFill` (a navigation still fails the verdict,
+  via status `error`), so the dry-run proof had to come from a scrape.sh run.
 - **`accessor` still red on `data/failures.db`** (second store, own CLI;
   cli.json takes one `cli`): tools/checks' decision, reported. And `./dev.sh
   check` never runs tools/checks, so this red is invisible there.
