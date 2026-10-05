@@ -1,0 +1,145 @@
+{
+  "ok": false,
+  "checks": [
+    {
+      "name": "test",
+      "status": "fail",
+      "counts": {
+        "failed": 3
+      },
+      "failures": [
+        {
+          "message": "test/gone.test.js: test failed",
+          "file": null,
+          "line": null,
+          "role": "code"
+        },
+        {
+          "message": "top-level fails: Expected values to be strictly equal: 1 !== 2",
+          "file": "test/check-json.test.js",
+          "line": 5,
+          "role": "code"
+        },
+        {
+          "message": "inner fails: it's boom",
+          "file": "test/check-json.test.js",
+          "line": 7,
+          "role": "code"
+        }
+      ]
+    },
+    {
+      "name": "audit",
+      "status": "fail",
+      "counts": {
+        "failed": 1,
+        "warnings": 1,
+        "waived": 1
+      },
+      "failures": [
+        {
+          "message": "example.test#listing:default card_selector matches nothing",
+          "file": null,
+          "line": null,
+          "role": "audit"
+        }
+      ]
+    },
+    {
+      "name": "hooks",
+      "status": "fail",
+      "counts": {
+        "failed": 2
+      },
+      "failures": [
+        {
+          "message": "prefer-recipes.sh has DRIFTED — 2 different implementations across 9 copies: 1111aaaa site-scrapers/.claude/hooks/prefer-recipes.sh | 2222bbbb .claude/hooks/prefer-recipes.sh",
+          "file": null,
+          "line": null,
+          "role": "code"
+        },
+        {
+          "message": "[not applied yet] knowledge-base: settings.proposed.json is fit to apply",
+          "file": null,
+          "line": null,
+          "role": "code"
+        }
+      ]
+    },
+    {
+      "name": "files",
+      "status": "fail",
+      "counts": {
+        "failed": 3
+      },
+      "failures": [
+        {
+          "message": "dev.sh:4: canned placement",
+          "file": "dev.sh",
+          "line": 4,
+          "role": "docs"
+        },
+        {
+          "message": "gone.md:2: not here",
+          "file": null,
+          "line": null,
+          "role": "docs"
+        },
+        {
+          "message": "CLAUDE.md:0: no line 0",
+          "file": "CLAUDE.md",
+          "line": null,
+          "role": "docs"
+        }
+      ]
+    },
+    {
+      "name": "quiet",
+      "status": "fail",
+      "counts": {
+        "failed": 1
+      },
+      "failures": [
+        {
+          "message": "gate quiet failed (exit 1) with no finding line; its last line: nothing that reads as a finding",
+          "file": null,
+          "line": null,
+          "role": "code"
+        }
+      ]
+    },
+    {
+      "name": "skipped",
+      "status": "unchecked",
+      "reason": "a sibling is absent: nothing compared",
+      "counts": {
+        "failed": 0
+      },
+      "failures": []
+    },
+    {
+      "name": "silent",
+      "status": "unchecked",
+      "reason": "gate silent exited 3 (unchecked) without saying why",
+      "counts": {
+        "failed": 0
+      },
+      "failures": []
+    },
+    {
+      "name": "tree",
+      "status": "error",
+      "counts": {
+        "failed": 1
+      },
+      "failures": [
+        {
+          "message": "gate tree broke (exit 128) with no finding line; its last line: fatal: not a git repository",
+          "file": null,
+          "line": null,
+          "role": "code"
+        }
+      ]
+    }
+  ]
+}

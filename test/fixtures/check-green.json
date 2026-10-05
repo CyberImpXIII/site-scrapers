@@ -1,0 +1,48 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "test",
+      "status": "ok",
+      "counts": {
+        "failed": 0
+      },
+      "failures": []
+    },
+    {
+      "name": "audit",
+      "status": "ok",
+      "counts": {
+        "failed": 0,
+        "warnings": 1,
+        "waived": 0
+      },
+      "failures": []
+    },
+    {
+      "name": "hooks",
+      "status": "unchecked",
+      "reason": "knowledge-base is declared but absent here (standalone run) -- its copies are not compared",
+      "counts": {
+        "failed": 0
+      },
+      "failures": []
+    },
+    {
+      "name": "files",
+      "status": "ok",
+      "counts": {
+        "failed": 0
+      },
+      "failures": []
+    },
+    {
+      "name": "tree",
+      "status": "ok",
+      "counts": {
+        "failed": 0
+      },
+      "failures": []
+    }
+  ]
+}

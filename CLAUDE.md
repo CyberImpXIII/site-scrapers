@@ -223,9 +223,11 @@ contract (`test/cli.test.js` calls it "the jq contract"), `dev.sh` emits lines.
 Reach for `dev.sh inside` rather than piping `lab.js inside` through jq, and if
 the summary you want is not there, add it rather than filtering inline.
 
-**Before committing: `./dev.sh check`** — suite, offline audit and working tree
-in one command, exiting non-zero if the suite fails. An `error` from the audit
-means something is already broken.
+**Before committing: `./dev.sh check`** — suite, offline audit, hooks and working
+tree in one command, exiting non-zero if the suite fails. An `error` from the audit
+means something is already broken. `./dev.sh check --json` prints the same gates
+as one document in the shared check schema (`devtools/checkjson.js`,
+`test/check-json.test.js`) and is red on any gate's finding, not only the suite's.
 
 **A warning you have checked gets waived, not re-derived.** `./dev.sh waive
 <target> <rule> '<what you checked>'` writes an `AUDIT-VERIFIED[rule]` line the

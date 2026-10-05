@@ -10,7 +10,8 @@
 # The larger saving is on OUTPUT, not input: these print a few lines instead
 # of the hundreds a raw command emits, so reading the result is cheap too.
 #
-#   ./dev.sh check                          # THE PRE-COMMIT GATE: suite + offline audit + working tree
+#   ./dev.sh check [--json]                 # THE PRE-COMMIT GATE: suite + offline audit + hooks + working tree
+#                                           #   (--json: one document in the shared check schema, non-zero unless ok)
 #   ./dev.sh test [n]                       # run the suite (n times, for flake-checking); summary only
 #   ./dev.sh audit                          # offline audit findings, one line each (silent = clean)
 #   ./dev.sh run <target> '<params>' ...    # run recipes, one line each: success / count / first record
@@ -58,6 +59,60 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 # file so it never reads, races over, or deletes a real override. (Setting it
 # grants nothing new -- `./dev.sh browser-ok` already opens the door.)
 BROWSER_OK="${SS_BROWSER_OK:-$DIR/data/.browser-ok}"
+
+# ---- the gates `check` runs ------------------------------------------------
+# One function per gate, its verdict in its exit code: 0 ok, 1 fail (a
+# finding), 3 unchecked (it could not compare everything it says it covers, and
+# printed `  UNCHECKED  <why>`), anything else broke. `check` runs each in its
+# own subshell; `check --json` hands each one's output and exit to
+# devtools/checkjson.js, which prints the one schema
+# (tools/checks/schema/check-json.schema.json). test/check-json.test.js holds
+# the wiring: every gate here has a role and a function, the gates are swapped
+# for canned ones and the document compared, and a mutant per schema rule.
+GATES="test audit hooks tree"
+HOOKS_SCRIPT="$DIR/check-hooks.sh"
+
+# The schema's failure roles (code / tests / audit / docs): an audit finding is
+# a recipe the audit flagged; everything else here is the code's.
+gate_role() { case "$1" in audit) echo audit ;; *) echo code ;; esac; }
+
+gate_test() { ./test.sh; }
+
+# `node audit.js units` as finding lines (devtools/auditlines.js): exit 1 on an
+# unwaived error, 2 when the audit itself broke -- never read as clean.
+gate_audit() {
+  local out rc
+  out=$("$NODE_BIN" audit.js units); rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "  ERROR  node audit.js units exited $rc: the audit broke, nothing was checked"
+    return 2
+  fi
+  printf '%s' "$out" | "$NODE_BIN" devtools/auditlines.js
+}
+
+# check-hooks.sh exits 0 when it found no drift even if a declared location was
+# absent (printed UNCHECKED, counted in its last line): that is not a full pass,
+# so it is reported as unchecked. A finding (exit 1) stays a failure.
+gate_hooks() {
+  local out rc
+  out=$("$HOOKS_SCRIPT" 2>&1); rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" = 0 ] && printf '%s\n' "$out" | grep -q '^  UNCHECKED  '; then return 3; fi
+  return "$rc"
+}
+
+# The working tree is reported, never judged: another session's work being
+# here is not this tree's failure.
+gate_tree() {
+  local st
+  st=$(git status --porcelain 2>&1) || { echo "  ERROR  git status failed: $st"; return 2; }
+  if [ -n "$st" ]; then
+    git status --short
+    echo "(stage only your own paths if another session's work is here)"
+  else
+    echo "clean"
+  fi
+}
 
 cmd="${1:-}"; shift || true
 
@@ -118,53 +173,77 @@ case "$cmd" in
     # regression and the natural response is to re-run until it passes, which
     # is exactly the habit a pre-commit gate exists to prevent. Blocked rather
     # than documented, per CLAUDE.md: make the wrong thing impossible.
+    #
+    # --json prints one document in the shared schema instead (one check per
+    # gate above, each failure with message/file/line/role) and exits non-zero
+    # when it is not ok -- which, unlike the text mode, includes an audit error
+    # or a hook finding. stdout then holds only the JSON.
+    json=0
+    [ "${1:-}" = "--json" ] && json=1
     lockdir="$DIR/.check.lock"
     if ! mkdir "$lockdir" 2>/dev/null; then
       holder=$(cat "$lockdir/pid" 2>/dev/null || echo "?")
       # A crashed run leaves the directory behind; reclaim it rather than
       # wedging the gate forever, but only once we KNOW that pid is gone.
       if [ "$holder" != "?" ] && kill -0 "$holder" 2>/dev/null; then
-        echo "another ./dev.sh check is already running (pid $holder)."
-        echo "Concurrent checks share one DB and produce meaningless failures — wait for it, or kill it."
+        msg="another ./dev.sh check is already running (pid $holder). Concurrent checks share one DB and produce meaningless failures: wait for it, or kill it."
+        if [ "$json" = 1 ]; then
+          lockout=$(mktemp)
+          echo "  ERROR  $msg" > "$lockout"
+          "$NODE_BIN" devtools/checkjson.js "lock:code:2:$lockout"; code=$?
+          rm -f "$lockout"
+          exit "$code"
+        fi
+        echo "$msg"
         exit 2
       fi
-      echo "   (reclaimed a stale lock from pid $holder)"
-      rm -rf "$lockdir"; mkdir "$lockdir" || { echo "could not take the check lock"; exit 2; }
+      echo "   (reclaimed a stale lock from pid $holder)" >&2
+      rm -rf "$lockdir"; mkdir "$lockdir" || { echo "could not take the check lock" >&2; exit 2; }
     fi
     echo $$ > "$lockdir/pid"
     trap 'rm -rf "$lockdir"' EXIT INT TERM
+
+    if [ "$json" = 1 ]; then
+      # Each gate in its own subshell, so nothing a gate assigns or exits with
+      # reaches this loop; its output to a file, so stdout stays one document.
+      capdir=$(mktemp -d)
+      rows=()
+      for g in $GATES; do
+        dest="$capdir/$g.out"
+        ( "gate_$g" ) >"$dest" 2>&1; code=$?
+        rows+=("$g:$(gate_role "$g"):$code:$dest")
+      done
+      "$NODE_BIN" devtools/checkjson.js "${rows[@]}"; code=$?
+      rm -rf "$capdir"
+      exit "$code"
+    fi
 
     echo "-- suite"
     # test.sh is already quiet, so a clean run collapses to one line here. When
     # it fails, print what it said IN FULL -- the assertion, the diff and the
     # file:line. It used to be grepped down to the failing test's name, which
     # told you something broke and then made you run it again to find out what.
-    suiteout=$(./test.sh 2>&1); suiterc=$?
+    suiteout=$( gate_test 2>&1 ); suiterc=$?
     if [ "$suiterc" = 0 ]; then
       printf '   %s\n' "$(printf '%s' "$suiteout" | tr '\n' ' ')"
     else
       printf '%s\n' "$suiteout" | sed 's/^/   /'
     fi
     echo "-- offline audit"
-    "$0" audit | sed 's/^/   /'
+    ( gate_audit ) 2>&1 | sed 's/^/   /'
     # The hook layer, which enforces three rules and until now had none of the
     # guarantees it provides. Reported here rather than left to be remembered,
     # for the same reason the audit is.
     echo "-- hooks"
-    hookout=$("$DIR/check-hooks.sh" 2>&1); hookrc=$?
-    if [ "$hookrc" = 0 ]; then
+    hookout=$( gate_hooks 2>&1 ); hookrc=$?
+    if [ "$hookrc" = 0 ] || [ "$hookrc" = 3 ]; then
       printf '%s\n' "$hookout" | tail -1 | sed 's/^/   /'
     else
       printf '%s\n' "$hookout" | grep -E '^  (ERROR|note|UNCHECKED)' | sed 's/^ */   /'
       printf '%s\n' "$hookout" | tail -1 | sed 's/^/   /'
     fi
     echo "-- working tree"
-    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-      git status --short | sed 's/^/   /'
-      echo "   (stage only your own paths if another session's work is here)"
-    else
-      echo "   clean"
-    fi
+    ( gate_tree ) 2>&1 | sed 's/^/   /'
     # Gates on test.sh's own exit code rather than on matching "# fail 0" in
     # its text: a run that dies before printing a summary has no such line, and
     # a string match would have read that as a pass.
@@ -172,25 +251,11 @@ case "$cmd" in
     ;;
 
   audit)
-    # The offline checks, as findings rather than a JSON document. Prints
-    # nothing when clean, which is the point: `node audit.js units` emits a
-    # wrapper object either way, so "is it clean" needs reading rather than
-    # looking.
-    "$NODE_BIN" audit.js units | "$NODE_BIN" -e '
-      let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
-        const d=JSON.parse(raw);
-        for (const f of d.unitInvariants||[]) {
-          // A waived finding is one already checked against the live site, so
-          // it reads as settled rather than outstanding -- otherwise the next
-          // session re-investigates it, which is the whole reason waivers
-          // exist. The reason and the date are shown so a stale one is
-          // visible as stale rather than trusted forever.
-          const tag = f.waived ? "OK/W" : f.severity.toUpperCase();
-          console.log(`${tag.padEnd(5)} ${f.unit.padEnd(52)} ${f.problem}`);
-          if (f.waived) console.log(`      waived ${f.waived.on}: ${f.waived.reason}`);
-        }
-        if (!(d.unitInvariants||[]).length) console.log("units: clean");
-      });'
+    # The offline checks, as findings rather than a JSON document
+    # (devtools/auditlines.js; was an inline `node -e` here). `units: clean`
+    # when there is nothing; exits 1 on an unwaived error, 2 when the audit
+    # itself broke.
+    gate_audit
     ;;
 
   inside)
