@@ -129,6 +129,11 @@ chosen options back.
 The `describe_application_form` output now carries the same `formHash` on its
 `forms` diagnostic, so a packet can store it and compare without re-hashing.
 
+A row's `label` (and a described `group.question`) is the whole text, as
+describe reports it (since 2026-10-05; both were cut at 60 characters plus an
+ellipsis before). Only a hostile page hits `MAX_LABEL_CHARS` (1000,
+lib/probes.js), and describe's `labelsTruncated` counts those fields.
+
 ### Multi-option questions (new in `/2`)
 
 Checkboxes or radios sharing a `name`, two or more, are one QUESTION. In the

@@ -123,7 +123,7 @@ test('forms caps how many fields it reports and truncates labels', async () => {
     tag: 'input',
     type: 'text',
     name: `f${i}`,
-    label: 'L'.repeat(1000),
+    label: 'L'.repeat(5000),
     placeholder: 'P'.repeat(1000),
     required: false,
     requiredEvidence: null,
@@ -138,9 +138,14 @@ test('forms caps how many fields it reports and truncates labels', async () => {
   assert.equal(result.fields.length, MAX_FORM_FIELDS, `expected a capped field list, got ${result.fields.length}`);
   assert.equal(result.truncated, true);
   assert.equal(result.totalFields, 200);
+  // Labels are whole up to MAX_LABEL_CHARS (a hostile-page cap, not a
+  // readability one), and every field the cap shortened is counted.
+  const { MAX_LABEL_CHARS } = require('../lib/probes');
   for (const f of result.fields) {
-    if (f.label) assert.ok(f.label.length <= 100, `label should be truncated, got ${f.label.length}`);
+    assert.equal(f.label.length, MAX_LABEL_CHARS + 1, `label should be capped with a marker, got ${f.label.length}`);
+    assert.ok(f.label.endsWith('…'));
   }
+  assert.equal(result.labelsTruncated, MAX_FORM_FIELDS);
 });
 
 test('a probe never reports a form field value, even when the page offers one', async () => {

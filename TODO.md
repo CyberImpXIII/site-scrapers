@@ -568,15 +568,27 @@ refuses keys it does not write. Open:
   3, failed 0, wallCheck clear, formHash 995e5996b122f252 = description,
   `dryRun:true`, `navigatedDuringFill:false`, final URL = the iframe's job_app
   src. Other employer hosts embedding an ATS still need their own pair.
-  Open: (a) the form has a required "Just to ensure that you're human, on
-  https://p3m.dev, what a..." text question (#question_32848993003) -- an
-  applicant answer, not an engine-detected wall, but whether an agent may
-  answer a human-check question is Jacob's call; told applications via the
-  report. (b) verify.js takes params only inline (no `@path.json` as
+  Open: (a) the form has a required text question (#question_32848993003),
+  read whole on 2026-10-05 once labels stopped being cut at 60: "Just to
+  ensure that you're human, on https://p3m.dev, what are there sixteen
+  thousand of?*" -- a human-check challenge needing a visit to another site.
+  Not an engine-detected wall; NOT answered by any agent; Jacob's call, told
+  applications via the report. (b) verify.js takes params only inline (no `@path.json` as
   engine.js has), so a fill verify puts answers on argv; fake values here,
   but real ones must not go that way. (c) verify.js's `fill` report omits
   `dryRun` and `navigatedDuringFill` (a navigation still fails the verdict,
   via status `error`), so the dry-run proof had to come from a scrape.sh run.
+- **Labels are whole since 2026-10-05** (`MAX_LABEL_CHARS` 1000 in
+  lib/probes.js, `labelsTruncated` count; test/long-labels.test.js, fails 4/4
+  on the old code). Live posit 7999513003: 4 labels were over 60 (90-180
+  chars), formHash 995e5996b122f252 -> 9076e3685ca3d5bb because `label` is
+  hashed, so any stored description with a cut label reads formChanged once.
+  Reported to applications (via dispatcher): their `batch.label_cut_off`
+  matches the old 60+"…" shape exactly and will stop firing -- read
+  `labelsTruncated` instead; answers keyed by a cut label will not match the
+  whole one; re-describe stored packets. `placeholder` is still cut at 60
+  (cosmetic, not hashed) -- untouched, unconfirmed whether any form puts the
+  question there.
 - **`accessor` still red on `data/failures.db`** (second store, own CLI;
   cli.json takes one `cli`): tools/checks' decision, reported. And `./dev.sh
   check` never runs tools/checks, so this red is invisible there.

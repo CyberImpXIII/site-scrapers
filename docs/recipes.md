@@ -217,6 +217,12 @@ CAPTCHA response fields (`g-recaptcha-response`, `h-captcha-response`,
 `cf-turnstile-response`) are left out of `fields` and of `formHash` and
 counted in `captchaFieldsExcluded`: reCAPTCHA injects its textarea late, and
 it made the same form hash differently between reads.
+Labels (and a multi-option question's `group.question`) are returned whole,
+in describe and in the fill report alike (since 2026-10-05; they were cut at
+60 characters plus "…", which hid Posit's required human-check question).
+`MAX_LABEL_CHARS` (1000, lib/probes.js) caps them only against a hostile page,
+and `labelsTruncated` counts the fields it shortened. `label` is hashed, so a
+description stored with a cut label reads `formChanged:true` once: re-describe.
 
 **Recipes are versioned — use that instead of guessing what changed.** Every
 `register.js` call that actually alters a recipe snapshots it as a new minor
