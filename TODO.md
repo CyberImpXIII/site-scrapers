@@ -204,6 +204,8 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
   ERRORS** — 8 drifted hooks (no-inline-blobs, troubleshooting and 6 test-*.sh)
   plus 3 undeclared folders: income, tools/usage, and now tools/transcripts.
   Suite 529/529 in the same run. Not touched by the store-export session.
+  **Later 2026-10-05: copies rebuilt and folders declared (0m); `hooks
+  copies` agrees.**
 
 **`accessor` (tools/checks) is red on site-scrapers** — `tools/checks/checks
 one accessor site-scrapers`. Since 0l added `cli.json` (store data/scrapers.db,
@@ -215,6 +217,9 @@ an `impl`/`exclude` list: db.js IS the accessor every CLI here goes through
 (query/lab/register/verify/engine), so the check's one-CLI-per-store model does
 not describe this repo yet. Open decision for tools/checks' owner and Jacob:
 declare db.js + the CLIs as `impl`, or route them through one CLI.
+**2026-10-05 later (5e8d13c): `checks.json` declares impl db.js, store.js,
+lib/storeExport.js, excludes .gitignore; prose says "the recipe DB". Only
+`data/failures.db` remains (see 0m).**
 
 **Greenhouse boards that forward to the company's own site — FIXED.** Reported by
 applications: `job-boards.greenhouse.io/stabilityai` (2 redirects to
@@ -273,7 +278,9 @@ listing path's `withPage` (a browser launch), and the listing catch falls
 through to `outcome.timedOut` on undefined. Seen by reading engine.js, not by
 a run. Probe: run an article recipe with `SS_DEBUG`-style logging (or a
 console.error at the listing `withPage` entry) and see whether it prints.
-The forwarded branch added here returns explicitly.
+The forwarded branch added here returns explicitly. 2026-10-05 (0m): the
+article and listing catch blocks now `return` after emitAndExit too; the
+success paths were not audited.
 
 ---
 
@@ -538,30 +545,37 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
-## 0h. Hook reinstall BLOCKED on a test conflict; rules/.env DONE (2026-10-04)
+## 0m. Hook rebuild, not-the-page, posit/pantheon, accessor (2026-10-05, relayed task) — open edges
 
-**(2) DONE 2026-10-04** on the planner record "Decision 12 revised" (top-level
-TODO.md; the literal marker "approved: Jacob 2026-10-04" the brief named was
-NOT found there, only the decision text with Jacob's quote). CLAUDE.md gained
-"## Constraints that don't bend" (the four top bullets, verbatim) above
-"Absolute constraints"; `.gitignore` ignores `.env`, `.env.*`, `*.env`, keeps
-`.env.example|sample|template`, gated by `test/gitignore-env.test.js` (both
-directions; fails against the old .gitignore). `checks run ../../site-scrapers`:
-no-secrets OK, rules-in-sync OK; only hooks-installed red (below).
+Done (662e178, c1a776d, 5e8d13c): `tools/setup site-scrapers --only hooks
+--rebuild` (0h resolved: hooks.test.js now asserts UNCHECKED exit 3; fixture
+hosts moved to example.com/.net/.org because 79703b6 skips .test hosts);
+DECLARED += income, tools/context-hygiene, tools/transcripts, tools/usage;
+`expect_url` / `goto_frame` steps; both Greenhouse recipes re-verified;
+`posit.co#action:describe_application_form` working (23 fields); lab.js set
+refuses keys it does not write. Open:
 
-**(1) NOT DONE -- needs Jacob's direct decision.** The tools/hooks source
-(79703b6) changes `test-prefer-recipes.sh` / `test-troubleshooting.sh` so that
-"site-scrapers not found" is `UNCHECKED`, exit 3, where the installed copies
-say `FAIL ... NOT FOUND`, exit 1. `test/hooks.test.js` ("the hook tests FAIL,
-not skip, when site-scrapers cannot be found", ~line 215) asserts exit 1 and
-the FAIL line, so a byte-exact reinstall turns it red. Copying succeeded (cmp
-equal, +x, each copy's own test-*.sh passed from here), but editing that
-assertion to the new contract was refused by the auto-mode classifier as
-"Security Test Removal", so both the copies and the test edit were reverted;
-the repo is at its committed hooks. Options for Jacob: (a) approve changing the
-assertion to exit 3 + UNCHECKED (still never "all cases passed"), then
-reinstall; (b) ask tools/hooks to keep exit 1 for not-found. Until then
-`hooks-installed` and `./dev.sh hooks` stay red on the 5 drifted files.
+- **hooks.test.js 4 is red until Jacob applies `.claude/settings.proposed.json`**
+  (the 7 new hooks exist but settings.json does not wire them). Jacob's step.
+- **pantheon.io: no recipe.** Headless, job 8202241's page never loads the
+  Greenhouse embed (`#grnhse_app` holds only a hidden "Open req" `<p>`, no
+  greenhouse frame, even after accepting OneTrust and reloading). antibot saw a
+  reCAPTCHA widget, present, not blocking; not a wall, not routed around. Pantheon
+  8177795 (applications/job-urls.json) is CLOSED. Told applications via the report.
+- **Employer hosts need fill recipes too** (posit.co has describe only).
+- **`accessor` still red on `data/failures.db`** (second store, own CLI;
+  cli.json takes one `cli`): tools/checks' decision, reported. And `./dev.sh
+  check` never runs tools/checks, so this red is invisible there.
+- **`forwarded` is not inconclusive in verify.js** the way `notThePage` now is:
+  a forwarded board run with alreadyProven=false would read as broken. Fold it
+  into `decideVerdict` with a test.
+- **The article path falls back to `document.body`** when content_selector is
+  missing or misses, which is how the closed posting read as success. expect_url
+  covers Greenhouse; other article recipes still accept any page.
+- **check-hooks.sh still picks `.[0]` working host** (the 127.0.0.1 race in 0i).
+- **lab.js forms-probe crash fix (non-array `fields`) has no test.**
+- Scrape.sh printed Puppeteer's "x64 Node on arm64, Rosetta" warning on
+  2026-10-05 runs (UNCONFIRMED which node; settle: `file $(which node)`).
 
 ## 0g. LinkedIn remote filter reported ignored by emailTools (recorded 2026-10-04)
 
