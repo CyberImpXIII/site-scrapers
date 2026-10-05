@@ -185,8 +185,33 @@ fixture `test/fixtures/ats/`). Open:
   above. Jacob's to decide (an arm64 node); not changed here.
 - **Live file upload unverified.** The fixture proves `#resume` upload; the live run
   answered text and comboboxes only. Next live verify should attach a fake .txt.
-- **Multi-select comboboxes unsupported** (one answer string = one option). No
-  Greenhouse field seen needing it yet; a `multi-value` readback exists, the fill does not.
+- **Multi-select: DONE 2026-10-04 offline, NOT yet seen live.** A list answer fills a
+  `<select multiple>` (exactly that set) or a react-select isMulti combobox (each
+  option picked, read back from chips); describe marks both `multiple: true`. One
+  definition, `lib/multiSelect.js`, used by probe and fill; gated by
+  `test/multi-select.test.js` (fixture `?multi=1|pre`). Open: (a) the combobox
+  signal is react-select's `value-container--is-multi` class, taken from its
+  documented markup, not from a live Greenhouse form (none seen needing it); a
+  multi control without that class is described `multiple:false` and a list for
+  it fails `answer_type_mismatch` (safe direction). (b) removing a chip is not
+  supported: a combobox already holding an option outside the answer fails
+  `unsupported_control` untouched. (c) a combobox list that fails at entry k
+  leaves entries 1..k-1 chosen (said in `detail`); the native select is atomic.
+  (d) contract id stays `/2` (output shape unchanged, input broadened); the
+  applications side must send lists to use it -- tell them via the dispatcher.
+- **Fill screenshot: DONE 2026-10-04 offline, NOT yet seen live.** Opt-in param
+  `fillScreenshot: true` on the fill action; output gets a top-level sibling key
+  `fillScreenshot` (`null` | `{path, error}`), NOT a key inside `fill`, so the
+  applications Python allowlist (`RESULT_KEYS`) and contract id `/2` are
+  untouched. `lib/fillScreenshot.js`, documented in `docs/fill-output.md`
+  "Screenshot", gated by `test/fill-screenshot.test.js` (doc == code, gitignored,
+  PNG bytes differ with the answers, no answer text in the output, bad param ->
+  error not a throw, prune). Open: (a) the PNG holds the ANSWERS in plain sight;
+  it is mode 0600 in gitignored `data/.fills/` and pruned to the newest 50, so a
+  caller must COPY it to keep it -- tell applications. (b) full-page capture of
+  a very tall form is untested past the fixture. (c) the image is taken after
+  the fill and before any submit; there is no submit click anywhere in the path
+  (zero-submit asserted on every fixture run).
 - **The phone-country picker is labelled just "Country"** on live Greenhouse and its
   options carry the dial code (`United States +1`). A caller matching on the label
   will answer `United States` and get `no_matching_option` (detail lists offers).
@@ -291,6 +316,40 @@ slice 2's data: for a page of this shape, which actions have worked before.
 Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
+
+## 0g. LinkedIn remote filter reported ignored by emailTools (recorded 2026-10-04)
+
+Relayed by the dispatcher from `emailTools/TODO.md` "Reported to other owners":
+"site-scrapers (Scraper plugin folder check): LinkedIn remote filter ignored".
+Evidence on this side, before any new run:
+- **30ab828 (2026-09-27)** already acted on it: `linkedin.com#listing` had a
+  hard-coded `f_WT=2`; 12 inspected cards were city-specific and the guest
+  search returned the same 60 cards with or without it. The filter was removed
+  and `nav_params_schema` now says the recipe CANNOT filter by workplace type.
+  `emailTools/CLAUDE.md:205` records it as fixed by us; their TODO still lists
+  it as open (theirs to trim -- tell them via the report).
+- **Stale on our side**: the recipe's `notes` still say "f_WT=2 is LinkedIn's
+  Remote filter, but cards still show a city", contradicting the schema.
+- **Ungated**: 30ab828's "same 60 with or without" was a COUNT, which is exactly
+  the blind spot in 0d (60 is the page size). Nothing stops a remote param from
+  being re-added and silently ignored again except `audit.js params`, which
+  needs the param to exist.
+**Bug found while planning this (2026-10-04), NOT fixed:** `substitute()` in
+engine.js puts a param into a `url_param` template RAW, unencoded. So
+`keywords: "R&D support"` sends `keywords=R` plus a stray `D support` param:
+a silent wrong search, `success:true`. Same for `#`, `+`, `%`. A blanket
+`encodeURIComponent` is not safe either: some templates may take a path
+segment or a pre-encoded value (glassdoor's slug). Needs a per-placeholder
+decision (query value vs path) and a test with `&` in a value; check every
+url_param recipe's placeholders first.
+
+**Small bug seen 2026-10-04, NOT fixed:** `node lab.js new bandcamp.com#article`
+prints a skeleton with `hostname: "bandcamp.com#article"` and `page_type:
+"listing"`: it does not parse the target with `parseSiteArg`.
+
+Open: does the guest search honour `f_WT=2` TODAY, by record identity (not
+count)? If yes, a `remote` param with probe values that change the records; if
+no, the notes are fixed and the result recorded here. Status below as it lands.
 
 ## 0f. New recipe requested: bandcamp.com article (release date) — LOW PRIORITY
 

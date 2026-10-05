@@ -26,7 +26,9 @@
   vary its markup: typed, untyped inside the form, or form= outside it), and
   CAPTCHA (?captcha=1 adds reCAPTCHA's response textarea, as its script does),
   and GROUPS (?groups=1 adds a multi-option checkbox question and a radio
-  question, in the live Greenhouse and Lever markup; see server.js).
+  question, in the live Greenhouse and Lever markup; see server.js), and MULTI
+  (?multi=1 adds a react-select isMulti combobox and a native <select multiple>;
+  ?multi=pre starts the combobox with one option already chosen).
 -->
 <html>
 <head>
@@ -129,6 +131,7 @@ and nothing entered here goes anywhere but a local test server that counts what 
     I have read the fixture privacy notice</label></div>
 
   <!--GROUPS-->
+  <!--MULTI-->
 
   <input type="text" id="website_hp" name="website_hp" style="display:none" autocomplete="off">
 
@@ -162,7 +165,11 @@ and nothing entered here goes anywhere but a local test server that counts what 
       if (el.type === 'checkbox' || el.type === 'radio') out[el.id] = el.checked;
       else if (el.type === 'file') out[el.id] = Array.prototype.map.call(el.files || [], function (f) { return f.name; });
       else if (el.getAttribute('role') === 'combobox') {
-        out[el.id] = el.closest('.select__container').querySelector('.select__single-value').textContent;
+        var box = el.closest('.select__container');
+        var one = box.querySelector('.select__single-value');
+        out[el.id] = one ? one.textContent : Array.prototype.map.call(box.querySelectorAll('.select__multi-value__label'), function (c) { return c.textContent; });
+      } else if (el.tagName === 'SELECT' && el.multiple) {
+        out[el.id] = Array.prototype.filter.call(el.options, function (o) { return o.selected; }).map(function (o) { return o.value; });
       } else out[el.id] = el.value;
     });
     return out;
@@ -218,7 +225,22 @@ and nothing entered here goes anywhere but a local test server that counts what 
     var options = JSON.parse(box.getAttribute('data-options'));
     var dial = box.getAttribute('data-display') === 'dial';
     var dead = new URLSearchParams(location.search).get('dead') === input.id;
-    if (dead) single.textContent = options[0].split(' ').pop();
+    if (dead && single) single.textContent = options[0].split(' ').pop();
+    // isMulti, as react-select renders it: the value container carries
+    // `--is-multi`, each chosen option is a chip (multi-value__label) placed
+    // before the input, the listbox is aria-multiselectable, and an option
+    // already chosen is no longer offered.
+    var multiBox = box.querySelector('.select__value-container--is-multi');
+    var chosen = [];
+    function addChip(label) {
+      chosen.push(label);
+      var chip = document.createElement('div');
+      chip.className = 'select__multi-value';
+      chip.innerHTML = '<div class="select__multi-value__label"></div><div class="select__multi-value__remove" role="button" aria-label="Remove">x</div>';
+      chip.firstChild.textContent = label;
+      multiBox.insertBefore(chip, multiBox.querySelector('.select__input-container'));
+    }
+    if (multiBox && box.getAttribute('data-pre')) addChip(box.getAttribute('data-pre'));
     var n = seq++;
     var listId = 'react-select-' + n + '-listbox';
     function close() {
@@ -230,12 +252,13 @@ and nothing entered here goes anywhere but a local test server that counts what 
     function open(filter) {
       close();
       var f = filter.toLowerCase();
-      var shown = options.filter(function (o) { return o.toLowerCase().indexOf(f) !== -1; });
+      var shown = options.filter(function (o) { return o.toLowerCase().indexOf(f) !== -1 && chosen.indexOf(o) === -1; });
       var menu = document.createElement('div');
       menu.className = 'select__menu';
       var list = document.createElement('div');
       list.id = listId;
       list.setAttribute('role', 'listbox');
+      if (multiBox) list.setAttribute('aria-multiselectable', 'true');
       shown.forEach(function (label, i) {
         var o = document.createElement('div');
         o.id = 'react-select-' + n + '-option-' + i;
@@ -243,7 +266,8 @@ and nothing entered here goes anywhere but a local test server that counts what 
         o.textContent = label;
         o.addEventListener('click', function () {
           if (dead) { close(); return; }
-          single.textContent = dial ? label.split(' ').pop() : label;
+          if (multiBox) addChip(label);
+          else single.textContent = dial ? label.split(' ').pop() : label;
           if (hidden) hidden.value = label;
           nativeSet.call(input, '');
           close();

@@ -73,6 +73,7 @@ const { authorize: authorizeWrite } = require('./lib/writeGuard');
 const logRun = (db, run) =>
   authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run && run.params ? { ...run, params: redactRunParams(run.params) } : run));
 const { fillForm } = require('./lib/fillForm');
+const { takeFillScreenshot } = require('./lib/fillScreenshot');
 const { redactRunParams, verdictInputsFromFill } = require('./lib/fillContract');
 const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
@@ -617,6 +618,9 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
           answers: fillParam(step.answers, params, 'answers'),
         });
         diagnostics.push(result);
+        // Opt-in, per run (params.fillScreenshot === true): the image holds
+        // the answers. lib/fillScreenshot.js; lifted to `fillScreenshot` below.
+        diagnostics.push({ kind: 'fill_screenshot', shot: await takeFillScreenshot(page, params.fillScreenshot, siteMeta) });
         break;
       }
       default:
@@ -1076,6 +1080,9 @@ async function main() {
     // caller's context for no use. See lib/fillContract.js.
     const fills = (articleOutcome.probeResults || []).filter(d => d && d.kind === 'fill');
     const fill = fills.length ? fills[fills.length - 1] : null;
+    const shots = (articleOutcome.probeResults || []).filter(d => d && d.kind === 'fill_screenshot');
+    const fillScreenshot = shots.length ? shots[shots.length - 1].shot : null;
+    if (articleOutcome.probeResults) articleOutcome.probeResults = articleOutcome.probeResults.filter(d => !(d && d.kind === 'fill_screenshot'));
     if (fill) {
       articleOutcome.probeResults = articleOutcome.probeResults.filter(d => !(d && d.kind === 'fill'));
       if (fills.length > 1) {
@@ -1090,7 +1097,7 @@ async function main() {
     const partialResults = !fill && isPartial(articleOutcome.timedOut, articleOutcome.blobLen);
 
     const output = {
-      ...(fill ? { fill } : {}),
+      ...(fill ? { fill, fillScreenshot } : {}),
       success,
       documented: true,
       timedOut: articleOutcome.timedOut,

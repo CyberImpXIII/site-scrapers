@@ -25,6 +25,11 @@ data/scrapers.db-shm
 # failed. Disposable debugging data, not an audit trail; never committed.
 data/.debug/
 
+# opt-in fill screenshots (params.fillScreenshot, lib/fillScreenshot.js) --
+# an image of a filled application form, i.e. of Jacob's answers. Never
+# committed; test/fill-screenshot.test.js checks this line holds.
+data/.fills/
+
 # troubleshooting knowledge base -- accumulates hostnames, selectors and
 # error text from real runs. Same reasoning as scrapers.db: the TAXONOMY
 # lives in lib/failureTypes.js (version-controlled), the observations do not.

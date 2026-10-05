@@ -33,10 +33,28 @@ Answer value by control (the `control` it is reported as):
 |---|---|
 | `text`, `textarea` | string (a number is accepted). A newline is allowed only in a `textarea`. |
 | `select`, `combobox` | the option's visible text, matched **exactly** (case and spacing ignored), or a native `<select>` option `value` |
+| `select`, `combobox` described `multiple: true` | a **list** of those (`["Saw", "Level"]`): the whole set to end up chosen. A one-element list is accepted by any select/combobox; a longer list on a control that takes one fails `answer_type_mismatch` and chooses nothing. `[]` is `no_answer`. |
 | `checkbox`, `radio` | `true` / `false` (a radio cannot be set `false`; answer the other option `true`) |
 | `file` | an **absolute** path to an existing file |
 
 A missing, `null` or `""` answer leaves the field `unfilled` with `no_answer`.
+
+**Several options** (added 2026-10-04, same contract id: the output shape is
+unchanged, only a list answer is newly accepted). `describe_application_form`
+marks such a field `multiple: true` -- a native `<select multiple>`, or a
+react-select combobox whose value container is `--is-multi`
+(`lib/multiSelect.js`; the fill uses the same test). The list is the whole set:
+
+- a `<select multiple>` ends up with exactly those options selected (any
+  preselected one not in the list is deselected); one entry that matches no
+  option fails the field `no_matching_option` and **nothing** is changed;
+- a combobox has each option chosen in turn and read back from its chips. If
+  it already shows an option that is NOT in the list, it fails
+  `unsupported_control` before anything is touched (removing an option is not
+  supported). If entry k fails, the field fails with that entry's reason and
+  `detail` says how many were chosen before it -- **those stay chosen**.
+- Measured on the offline fixture only: no live Greenhouse field taking
+  several options has been seen yet.
 
 Option text is **the site's**, not a natural phrasing: live Greenhouse's
 phone-country picker (labelled "Country") offers `United States +1`, so the
@@ -156,7 +174,7 @@ every unticked one in `requiredNotFilled`. **Re-describe** to get groups.
 | `hidden_control` | failed | not visible to a person (a honeypot looks exactly like this) |
 | `submit_control` | failed | the field is a button, or a click would have hit a submit control |
 | `disabled` | failed | disabled or read-only |
-| `unsupported_control` | failed | e.g. a password field (an account: needs Jacob), a multi-select |
+| `unsupported_control` | failed | e.g. a password field (an account: needs Jacob), a multi-option combobox already holding an option the answer leaves out |
 | `answer_type_mismatch` | failed | wrong answer type for the control (see the answer table) |
 | `multiline_in_single_line` | failed | a newline in a single-line field — typing it is Enter, which submits |
 | `exceeds_maxlength` | failed | longer than the field's `maxlength` |
@@ -207,7 +225,34 @@ look": do not retry unattended.
 before it). `wall.signals` are probe names: `captcha`, `botCheck`, `loginWall`,
 or `antibot:<service>`.
 
+## Screenshot
+
+Opt-in, per run: pass `"fillScreenshot": true` beside `url`, `fields` and
+`answers`. After the fill (and its readback) the engine takes one full-page
+PNG of the form as it then stands -- a screenshot and nothing else: no click,
+no key, nothing that could submit. It is reported in a top-level
+**`fillScreenshot`**, a sibling of `fill`, **not inside it** (the `fill` keys
+are unchanged; the contract id stays `/2`). `fillScreenshot` is present exactly
+when `fill` is:
+
+| value | when |
+|---|---|
+| `null` | not asked for (`fillScreenshot` absent, `null` or `false`) |
+| `{"path": "/abs/…/data/.fills/<stamp>__<host>__<pid>.png", "error": null}` | taken |
+| `{"path": null, "error": "<why>"}` | asked for and not taken (a bad param value, or the page could not be captured). Never a guess. |
+
+Keys of the object: `path`, `error` -- nothing else (`lib/fillScreenshot.js`
+`validateFillScreenshot`; test/fill-screenshot.test.js holds this section,
+the code and a real run to each other).
+
+**The image shows the filled answers.** That is why it is never taken by
+default. The file is mode 0600 in `data/.fills/` (0700, gitignored), and only
+the newest 50 are kept: **copy it into your own private store if you keep
+it**; the path is not permanent.
+
 ## Privacy
 
 `answers` are never logged: `scrape_runs.params_json` keeps only their keys,
-and `fields` is reduced to a count. Nothing in the output contains an answer.
+and `fields` is reduced to a count. Nothing in the output contains an answer
+-- except, when asked for, the screenshot FILE that `fillScreenshot.path`
+names (above); the output itself carries only the path.

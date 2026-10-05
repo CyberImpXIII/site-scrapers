@@ -68,6 +68,27 @@ const GROUPS =
   ['Fixtish', 'Testese', 'Mockian'].map(t => `<li><label><input type="checkbox" name="cards[fx-0001][field1]" required="">${t}</label></li>`).join('') +
   '</ul></div></div></li></ul>';
 
+// ?multi=1: controls that take SEVERAL options. A react-select isMulti
+// combobox (value container `--is-multi`, chips, see the page script) --
+// "Saw" and "Saw blade" share a prefix so a prefix match would be caught --
+// and a native <select multiple>. ?multi=pre starts the combobox with "Level"
+// already chosen. No live Greenhouse field of this kind measured yet (TODO.md).
+function multiControls(mode) {
+  if (!mode) return '';
+  const pre = mode === 'pre' ? ' data-pre="Level"' : '';
+  return (
+    '<div class="field"><label for="question_4004" id="question_4004-label">Which fixture tools do you use?</label>' +
+    `<div class="select__container" data-options='["Hammer","Saw","Saw blade","Level"]'${pre}>` +
+    '<div class="select__control"><div class="select__value-container select__value-container--is-multi">' +
+    '<div class="select__input-container"><input id="question_4004" class="select__input" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-labelledby="question_4004-label" autocomplete="off"></div>' +
+    '</div></div></div></div>' +
+    '<div class="field"><label for="languages">Fixture languages</label>' +
+    '<select id="languages" name="languages" multiple>' +
+    '<option value="en">English</option><option value="fx" selected>Fixtish</option><option value="ts">Testese</option><option value="mk">Mockian</option>' +
+    '</select></div>'
+  );
+}
+
 // Submit controls, by ?submit=. Every one of these submits the form when
 // clicked, and the page counts it: typed, a <button> with no type INSIDE the
 // form (submit by default), and a <button form=...> OUTSIDE it (form-owned).
@@ -105,6 +126,7 @@ function render(ats, query) {
     .replace('<!--SUBMIT_IN_FORM-->', submit.inForm)
     .replace('<!--SUBMIT_OUTSIDE_FORM-->', submit.outside)
     .replace('<!--GROUPS-->', query.get('groups') ? GROUPS : '')
+    .replace('<!--MULTI-->', multiControls(query.get('multi')))
     // ?captcha=1: the textarea reCAPTCHA's script injects, in its live shape
     // (per-widget id suffix, display:none). No widget, no network.
     .replace('<!--CAPTCHA-->', query.get('captcha')
