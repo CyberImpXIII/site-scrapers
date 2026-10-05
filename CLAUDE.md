@@ -219,6 +219,8 @@ dev.sh      check | test [n] | audit | run | verify | inside | apply | waive
             page | hooks | known | failures | board | browser-ok
             health | blocked | snap | new | clean
 init.js     first-run setup after a clone
+store.sh    export | import | verify [--db PATH]   the store's plain-file form in $DATA_REPO/site-scrapers/
+            (cli.json; contract in lib/storeExport.js — no history, no runs, no credentials)
 ```
 
 `dev.sh` is the **human-readable layer** over those CLIs — they emit JSON by

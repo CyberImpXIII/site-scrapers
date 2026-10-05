@@ -707,6 +707,21 @@ function upsertSite(db, site) {
   }
 }
 
+// Inserts one recipe row EXACTLY as given: every key a `sites` column (never
+// `id`), every value stored as is, timestamps included. The import half of
+// store.js (lib/storeExport.js), which recreates a store from its export:
+// upsertSite would stamp first_seen/last_verified with "now", and a recipe
+// imported today was not verified today. Guarded like every other writer.
+function insertSiteRow(db, row) {
+  assertAuthorized('insertSiteRow');
+  const cols = new Set(db.prepare('PRAGMA table_info(sites)').all().map(c => c.name));
+  const keys = Object.keys(row);
+  const bad = keys.filter(k => k === 'id' || !cols.has(k));
+  if (bad.length) throw new Error(`insertSiteRow: not an insertable sites column: ${bad.join(', ')}`);
+  db.prepare(`INSERT INTO sites (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).run(...keys.map(k => row[k]));
+  return getSite(db, row.hostname, row.page_type, row.recipe_name).id;
+}
+
 // The canonical, comparable form of a recipe: everything that defines
 // BEHAVIOR, and nothing that merely records bookkeeping. ids and
 // first_seen/last_verified are excluded on purpose — otherwise every
@@ -1245,6 +1260,7 @@ module.exports = {
   getFields,
   listSites,
   upsertSite,
+  insertSiteRow,
   insertField,
   logRun,
   recordObservation,
@@ -1271,5 +1287,6 @@ module.exports = {
   listGenericActions,
   getGenericAction,
   upsertGenericAction,
+  ACTION_TYPES_SEED,
   DB_PATH,
 };

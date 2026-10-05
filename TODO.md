@@ -83,6 +83,51 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## 0l. Store export / import / verify (PLAN-repo-setup §7.11) — DONE 2026-10-05, open decisions
+
+`store.sh export | import | verify [--db PATH]` (`store.js`, `lib/storeExport.js`,
+declared in `cli.json`), into `$DATA_REPO/site-scrapers/`. The contract is
+`lib/storeExport.js`'s header and the export's own `manifest.json`. Tests:
+`test/store-export.test.js` (round trip all same; one altered recipe ->
+`differs` naming the column; schema classification both ways; verify output vs
+tools/checks' verify schema; refusals). Live round trip 2026-10-05 against
+scratch copies: 69 items exported, imported into an empty `--db` store, verify
+69/69 same; `tools/checks/checks one stores-exported site-scrapers` green, and
+RED naming the recipe and column after one exported recipe's `notes` was edited.
+
+Open decisions (each my call this session, stated in the contract, revisitable):
+- **History is not exported** (recipe_versions, change_log): an imported recipe
+  starts at v1.0. Hinges on whether a rebuilt machine needs `query.js restore`
+  to reach versions from before the rebuild. Exporting it would make every
+  verify compare history too.
+- **Imported statuses carry no local run evidence.** `working` comes back as
+  `working` but scrape_runs is not exported (params_json can hold caller
+  values), so `definitionHasPassingRun` is false until verify.js runs it. Settle
+  by deciding whether import should demote to `needs-review` instead.
+- **page_observations not exported** (measurements, re-earned by `primitives.js try`).
+- **failures.db is not exported or declared.** It has its own CLI; one CLI per
+  store is tools/checks' rule, and cli.json takes one `cli`.
+- **Nothing exports automatically.** PLAN-routing-tree §14.6's `write` service
+  (export after each sanctioned write) is not built; until then the export is
+  only as fresh as the last `store.sh export`, and `stores-exported` will say
+  `differs` after any lab.js/register.js/verify.js write.
+- **Credential guard is structural only** (a literal typed into a password-like
+  selector, a literal under a credential-named key). Value shapes are left to the
+  data repo's `no-secrets` check rather than a third copy of its patterns.
+  `checks one no-secrets` on the scratch export: no value findings, only
+  ".env: not git-ignored" (the scratch folder had no .gitignore; the data
+  repo's .gitignore is setup's).
+- **Isolation is `--db PATH` only** (`openDb(file)`); 0k's `SS_DB` env override
+  is still not built, so engine/verify/lab children cannot be pointed elsewhere.
+
+**Found and fixed on the way: a fresh store lacked 2 builtins after its first
+open.** Seeding validated each builtin against the DB, so one whose steps
+`run` another not yet seeded (detect_blockers_then_handoff, open_apply_form)
+was rejected as an unknown ref until the next open. Seeding now runs in passes.
+`test/builtins.test.js` gains a gate with the real lib/gate.js present (the old
+fresh-DB test copied db.js without it, so validation never ran there);
+mutation-checked: with seeding forced to one pass the new test fails.
+
 ## 0j. blocked-guard in the CLI (PLAN-hard-gates §7 phase 5) — DONE 2026-10-05, open edges
 
 `lib/blockedGuard.js`, wired in `engine.js` before the `allowUnverified` gate;
@@ -158,9 +203,15 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
   then join the drift question, so it waits with it.
 
 **`accessor` (tools/checks) is red on site-scrapers** — `tools/checks/checks
-one accessor site-scrapers`: `data/failures.db` and `data/scrapers.db` have no
-`cli.json`. Not fixed on purpose: it waits on setup's skeleton shapes for what
-a `cli.json` holds. Recorded at the dispatcher's request.
+one accessor site-scrapers`. Since 0l added `cli.json` (store data/scrapers.db,
+cli store.sh), 2026-10-05 it flags: `data/failures.db` not named by cli.json,
+and files naming `scrapers.db` around store.sh — .gitignore, db.js, dev.sh,
+failures.js, failuresDb.js, init.js, lib/failureTypes.js, lib/gate.js,
+lib/primitives.js, lib/storeExport.js, primitives.js, store.js. Not "fixed" with
+an `impl`/`exclude` list: db.js IS the accessor every CLI here goes through
+(query/lab/register/verify/engine), so the check's one-CLI-per-store model does
+not describe this repo yet. Open decision for tools/checks' owner and Jacob:
+declare db.js + the CLIs as `impl`, or route them through one CLI.
 
 **Greenhouse boards that forward to the company's own site — FIXED.** Reported by
 applications: `job-boards.greenhouse.io/stabilityai` (2 redirects to
