@@ -851,6 +851,13 @@ than prose, each because prose had already failed:
 | `prefer-recipes.sh` | WebFetch / Claude-in-Chrome navigation to a host with a `working` recipe | `./dev.sh browser-ok` opens a 15-minute window |
 | `troubleshooting.sh` | re-running a `blocked-attn` recipe | `--attended`, which is the sanctioned next step and is never blocked |
 
+The `blocked-attn` rule is also held by the CLI itself, so it does not depend on
+the hook being installed or parsing the command: `engine.js` (and so
+`scrape.sh`, `lab.js`, `verify.js`) refuses an unattended run of a
+`blocked-attn` recipe even with `allowUnverified`, printing
+`refused: "blocked-attn"` and the `--attended` command (`lib/blockedGuard.js`,
+`test/blocked-guard.test.js`).
+
 `prefer-recipes.sh` is the one that makes the engine the *primary* way to read a
 page rather than an optimisation you have to remember: the "Why this saves
 tokens" numbers below only materialise if the recipe actually gets used, and

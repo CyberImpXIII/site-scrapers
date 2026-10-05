@@ -53,6 +53,7 @@ const { decideVerdict } = require('./lib/verdict');
 const { verdictInputsFromFill } = require('./lib/fillContract');
 const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
 const { authorizeAsync } = require('./lib/writeGuard');
+const { isBlockedRefusal } = require('./lib/blockedGuard');
 
 const REPO_ROOT = __dirname;
 
@@ -67,7 +68,7 @@ async function main() {
   if (!target) {
     out({
       success: false,
-      error: "Usage: node verify.js <hostname>[#page_type[:recipe_name]] '<json params>' [--dry]",
+      error: "Usage: node verify.js <hostname>[#page_type[:recipe_name]] '<json params>' [--dry] [--attended]",
     });
     process.exit(1);
   }
@@ -81,7 +82,7 @@ async function main() {
   }
 
   let params = {};
-  if (paramsArg && paramsArg !== '--dry') {
+  if (paramsArg && !paramsArg.startsWith('--')) {
     try {
       params = JSON.parse(paramsArg);
     } catch (e) {
@@ -123,6 +124,14 @@ async function main() {
       out({ success: false, error: `engine.js produced no parseable output: ${(e.stderr || e.message || '').slice(0, 400)}` });
       process.exit(1);
     }
+  }
+
+  // A blocked-guard refusal (lib/blockedGuard.js) is not a run, so it earns
+  // no status: read as "ran, produced nothing" it would demote the recipe.
+  // Nothing is written; the refusal names the --attended command.
+  if (isBlockedRefusal(result)) {
+    out(result);
+    process.exit(1);
   }
 
   // "Did it work" means records came back, not merely that nothing threw. A

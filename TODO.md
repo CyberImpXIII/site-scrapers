@@ -83,6 +83,33 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## 0j. blocked-guard in the CLI (PLAN-hard-gates §7 phase 5) — DONE 2026-10-05, open edges
+
+`lib/blockedGuard.js`, wired in `engine.js` before the `allowUnverified` gate;
+`lab.js` and `verify.js` stop on `refused: "blocked-attn"` instead of reading it
+as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.test.js`
+(mutation-checked: with the refuse line disabled, 4 of its tests fail). Open:
+
+- **Recipe-level, not host-level.** PLAN §3 row 21 says "a host whose last
+  recorded result is a wall"; this guards a RECIPE's `blocked-attn` status (the
+  status verify.js sets on an unattended wall). Not held: `lab.js probe/sel/inside`
+  and `primitives.js try <url>` take a bare URL through the internal prober, so a
+  URL on a blocked-attn host still runs. Deciding hinges on whether a host with
+  one blocked-attn recipe and another working one should refuse probes at all —
+  a question for the plan's owner, not guessed here.
+- **Reported to `hooks` (owner of tools/hooks/source, the troubleshooting.sh
+  source):** its block message ends "engine.js refuses a non-working recipe on
+  its own, but only when allowUnverified is absent — and lab.js sets it on every
+  run, which is how this state stayed reachable." Since this change that is
+  false (the CLI refuses regardless of allowUnverified). Expected: the message
+  says the CLI refuses too. Not edited here: the hook copies are synced from
+  that source, and 5 hook-copy drift errors are waiting on Jacob.
+- **engine.js early exits still fall through.** `emitAndExit` exits from a write
+  callback, so code after it keeps running until then. The `!site`, status and
+  blocked-guard exits now `return`; the usage and bad-JSON exits above them do
+  not. Observed harmless for usage: `node engine.js` with no args printed the
+  usage JSON, exit 1, nothing on stderr. Bad-JSON path not probed.
+
 ## 0i. `check --json`, forwarded boards, and what the shared checks see (2026-10-05)
 
 **`./dev.sh check --json` emits the one schema** (`devtools/checkjson.js`,

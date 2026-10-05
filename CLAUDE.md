@@ -118,7 +118,7 @@ verify.
 | `working` | a run extracted records from this exact definition |
 | `broken` | understood fault; ordinary work to fix |
 | `blocked` | **the site** needs a person every run. Recipe is fine — do not re-derive |
-| `blocked-attn` | **you** are stuck; the next step needs the user. Do NOT retry, that already failed — a hook now blocks the retry. Requires `notes` saying what only they can supply |
+| `blocked-attn` | **you** are stuck; the next step needs the user. Do NOT retry, that already failed — the CLI refuses an unattended run even with `allowUnverified` (`lib/blockedGuard.js`), and a hook blocks it earlier. Only `--attended` passes. Requires `notes` saying what only they can supply |
 
 `./dev.sh blocked` lists what is waiting on the user.
 
@@ -204,6 +204,7 @@ for read-only lookups.
 ## Commands
 
 ```
+scrape.sh   <target> '<params>' [--raw] [--attended]   (= engine.js; --attended is the only way to run a blocked-attn recipe)
 query.js    sites | site | runs | versions | diff | restore | promote | health
             generic-actions | expand | sessions | clear-session | debug-captures
 lab.js      probe | sel | inside | match | peek | raw | set | params | history | adopt-history | new

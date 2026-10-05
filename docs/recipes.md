@@ -10,6 +10,12 @@ otherwise be a deadlock: a recipe could never earn the status it is required to
 have. Pass `{"allowUnverified": true}` to run a candidate while building it.
 `lab.js` and `verify.js` pass it for you.
 
+**Except `blocked-attn`.** `allowUnverified` does not open it: the engine
+refuses an unattended run with `refused: "blocked-attn"` (`lib/blockedGuard.js`),
+and lab.js and verify.js print that refusal and stop rather than read it as a
+run. Only `--attended` (or `{"attended": true}`) passes, on `scrape.sh`,
+`engine.js`, `lab.js` or `verify.js` alike.
+
 ## Declaring parameters
 
 `nav_params_schema` is JSON documenting what a caller may pass, keyed by param

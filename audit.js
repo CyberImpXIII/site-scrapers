@@ -692,7 +692,10 @@ async function auditParameters(db, { run = defaultRunner() } = {}) {
     }
     const declared = Object.keys(schema);
     if (!declared.length) continue;
-    if (site.status === 'blocked' || site.status === 'broken') {
+    // blocked-attn: an unattended sweep run is exactly what blocked-guard
+    // (lib/blockedGuard.js) refuses, and two refusals compared as record sets
+    // would be a verdict about nothing.
+    if (['blocked', 'blocked-attn', 'broken'].includes(site.status)) {
       findings.push({ recipe: target, declaredParams: declared, result: 'skipped', why: `status is "${site.status}"` });
       continue;
     }

@@ -81,6 +81,7 @@ const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 const { resolveUrlFields } = require('./lib/urlAttrs');
 const { forwardedOff } = require('./lib/forwarded');
+const { isAttended, blockedAttnGate, blockedAttnRefusal } = require('./lib/blockedGuard');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
 
@@ -859,11 +860,14 @@ async function extractArticle(page, { contentSelector, contentStopText, minTextL
 
 async function main() {
   const startedAt = Date.now();
-  const [, , hostnameArg, paramsArg, ...rest] = process.argv;
-  const includeRaw = rest.includes('--raw');
+  const [, , hostnameArg, secondArg, ...rest] = process.argv;
+  // A flag may stand where the params go (`./scrape.sh host --attended`).
+  const paramsArg = secondArg && secondArg.startsWith('--') ? undefined : secondArg;
+  const flags = secondArg && secondArg.startsWith('--') ? [secondArg, ...rest] : rest;
+  const includeRaw = flags.includes('--raw');
 
   if (!hostnameArg) {
-    emitAndExit(JSON.stringify({ success: false, documented: false, error: 'Usage: node engine.js <hostname> \'<json params>\'' }), 1);
+    emitAndExit(JSON.stringify({ success: false, documented: false, error: 'Usage: node engine.js <hostname> \'<json params>\' [--raw] [--attended]' }), 1);
   }
 
   let hostnamePart = hostnameArg;
@@ -886,12 +890,15 @@ async function main() {
       emitAndExit(JSON.stringify({ success: false, documented: false, error: `Bad JSON in params: ${e.message}` }), 1);
     }
   }
+  // `--attended` is the same as {"attended": true}: the flag the
+  // troubleshooting.sh hook and lib/blockedGuard.js's refusal both name.
+  if (flags.includes('--attended')) params = { ...params, attended: true };
 
   const db = openDb();
   const site = getSite(db, hostname, pageType, recipeName);
 
   if (!site) {
-    emitAndExit({
+    return emitAndExit({
       success: false,
       documented: false,
       error: `No site documented for "${hostname}#${pageType}:${recipeName}". Fall back to interactive browser tools, then run register.js.`,
@@ -904,8 +911,15 @@ async function main() {
   // place — the status gate would reject every run that might earn the
   // status. `allowUnverified` is that escape hatch, and it is how verify.js
   // exercises a candidate. Deliberate per call, never a recipe setting.
-  if (site.status !== 'working' && !params.allowUnverified) {
-    emitAndExit({
+  //
+  // blocked-attn is the exception, checked FIRST: allowUnverified does not
+  // open it, only an attended run does (lib/blockedGuard.js, which says why).
+  const blockedAttn = blockedAttnGate(site, params);
+  // `return`, not fall-through: emitAndExit exits from a write callback, so
+  // without it main() kept running past a refusal until that callback fired.
+  if (blockedAttn === 'refuse') return emitAndExit(blockedAttnRefusal(site), 1);
+  if (site.status !== 'working' && !params.allowUnverified && blockedAttn !== 'attended') {
+    return emitAndExit({
       success: false,
       documented: true,
       status: site.status,
@@ -916,13 +930,8 @@ async function main() {
             'every run (CAPTCHA, login wall or 2FA). There is nothing to fix here — do not re-derive the recipe. ' +
             'Either run it attended with a handoff step (see the captcha_handoff generic action), or tell the user ' +
             'it needs them. Pass {"allowUnverified": true} to attempt it anyway.'
-          : site.status === 'blocked-attn'
-            ? `status="blocked-attn": troubleshooting this recipe is STALLED pending the user. Whoever set this ` +
-              'concluded the next step cannot be determined without them — read `notes` above for what they need to ' +
-              'supply or decide. Do NOT retry, re-derive, or iterate on it: that was already tried and is what ' +
-              'produced this state. Surface it to the user and move on to other work.'
-            : `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
-              'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
+          : `Site is documented but status="${site.status}". Fall back to interactive tools, ` +
+            'or pass {"allowUnverified": true} to run it anyway while iterating (see verify.js).',
     }, 1);
   }
 
@@ -975,7 +984,7 @@ async function main() {
   // handoff at all. It exists so the question "is a HUMAN alone enough here,
   // or is more automation work needed?" can be answered by a run rather than
   // by an agent's opinion. See verify.js --attended.
-  const attended = Boolean(params.attended);
+  const attended = isAttended(params); // the same reading blocked-guard uses
   const headed = attended || [expandedSteps, paginationSteps].some(st => st && stepsNeedHeaded(st));
   // Session persistence is ON BY DEFAULT (params.session picks which named,
   // parallel session — e.g. a second account — default 'default'); a run

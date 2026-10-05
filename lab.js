@@ -43,6 +43,7 @@ const { openDb, getSite, getFields, insertField, parseSiteArg, snapshotVersionIf
 const { recordsOf, countOf, recordIdentities, sameRecords } = require('./lib/outputShape');
 const { distinctByField, crossFieldValues } = require('./lib/distinctValues');
 const { grepRaw, searchableCount } = require('./lib/rawGrep');
+const { isBlockedRefusal } = require('./lib/blockedGuard');
 
 const REPO_ROOT = __dirname;
 const PROBER = 'lab-prober.internal';
@@ -58,20 +59,32 @@ function die(msg) {
 async function runEngine(target, params, raw = false) {
   const args = [path.join(REPO_ROOT, 'engine.js'), target, JSON.stringify({ allowUnverified: true, ...params })];
   if (raw) args.push('--raw');
+  // `--attended` anywhere on lab.js's command line passes through, the way
+  // the troubleshooting.sh hook and the blocked-guard refusal read it.
+  if (process.argv.includes('--attended')) args.push('--attended');
+  let r;
   try {
     const { stdout } = await execFileAsync(process.execPath, args, {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
     });
-    return JSON.parse(stdout);
+    r = JSON.parse(stdout);
   } catch (e) {
     try {
-      return JSON.parse(e.stdout);
+      r = JSON.parse(e.stdout);
     } catch {
       return { success: false, error: (e.stderr || e.message || '').slice(0, 400) };
     }
   }
+  // A blocked-guard refusal is not a run: interpreting it (lab.js params read
+  // two refusals as "parameters change the result set") is a wrong answer.
+  // Print it as the answer and stop.
+  if (isBlockedRefusal(r)) {
+    out(r);
+    process.exit(1);
+  }
+  return r;
 }
 
 // A throwaway action recipe used to point the diagnostic probes at an
@@ -315,7 +328,7 @@ async function main() {
 
   if (cmd === 'peek' || cmd === 'raw') {
     if (!a) die(`Usage: node lab.js ${cmd} <target> '<params>'`);
-    const r = await runEngine(a, b ? JSON.parse(b) : {}, cmd === 'raw');
+    const r = await runEngine(a, b && !b.startsWith('--') ? JSON.parse(b) : {}, cmd === 'raw');
     const jobs = recordsOf(r);
     out({
       target: a,
@@ -337,7 +350,7 @@ async function main() {
   if (cmd === 'grep') {
     if (!a || c === undefined) die("Usage: node lab.js grep <target> '<params>' '<regex>'");
     // Always raw: the source blob is the thing being searched.
-    const r = await runEngine(a, b ? JSON.parse(b) : {}, true);
+    const r = await runEngine(a, b && !b.startsWith('--') ? JSON.parse(b) : {}, true);
     const jobs = recordsOf(r);
     const searchable = searchableCount(jobs);
     out({
@@ -359,7 +372,7 @@ async function main() {
 
   if (cmd === 'distinct') {
     if (!a) die("Usage: node lab.js distinct <target> '<params>'");
-    const r = await runEngine(a, b ? JSON.parse(b) : {}, false);
+    const r = await runEngine(a, b && !b.startsWith('--') ? JSON.parse(b) : {}, false);
     const jobs = recordsOf(r);
     const shared = crossFieldValues(jobs);
     out({
