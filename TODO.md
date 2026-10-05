@@ -129,6 +129,15 @@ fixture `test/fixtures/ats/`). Open:
   confirmed, decide whether rolling capture should pause around a click step. Since
   2026-10-03 such a run reports `broken`/`inconclusive` under verify.js instead of
   `working` (lib/describeVerdict.js), so it is no longer silent there.
+  **Probe run 2026-10-04, NOT confirmed:** 20 interleaved runs each (order
+  alternated), alone, supabase posting 59083a14: default 20/20 and
+  `rollingFrames:0` 20/20 gave 13 fields and reached `/application`, 19-32s.
+  But ONE default run minutes earlier (the first browser run after a 25-min
+  `dev.sh check`, other agents possibly active) gave 0 fields, fast, still on
+  the posting URL -- the same signature. So the failure is real but rare
+  alone (1/21 default, 0/20 off): rolling capture is not shown to cause it;
+  load is the better suspect. Not changed. If it recurs, capture the debugDir
+  of the failing run rather than re-running the A/B.
 - **describe 0-field verdict (DONE 2026-10-03, lib/describeVerdict.js).** A recipe typed
   `describe_form` is judged on described fields, in verify.js AND the engine's
   logged `result_count`. Limits left open: (a) keyed on the declared action_type, so
