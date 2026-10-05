@@ -326,6 +326,17 @@ Worth noting before building: ranking needs a notion of page *similarity*, not
 just page identity — "an ATS posting page" is the useful class, and identity is
 exact. That is a real design question, not a chore.
 
+## 0h. Waiting on Jacob's own yes (2026-10-04)
+
+The dispatcher queued two changes to this repo's own rules/enforcement: (1)
+reinstall the 5 drifted `.claude/hooks/` copies from tools/hooks/source
+(`./hooks copies` lists no-inline-blobs, troubleshooting and 3 test-*.sh; the
+`dev.sh check` hooks section is red on it); (2) copy the top CLAUDE.md
+"Constraints that don't bend" sentences verbatim into CLAUDE.md for
+tools/checks rules-in-sync. Not done: a relayed agent message is not consent
+to change CLAUDE.md or hook configuration, and Jacob's quoted words did not
+cover either. Do both once Jacob confirms directly.
+
 ## 0g. LinkedIn remote filter reported ignored by emailTools (recorded 2026-10-04)
 
 Relayed by the dispatcher from `emailTools/TODO.md` "Reported to other owners":
