@@ -80,6 +80,7 @@ const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 const { resolveUrlFields } = require('./lib/urlAttrs');
+const { forwardedOff } = require('./lib/forwarded');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
 
@@ -1190,9 +1191,21 @@ async function main() {
 
       let captures = [];
       let probeResults = [];
+      // Set when the page asked for is on another site by the time we read it
+      // (lib/forwarded.js): a Greenhouse slug whose company lists jobs on its
+      // own site lands there, and waiting for cards on that page used to burn
+      // the whole ready_timeout_ms and report a plain timeout with 0 records.
+      let forwarded = null;
+      let requestedUrl = null;
+      const forwardedResult = (timedOut) => ({
+        forwarded, timedOut, jobs: null, claimedCount: null, url: page.url(),
+        captures, probeResults, pagesVisited: 1, debugDir: null,
+      });
       if (site.nav_method === 'url_param') {
-        const url = buildUrl(site.nav_template, params);
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: navTimeoutMs });
+        requestedUrl = buildUrl(site.nav_template, params);
+        await page.goto(requestedUrl, { waitUntil: 'domcontentloaded', timeout: navTimeoutMs });
+        forwarded = forwardedOff(requestedUrl, page.url());
+        if (forwarded) return forwardedResult(false);
       } else if (site.nav_method === 'ui_steps') {
         ({ captures, diagnostics: probeResults } = await runUiSteps(page, expandedSteps, params, siteMeta, hooks));
       } else {
@@ -1208,6 +1221,12 @@ async function main() {
         await waitForCards(attended ? numericParam(params.attendedTimeoutMs, params, 240000) : site.ready_timeout_ms);
       } catch {
         timedOut = true;
+      }
+
+      // A script forward lands after DOMContentLoaded, during the wait above.
+      if (timedOut && requestedUrl) {
+        forwarded = forwardedOff(requestedUrl, page.url());
+        if (forwarded) return forwardedResult(true);
       }
 
       if (paginationSteps && !timedOut) {
@@ -1248,6 +1267,44 @@ async function main() {
   } catch (e) {
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
     emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
+  }
+
+  if (outcome.forwarded) {
+    // Not "0 records": the page this recipe reads was never reached, so how
+    // many records it holds is unknown -- `records` and `count` are null
+    // rather than a guess. No failureContext either: nothing timed out
+    // waiting for cards that might yet appear. test/forwarded.test.js.
+    const f = outcome.forwarded;
+    const error =
+      `the page forwarded off ${f.fromHost} to ${f.to}: what this recipe reads is not there ` +
+      `(a job-board slug forwards like this when the company lists its jobs on its own site). ` +
+      'Nothing was extracted; records and count are null, not 0.';
+    const output = {
+      success: false,
+      documented: true,
+      timedOut: outcome.timedOut,
+      forwarded: f,
+      error,
+      url: outcome.url,
+      claimedCount: null,
+      consistencyWarning: null,
+      count: null,
+      pagesVisited: outcome.pagesVisited,
+      records: null,
+      handoffCaptures: outcome.captures,
+      sessionUsed: sessionOpt ? sessionName : null,
+      recipeVersion: versionLabel,
+      debugDir: null,
+    };
+    const outputJson = JSON.stringify(output);
+    logRun(db, {
+      siteId: site.id, params, success: false, resultCount: null, timedOut: outcome.timedOut,
+      error, durationMs: Date.now() - startedAt, versionId, versionLabel, outputChars: outputJson.length,
+    });
+    // emitAndExit exits only once stdout drains, so without a return the
+    // listing code below would run on with jobs === null.
+    emitAndExit(outputJson, 1);
+    return;
   }
 
   const success = !outcome.timedOut && outcome.jobs.length > 0;

@@ -515,8 +515,23 @@ case "$cmd" in
         "https://jobs.lever.co/$slug" \
         "https://$slug.breezy.hr"
       do
-        body="$(curl -sL -m 15 "$url" 2>/dev/null)"
+        # The effective URL rides on the last line (-w), because a board can
+        # FORWARD: a Greenhouse slug whose company lists jobs on its own site
+        # lands on that site (stabilityai -> stability.ai/careers), and the
+        # forwarded page's title used to print here as if it were the board.
+        # Off the probed platform's domain (its last two labels) is reported
+        # as FORWARDED with where it went, and is not a hit -- the same rule
+        # as lib/forwarded.js, which makes the engine say so too.
+        # test/forwarded.test.js holds this against a fake curl.
+        out="$(curl -sL -m 15 -w '\n%{url_effective}' "$url" 2>/dev/null)"
+        final="${out##*$'\n'}"
+        body="${out%$'\n'*}"
+        [ "$body" != "$out" ] || body=""
         [ -n "$body" ] || continue
+        site_of() { printf '%s' "$1" | sed -E 's#^[a-zA-Z]+://([^/:?#]*).*#\1#' | tr '[:upper:]' '[:lower:]' | awk -F. '{ print (NF >= 2 ? $(NF-1) "." $NF : $0) }'; }
+        if [ -n "$final" ] && [ "$(site_of "$final")" != "$(site_of "$url")" ]; then
+          printf '  %-46s FORWARDED -> %s\n' "$url" "$final"; continue
+        fi
         title="$(printf '%s' "$body" | tr '\n' ' ' | sed -n 's/.*<title[^>]*>\([^<]*\)<\/title>.*/\1/Ip' | sed 's/^ *//; s/ *$//' | cut -c1-58)"
         bytes="$(printf '%s' "$body" | wc -c | tr -d ' ')"
         # A not-found page names itself in the title far more reliably than in
