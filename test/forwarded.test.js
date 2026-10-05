@@ -96,7 +96,13 @@ async function runListing(name, urlPath) {
     hostname: '127.0.0.1',
     page_type: 'listing',
     recipe_name: name,
-    status: 'needs-review',
+    // `working`, like test/extraction.test.js's 127.0.0.1 fixtures, never
+    // needs-review: the hook test (test-prefer-recipes.sh, run by
+    // hooks.test.js alongside this file) takes the first NOT-working host as
+    // one the hook must allow, and 127.0.0.1 is covered while extraction's
+    // fixtures exist -- a needs-review row here made it pick a covered host
+    // and fail (2026-10-05).
+    status: 'working',
     nav_method: 'url_param',
     nav_template: `http://127.0.0.1:${port}${urlPath}`,
     card_selector: 'tr.job-post',
@@ -107,7 +113,7 @@ async function runListing(name, urlPath) {
   if (!createdSiteIds.includes(id)) createdSiteIds.push(id);
   db.prepare('DELETE FROM site_fields WHERE site_id = ?').run(id);
   insertField(db, id, { field_name: 'title', extract_kind: 'full_blob' }, 0);
-  const args = ['engine.js', `127.0.0.1#listing:${name}`, '{"noSession":true,"noDiagnostics":true,"allowUnverified":true}'];
+  const args = ['engine.js', `127.0.0.1#listing:${name}`, '{"noSession":true,"noDiagnostics":true}'];
   try {
     const { stdout } = await execFileAsync(process.execPath, args, { cwd: REPO_ROOT, encoding: 'utf8' });
     return JSON.parse(stdout);

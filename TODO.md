@@ -148,6 +148,16 @@ timedOut:true WITH its records — which the engine flags as
 sees it again, ask for the run's `partialResults` and duration; a repeat would
 argue for raising this recipe's ready_timeout_ms, not for an engine change.
 
+**Seam: `test-prefer-recipes.sh` picks its hosts from the live DB, which other
+test files are writing at the same moment.** My first `test/forwarded.test.js`
+registered `127.0.0.1` fixtures as needs-review; with extraction.test.js's
+`working` 127.0.0.1 fixtures alive, the hook test picked 127.0.0.1 as "not
+working" and expected the hook to allow it -> hooks.test.js red in the full
+suite, green alone. Fixed on my side (fixtures are `working`), but any future
+test that registers a non-working row on a host another test covers will
+trip it again. Better fix: the pick should require that no row for the host
+is working (`./dev.sh known <host>` has none `working`).
+
 **Suspicion (unconfirmed): `emitAndExit` does not stop `main()`.** It exits
 in stdout's write callback, and no caller returns after it, so the code below
 keeps running until the write drains: the article path falls through into the
