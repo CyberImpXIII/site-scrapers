@@ -231,7 +231,8 @@ async function main() {
   //
   // Getting this wrong made indeed.com "blocked" on no evidence of
   // attendability, which is exactly the discretion this is meant to remove.
-  const verdict = decideVerdict({ extracted, wall, attended, alreadyProven });
+  const notThePage = result.notThePage ?? null;
+  const verdict = decideVerdict({ extracted, wall, attended, alreadyProven, notThePage: Boolean(notThePage) });
 
   const report = {
     target,
@@ -248,6 +249,7 @@ async function main() {
     failureContext: result.failureContext ?? null,
     debugDir: result.debugDir ?? null,
     previousStatus: site.status,
+    ...(notThePage ? { notThePage } : {}),
     ...(describeVerdict ? { describe: { fields: describeVerdict.fields, url: result.url ?? null } } : {}),
     ...(result.fill
       ? {
@@ -266,6 +268,19 @@ async function main() {
   if (dry) {
     out({ ...report, note: 'Dry run — status not changed.' });
     process.exit(extracted ? 0 : 1);
+  }
+
+  if (verdict === 'inconclusive' && notThePage) {
+    out({
+      ...report,
+      newStatus: site.status,
+      definitionHasPassingRun: alreadyProven,
+      note:
+        `Inconclusive, status unchanged: the run landed on ${notThePage.landed}, not a page this recipe reads ` +
+        `(expect_url ${notThePage.expected}). The params most likely name something that no longer exists (a closed ` +
+        'posting redirects to its board), which says nothing about the recipe. Re-run with params that name a live page.',
+    });
+    process.exit(0);
   }
 
   if (verdict === 'inconclusive') {

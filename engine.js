@@ -81,6 +81,7 @@ const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 const { resolveUrlFields } = require('./lib/urlAttrs');
 const { forwardedOff } = require('./lib/forwarded');
+const { NotThePage, checkExpectUrl, notThePageError } = require('./lib/notThePage');
 const { isAttended, blockedAttnGate, blockedAttnRefusal } = require('./lib/blockedGuard');
 
 const CAPTURE_DIR = path.join(__dirname, 'data', '.captures');
@@ -239,6 +240,12 @@ const MAX_REPEAT = 50;
 // or disabled (e.g. the "Next" button on the last page). Ends the innermost
 // enclosing `repeat` early; at the top level it just ends the step list.
 class StopRepeat extends Error {}
+
+// The URL each page was last sent to by a `goto` or `goto_frame` step, so an
+// `expect_url` mismatch can say what was asked for as well as where the
+// browser landed (a server-side redirect hides the first). Keyed by page: one
+// entry per page, gone with the page.
+const lastGoto = new WeakMap();
 
 // A step field that may be a number or a "{{param}}" template. Blank/invalid
 // resolves to `fallback`.
@@ -404,6 +411,7 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
     switch (step.action) {
       case 'goto': {
         const targetUrl = substitute(step.url, params);
+        lastGoto.set(page, targetUrl);
         try {
           // siteMeta may be absent in a bare step-list test, hence the fallback.
           await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: siteMeta?.navTimeoutMs ?? 30000 });
@@ -485,6 +493,50 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
       case 'waitForSelector':
         await page.waitForSelector(sel, { timeout: step.timeout ?? 10000 });
         break;
+      case 'expect_url': {
+        // {"action":"expect_url","pattern":"<regex>","reason":"..."}: the page
+        // the browser is on must match, or the run ends NOT-THE-PAGE (a
+        // distinct result, article/records null) instead of reading whatever
+        // is there. A closed Greenhouse posting 302s to its company's board on
+        // the same host, and both Greenhouse recipes then reported success on
+        // the board. The pattern is a recipe literal, not substituted: a caller
+        // param spliced into a regex would change what it matches.
+        // lib/notThePage.js; test/not-the-page.test.js.
+        const miss = checkExpectUrl({
+          pattern: step.pattern,
+          landed: page.url(),
+          requested: lastGoto.get(page) ?? null,
+          reason: step.reason ?? null,
+        });
+        if (miss) throw miss;
+        break;
+      }
+      case 'goto_frame': {
+        // {"action":"goto_frame","selector":"iframe#grnhse_iframe"}: opens the
+        // document an iframe shows as the page itself, so the steps after it
+        // (and the extraction) run against the frame's own URL. For an
+        // employer careers page that embeds an ATS form (posit.co embeds
+        // Greenhouse's job_app): the page names the right board and token, and
+        // the ATS's own recipe steps then apply unchanged. Only an http(s) src
+        // is followed; anything else is an error naming what was there.
+        const frameEl = await page.waitForSelector(sel, { timeout: step.timeout ?? 15000 });
+        const src = await frameEl.evaluate(e => e.src || e.getAttribute('src') || null);
+        let frameUrl = null;
+        // `src` is checked before resolving: new URL(null, base) is base/null,
+        // a real-looking URL for an iframe that has none (caught by the test).
+        if (typeof src === 'string' && src.trim() !== '') {
+          try {
+            const u = new URL(src, page.url());
+            if (u.protocol === 'http:' || u.protocol === 'https:') frameUrl = u.href;
+          } catch {
+            /* unparseable src: frameUrl stays null, reported below */
+          }
+        }
+        if (!frameUrl) throw new Error(`goto_frame: ${sel} has no http(s) src to open (src: ${JSON.stringify(src)})`);
+        lastGoto.set(page, frameUrl);
+        await page.goto(frameUrl, { waitUntil: 'domcontentloaded', timeout: siteMeta?.navTimeoutMs ?? 30000 });
+        break;
+      }
       case 'wait':
         await new Promise(r => setTimeout(r, numericParam(step.ms, params, step.default_ms ?? 1000)));
         break;
@@ -1029,6 +1081,35 @@ async function main() {
     intervalMs: numericParam(params.rollingIntervalMs, params, 2000),
   };
 
+  // An `expect_url` step found the browser on a page this recipe does not
+  // read (lib/notThePage.js). Not a failure of the recipe and not "empty":
+  // nothing was read, so the result (`article`, or `records` and `count`) is
+  // null. Same shape of answer as `forwarded` below; resultCount is null for
+  // the same reason. emitAndExit exits only once stdout drains, so the caller
+  // must return straight after this.
+  const emitNotThePage = (e, resultKeys) => {
+    const n = e.notThePage;
+    const error = notThePageError(n);
+    const outputJson = JSON.stringify({
+      success: false,
+      documented: true,
+      timedOut: false,
+      notThePage: n,
+      error,
+      url: n.landed,
+      ...resultKeys,
+      failedStep: e.failedStep ?? null,
+      sessionUsed: sessionOpt ? sessionName : null,
+      recipeVersion: versionLabel,
+      debugDir: e.debugDir ?? null,
+    });
+    logRun(db, {
+      siteId: site.id, params, success: false, resultCount: null, timedOut: false,
+      error, durationMs: Date.now() - startedAt, versionId, versionLabel, outputChars: outputJson.length,
+    });
+    emitAndExit(outputJson, 1);
+  };
+
   if (site.page_type === 'article' || site.page_type === 'action') {
     let articleOutcome;
     try {
@@ -1079,8 +1160,15 @@ async function main() {
         return { timedOut, record, blobLen, url: page.url(), captures, probeResults, debugDir };
       }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
     } catch (e) {
+      if (e instanceof NotThePage) {
+        emitNotThePage(e, { article: null });
+        return;
+      }
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
       emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
+      // Without this, the code below ran on with articleOutcome undefined
+      // and threw while stdout was still draining.
+      return;
     }
 
     // A fill_form run is judged by its fill, not by page text: the page having
@@ -1274,8 +1362,14 @@ async function main() {
       return { timedOut, jobs, claimedCount, url: page.url(), captures, probeResults, pagesVisited: pagesCollected + 1, debugDir };
     }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
+    if (e instanceof NotThePage) {
+      emitNotThePage(e, { claimedCount: null, consistencyWarning: null, count: null, pagesVisited: null, records: null });
+      return;
+    }
     logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
     emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
+    // Same as the article path: outcome is undefined below this point.
+    return;
   }
 
   if (outcome.forwarded) {

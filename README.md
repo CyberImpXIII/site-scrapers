@@ -450,6 +450,20 @@ clicked by script), `collect` (listing only), `scroll_bottom`, and `wait`
 with a `{{param}}` `ms` plus `default_ms`. `run_generic_action` also takes
 `with`, which fills that library entry's `{{placeholders}}` for one use.
 
+`expect_url` (`pattern`, a regex; optional `reason`) checks that the run is
+still on a page the recipe reads. A CLOSED Greenhouse posting 302s to its
+company's board, and without this the article recipe returned the board's
+intro as the job description with `success:true`. On a miss the run ends
+**not-the-page**: `success:false`, a `notThePage` object
+(`requested`, `landed`, `expected`, `reason`), and `records`/`count`/`article`
+null — nothing was read, which is not the same as zero. `verify.js` treats it
+as inconclusive and writes no status. Put it straight after the `goto`.
+
+`goto_frame` (`selector`) navigates to an iframe's `src`: an employer page
+that embeds a hosted form (posit.co embeds Greenhouse's `job_app`) is then
+read with the hosted form's own steps. A frame with no http(s) `src` fails
+the run naming the selector. Both are covered by `test/not-the-page.test.js`.
+
 ## Diagnosing a recipe
 
 Every other step type exists to *change* the page. That left no way to ask

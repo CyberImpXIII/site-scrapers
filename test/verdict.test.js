@@ -61,6 +61,20 @@ test('unattended: no wall and no records demotes only an unproven definition', (
   assert.equal(decideVerdict({ extracted: false, wall: null, alreadyProven: true }), 'inconclusive');
 });
 
+test('a run that landed on NOT-THE-PAGE writes no status, whatever else it saw', () => {
+  // expect_url failed (lib/notThePage.js): a closed posting, say. Nothing about
+  // the recipe was tested, so neither "broken" nor any earned status.
+  for (const attended of [false, true]) {
+    for (const alreadyProven of [false, true]) {
+      for (const wall of [null, ['cloudflare']]) {
+        assert.equal(decideVerdict({ extracted: false, wall, attended, alreadyProven, notThePage: true }), 'inconclusive');
+      }
+    }
+  }
+  // The counterfactual: the same run without the flag is demoted.
+  assert.equal(decideVerdict({ extracted: false, wall: null, alreadyProven: false }), 'broken');
+});
+
 // --- Attended paths --------------------------------------------------------
 
 test('attended with records and no wall means the recipe simply works', () => {

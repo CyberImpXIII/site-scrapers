@@ -300,6 +300,14 @@
 //     below-the-fold "Show more" buttons).
 //   {"action":"wait","ms":"{{wait_ms}}","default_ms":2500}   ms may be a
 //     {{param}}; default_ms applies when it resolves blank.
+//   {"action":"expect_url","pattern":"/jobs/\\d+","reason":"..."}   the run
+//     is NOT-THE-PAGE unless the current URL matches this regex (a closed
+//     posting that redirects to its board). Output: success:false,
+//     notThePage:{requested,landed,expected,reason}, records/article null.
+//     verify.js treats it as inconclusive. lib/notThePage.js.
+//   {"action":"goto_frame","selector":"iframe#grnhse_iframe"}   navigates the
+//     page to that iframe's http(s) src (an employer page embedding a hosted
+//     form); fails naming the selector when there is no src.
 //
 // {
 //   "hostname": "example.com",

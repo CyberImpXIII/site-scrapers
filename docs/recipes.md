@@ -16,6 +16,16 @@ and lab.js and verify.js print that refusal and stop rather than read it as a
 run. Only `--attended` (or `{"attended": true}`) passes, on `scrape.sh`,
 `engine.js`, `lab.js` or `verify.js` alike.
 
+## A recipe whose param can name something that no longer exists
+
+A detail page reached by URL (a job posting, a product) can stop existing,
+and many sites then redirect somewhere that still renders: Greenhouse sends a
+closed posting to the company's board. The recipe then reads the wrong page
+and reports success. Follow the `goto` with
+`{"action":"expect_url","pattern":"<regex the real page's URL matches>"}`; a
+miss ends the run as not-the-page (`notThePage` set, records null) and
+`verify.js` leaves the status alone. Step reference in the README.
+
 ## Declaring parameters
 
 `nav_params_schema` is JSON documenting what a caller may pass, keyed by param

@@ -47,6 +47,9 @@ const { isBlockedRefusal } = require('./lib/blockedGuard');
 
 const REPO_ROOT = __dirname;
 const PROBER = 'lab-prober.internal';
+// The same list register.js validates against (VALID_NAV_METHODS there);
+// test/lab-set.test.js asserts the two agree.
+const NAV_METHODS = ['url_param', 'ui_steps', 'direct_url'];
 
 function out(o) {
   console.log(JSON.stringify(o, null, 2));
@@ -204,7 +207,15 @@ async function main() {
           hint: p.hint,
         });
       }
-      if (p.kind === 'forms') out({ forms: { fields: p.fields.length, required: p.requiredCount, fileUpload: p.fileUploadPresent, submits: p.submits } });
+      // Same reason as `selectors` above: an errored forms probe has no
+      // `fields`, and reading its length threw (pantheon.io, 2026-10-05).
+      if (p.kind === 'forms') {
+        out({
+          forms: Array.isArray(p.fields)
+            ? { fields: p.fields.length, required: p.requiredCount, fileUpload: p.fileUploadPresent, submits: p.submits }
+            : { fields: null, error: p.error ?? 'forms probe returned no field list' },
+        });
+      }
       if (p.kind === 'repeated_structure') {
         out({
           cardCandidates: (p.candidates || []).slice(0, 5).map(x => ({
@@ -440,9 +451,39 @@ async function main() {
     }
 
     const cols = [
-      'card_selector', 'card_anchor_text', 'ready_timeout_ms', 'nav_template', 'nav_params_schema',
+      'card_selector', 'card_anchor_text', 'ready_timeout_ms', 'nav_method', 'nav_template', 'nav_params_schema',
       'notes', 'content_selector', 'card_min_text_len', 'param_probe_values', 'status',
     ];
+    // A key this command does not write is refused, never dropped. Dropping
+    // was silent: 2026-10-05 a set of {nav_method: "ui_steps", nav_template:
+    // [steps]} on job-boards.greenhouse.io#article reported success, changed
+    // only nav_template, and left a `working` direct_url recipe whose "URL"
+    // was a JSON step list. test/lab-set.test.js.
+    const unknown = Object.keys(def).filter(k => !cols.includes(k) && !['note', 'notes_append', 'fields'].includes(k));
+    if (unknown.length) {
+      die(`lab.js set does not write ${unknown.map(k => `"${k}"`).join(', ')}. Settable: ${cols.join(', ')}, fields, notes_append (plus the required note).`);
+    }
+    if ('nav_method' in def && !NAV_METHODS.includes(def.nav_method)) {
+      die(`Unknown nav_method "${def.nav_method}". Use one of: ${NAV_METHODS.join(', ')}.`);
+    }
+    // nav_method and nav_template are read together: a ui_steps recipe whose
+    // template is not a step list (or the reverse) runs as nonsense.
+    {
+      const method = def.nav_method ?? site.nav_method;
+      const tmpl = 'nav_template' in def ? def.nav_template : site.nav_template;
+      let parsed;
+      try {
+        parsed = typeof tmpl === 'string' ? JSON.parse(tmpl) : tmpl;
+      } catch {
+        parsed = undefined;
+      }
+      if (method === 'ui_steps' && !Array.isArray(parsed)) {
+        die('nav_method "ui_steps" needs nav_template to be a JSON array of steps');
+      }
+      if (method !== 'ui_steps' && Array.isArray(parsed)) {
+        die(`nav_template is a step list, but nav_method is "${method}": set "nav_method": "ui_steps" with it`);
+      }
+    }
     // Every recipe edit goes through the gate: offline audits before and
     // after, a snapshot to roll back to, and a change_log row so an edit made
     // OFF this path is detectable by its absence. Requires a `note` describing
