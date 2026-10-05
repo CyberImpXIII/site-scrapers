@@ -356,42 +356,15 @@ function seedBuiltinActions(db) {
   // The previous good row stays in place, and `audit.js units` reports the
   // mismatch between the code file and the DB, so the rejection is visible
   // rather than silent.
-  const rejected = [];
-  const writable = stale.filter(a => {
-    let problems = [];
-    try {
-      problems = require('./lib/gate').validateGenericAction(db, a.name, a.steps);
-    } catch {
-      return true; // gate unavailable (partial copy in a test) — do not block seeding
-    }
-    if (problems.length) {
-      rejected.push({ name: a.name, problems });
-      return false;
-    }
-    return true;
-  });
-  if (rejected.length) {
-    for (const r of rejected) {
-      process.emitWarning(
-        `builtin generic action "${r.name}" was NOT seeded — it would not validate: ${r.problems.join('; ')}. ` +
-          'Fix lib/builtinActions.js; the previously seeded version is still in use.',
-        'BuiltinActionRejected'
-      );
-    }
-  }
-  if (writable.length === 0) return;
-
+  //
+  // In PASSES, because validation resolves references against the DB: on a
+  // fresh store a builtin that runs another builtin not yet seeded would fail
+  // "unknown ref" and be skipped until the NEXT open. Observed 2026-10-05 by
+  // test/store-export.test.js: a fresh store opened once lacked
+  // detect_blockers_then_handoff and open_apply_form. Each pass validates what
+  // is left against what the previous passes wrote; it stops when a pass
+  // writes nothing, and only what is still rejected then is reported.
   const now = new Date().toISOString();
-  // Snapshotted before writing so a builtin whose change breaks a DEPENDENT can
-  // be put back. Validating the incoming action alone is not enough: a change
-  // can be perfectly valid in isolation and still break an action or recipe that
-  // references it, and seeding is the one path where that would otherwise land
-  // unchecked (a hand-edit to the export skips the gate, which does check
-  // dependents). Only runs when a builtin actually changed, so the steady state
-  // is unaffected.
-  const priorRows = new Map(
-    writable.map(a => [a.name, existing.get(a.name) ? { ...existing.get(a.name) } : null])
-  );
   const upsert = db.prepare(
     `INSERT INTO generic_actions (name, description, action_type, nav_params_schema, source, steps, created_at, updated_at)
      VALUES (?,?,?,?,'builtin',?,?,?)
@@ -403,10 +376,52 @@ function seedBuiltinActions(db) {
        steps=excluded.steps,
        updated_at=excluded.updated_at`
   );
-  for (const a of writable) {
-    upsert.run(a.name, a.description ?? null, a.action_type ?? null, a.nav_params_schema ?? null, JSON.stringify(a.steps), now, now);
+  // Snapshotted before writing so a builtin whose change breaks a DEPENDENT can
+  // be put back (see below).
+  const priorRows = new Map(stale.map(a => [a.name, existing.get(a.name) ? { ...existing.get(a.name) } : null]));
+  const writable = [];
+  let rejected = [];
+  let pending = stale;
+  for (;;) {
+    rejected = [];
+    const pass = pending.filter(a => {
+      let problems = [];
+      try {
+        problems = require('./lib/gate').validateGenericAction(db, a.name, a.steps);
+      } catch {
+        return true; // gate unavailable (partial copy in a test) — do not block seeding
+      }
+      if (problems.length) {
+        rejected.push({ name: a.name, problems, action: a });
+        return false;
+      }
+      return true;
+    });
+    for (const a of pass) {
+      upsert.run(a.name, a.description ?? null, a.action_type ?? null, a.nav_params_schema ?? null, JSON.stringify(a.steps), now, now);
+    }
+    writable.push(...pass);
+    if (!pass.length || !rejected.length) break;
+    pending = rejected.map(r => r.action);
   }
+  if (rejected.length) {
+    for (const r of rejected) {
+      process.emitWarning(
+        `builtin generic action "${r.name}" was NOT seeded — it would not validate: ${r.problems.join('; ')}. ` +
+          'Fix lib/builtinActions.js; the previously seeded version is still in use.',
+        'BuiltinActionRejected'
+      );
+    }
+  }
+  if (writable.length === 0) return;
 
+  // Validating the incoming action alone is not enough: a change can be
+  // perfectly valid in isolation and still break an action or recipe that
+  // references it, and seeding is the one path where that would otherwise land
+  // unchecked (a hand-edit to the export skips the gate, which does check
+  // dependents). Only runs when a builtin actually changed, so the steady state
+  // is unaffected.
+  //
   // Now that the new steps are in place, check what DEPENDS on each changed
   // builtin. A change valid on its own can still break something that
   // references it, and reverting the one builtin is better than leaving the
@@ -533,9 +548,12 @@ function applyConcurrencyPragmas(db) {
   db.exec('PRAGMA busy_timeout = 10000');
 }
 
-function openDb() {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  const db = new DatabaseSync(DB_PATH);
+// `file` defaults to the live store. store.js (its `--db`) and tests pass
+// another, so they can work on a private copy; every CLI otherwise opens the
+// live file as before (TODO 0k: no env override yet).
+function openDb(file = DB_PATH) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
   applyConcurrencyPragmas(db);
   db.exec(SCHEMA);
   migrateSitesTable(db);

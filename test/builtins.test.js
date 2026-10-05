@@ -53,6 +53,32 @@ test('a fresh DB is seeded with the built-in library from code', () => {
   });
 });
 
+// The test above copies db.js WITHOUT lib/gate.js, so seeding skips validation
+// there and every builtin lands. With the real gate present, validation
+// resolves `run` references against the DB, and a builtin that runs one not
+// yet seeded used to be rejected as an unknown ref on the first open of a fresh
+// store (found 2026-10-05: detect_blockers_then_handoff and open_apply_form
+// were absent until the second open). This runs the real repo's db.js against
+// a private file (openDb(file)), never data/scrapers.db.
+test('a fresh store opened ONCE holds every builtin, with the real gate validating', () => {
+  const { openDb, listGenericActions } = require('../db');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-builtins-gate-'));
+  const warnings = [];
+  const onWarn = w => warnings.push(w.name);
+  process.on('warning', onWarn);
+  try {
+    const db = openDb(path.join(tmp, 'fresh.db'));
+    const names = new Set(listGenericActions(db).filter(g => g.source === 'builtin').map(g => g.name));
+    db.close();
+    const absent = BUILTIN_ACTIONS.map(a => a.name).filter(n => !names.has(n));
+    assert.deepEqual(absent, [], 'builtins absent after one open of a fresh store');
+  } finally {
+    process.off('warning', onWarn);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  assert.ok(!warnings.includes('BuiltinActionRejected'), 'no builtin rejected on a fresh store');
+});
+
 test('re-seeding restores an edited builtin but leaves user actions alone', () => {
   withFreshDb(tmp => {
     const dbPath = JSON.stringify(path.join(tmp, 'db.js'));
