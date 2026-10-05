@@ -30,7 +30,9 @@ lists everything, and `./dev.sh known <hostname>` answers "is anything
 registered for this host" across every page_type. A `working` recipe →
 `./scrape.sh <target> '<json params>'`. Check the `success` field, not the exit
 code. A `success:false` run can still carry records: if `partialResults` is
-true, the wait expired but the data is there.
+true, the wait expired but the data is there. A `forwarded` field means the
+page landed on another site (a job-board slug whose company lists jobs on its
+own site): `records` and `count` are then null, not 0 — nothing was read.
 
 **This engine is the primary way to read a web page here, not a fallback.** A
 `PreToolUse` hook (`.claude/hooks/prefer-recipes.sh`) refuses a WebFetch or a

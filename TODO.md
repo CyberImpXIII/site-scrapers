@@ -83,6 +83,82 @@ recipe bug. Do not attempt to work around the detection under any circumstances.
 
 ---
 
+## 0i. `check --json`, forwarded boards, and what the shared checks see (2026-10-05)
+
+**`./dev.sh check --json` emits the one schema** (`devtools/checkjson.js`,
+`devtools/auditlines.js`, `test/check-json.test.js` with reviewed fixtures and
+15 mutants, each failing the real validator under its rule). Open:
+
+- **The suite is longer than the validator's 280 s limit.** Baseline
+  `./dev.sh check` on 2026-10-05: 13m12s wall clock, 482/482 green (tools/setup's
+  check ran at the same time, which slows it). `test/hooks.test.js` was still
+  running at 10 min (it runs check-hooks.sh in temp copies of the workspace, 14
+  invocations); `test/fill.test.js` (Puppeteer) is the other big one. So
+  `tools/checks/checks one check-json ../../site-scrapers` answers a timeout
+  rather than a verdict until either the limit is raised
+  (`CHECKS_CHECK_JSON_TIMEOUT`) or the suite gets shorter. The fix to the
+  suite, if it is ours: measure each file (`./dev.sh test` per file) and see
+  whether hooks.test.js can share one temp workspace across its cases.
+- **Text mode still gates on the suite alone; `--json` is red on any gate.**
+  Deliberate for now (the text check's contract is unchanged), but the two now
+  disagree on an audit error or a hook finding. Decide whether the text check
+  should exit 1 on those too.
+- **The hook gate is red: 7 ERRORS** on 2026-10-05: the 5 drift errors that
+  wait on Jacob's hooks.test.js decision (0h), plus `income/.claude/hooks` and
+  `tools/usage/.claude/hooks` holding twinned hooks without being in
+  `DECLARED`. Reported as failures by `--json`, not fixed. The two undeclared
+  folders are new since 0h; adding them to DECLARED is ours, but their copies
+  then join the drift question, so it waits with it.
+
+**`accessor` (tools/checks) is red on site-scrapers** — `tools/checks/checks
+one accessor site-scrapers`: `data/failures.db` and `data/scrapers.db` have no
+`cli.json`. Not fixed on purpose: it waits on setup's skeleton shapes for what
+a `cli.json` holds. Recorded at the dispatcher's request.
+
+**Greenhouse boards that forward to the company's own site — FIXED.** Reported by
+applications: `job-boards.greenhouse.io/stabilityai` (2 redirects to
+stability.ai/careers) and `/dotmatics` (to www.dotmatics.com/jobs). The listing
+recipe waited 25 s for `tr.job-post` and reported a plain timeout with 0
+records; `./dev.sh board` printed the forwarded page's title as a board. Now
+the url_param listing path reports `forwarded: {from,to,fromHost,toHost}`,
+an `error` saying so, `records: null, count: null` (not 0: the board was never
+read), and skips the card wait; a script forward during the wait is caught
+after it. `dev.sh board` prints `FORWARDED -> <url>` and does not count it.
+`lib/forwarded.js`, `test/forwarded.test.js`. Not done: the **article**
+direct_url path does not check for a forward, because an article recipe takes
+arbitrary URLs where a redirect is normal (t.co, canonical hosts); a forward
+there reads the wrong page's text with success:true. Decide per recipe
+whether that should be checked.
+
+Confirmed live 2026-10-05 after the fix: `./scrape.sh job-boards.greenhouse.io
+'{"company":"stabilityai"}'` -> success:false, timedOut:false, forwarded to
+https://stability.ai/careers, records/count null, 19 s (was 25 s of waiting).
+**Told applications (via the dispatcher): a forwarded board now has
+`records: null`** — a consumer reading `records.length` must handle null
+(`recordsOf()` already does).
+
+**hiringcafe timedOut with records (applications, UNCONFIRMED) — not
+reproduced.** One probe 2026-10-05: `./scrape.sh hiringcafe.com
+'{"searchState":{"searchQuery":"IT support"}}'` -> success:true,
+timedOut:false, 38 records, 44 s wall clock (the page lands on
+hiringcafe.com/classic?searchState=…, same site). The 25 s card wait is close
+to how long the page takes here, so a run that loses the race would report
+timedOut:true WITH its records — which the engine flags as
+`partialResults:true` by design (success stays false). Settle: if applications
+sees it again, ask for the run's `partialResults` and duration; a repeat would
+argue for raising this recipe's ready_timeout_ms, not for an engine change.
+
+**Suspicion (unconfirmed): `emitAndExit` does not stop `main()`.** It exits
+in stdout's write callback, and no caller returns after it, so the code below
+keeps running until the write drains: the article path falls through into the
+listing path's `withPage` (a browser launch), and the listing catch falls
+through to `outcome.timedOut` on undefined. Seen by reading engine.js, not by
+a run. Probe: run an article recipe with `SS_DEBUG`-style logging (or a
+console.error at the listing `withPage` entry) and see whether it prints.
+The forwarded branch added here returns explicitly.
+
+---
+
 ## fill_application_form (PLAN-applications phase 1) — Greenhouse DONE 2026-10-03, open items
 
 Built: `fill_application_form` builtin + `job-boards.greenhouse.io#action:fill_application_form`
