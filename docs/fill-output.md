@@ -60,7 +60,12 @@ Option text is **the site's**, not a natural phrasing: live Greenhouse's
 phone-country picker (labelled "Country") offers `United States +1`, so the
 answer `United States` fails `no_matching_option` -- and that failure's
 `detail` lists the first options offered (site vocabulary, never the answer),
-so the caller can correct it. Some controls then display an abbreviation
+so the caller can correct it. When the typed answer leaves the control's own
+filter (or search) with nothing to show -- a made-up value, say -- the detail
+is instead "the control offered no options for the typed answer (its own
+filter or search found none)": the list was read, it was empty, and no option
+text is listed. (Before 2026-10-05 that read "0 options offered, none matches
+exactly", which was mistaken for a fault in reading the list.) Some controls then display an abbreviation
 (`+1`); that counts as `filled` with `detail` "the control shows an
 abbreviation of the chosen option", but only when the abbreviation was not
 already displayed before the choice.

@@ -413,6 +413,7 @@ test('bad answers fail by name, never by typing something dangerous', async () =
     [s.auth]: true,
     [s.resume]: path.join(tmp, 'no-such-file.pdf'),
     [s.source]: 'Carrier pigeon',
+    [s.gender]: 'Fixture gender',
     [s.privacy]: 'yes',
     [hp]: 'bot bait',
     '#not_on_this_form': 'x',
@@ -429,6 +430,16 @@ test('bad answers fail by name, never by typing something dangerous', async () =
   assert.equal(r[s.auth], 'failed:answer_type_mismatch');
   assert.equal(r[s.resume], 'failed:file_not_found');
   assert.equal(r[s.source], 'failed:no_matching_option');
+  assert.equal(r[s.gender], 'failed:no_matching_option', 'a made-up answer no option contains');
+  // The detail tells "options were offered, none exact" (and lists them: the
+  // caller corrects its answer from them) apart from "the control's own filter
+  // offered nothing for that text". Live 2026-10-05: an applications dry fill
+  // with made-up answers read "0 options offered" on every combobox as a
+  // regression in option reading; it was the site's filter rejecting the text.
+  const d = Object.fromEntries(fill.fields.map(f => [f.selector, f.detail || '']));
+  assert.match(d[s.country], /^3 options offered, none matches exactly: United States \| United States Minor Outlying Islands \| United Kingdom$/, d[s.country]);
+  assert.match(d[s.gender], /offered no options for the typed answer/, d[s.gender]);
+  assert.ok(!/options offered|none matches exactly/.test(d[s.gender]), `an empty list must not read as offered options: ${d[s.gender]}`);
   assert.equal(r[s.privacy], 'failed:answer_type_mismatch');
   assert.equal(r[hp], 'failed:hidden_control');
   assert.deepEqual(fill.unknownAnswerKeys, ['#not_on_this_form']);
@@ -441,7 +452,7 @@ test('bad answers fail by name, never by typing something dangerous', async () =
   assert.equal(ats.submits(), 0, JSON.stringify(ats.counters));
   // Details never echo an answer.
   const json = JSON.stringify(fill);
-  for (const v of ['Enter would submit', 'Carrier pigeon', 'bot bait']) assert.ok(!json.includes(v), `output echoes an answer: ${v}`);
+  for (const v of ['Enter would submit', 'Carrier pigeon', 'Fixture gender', 'bot bait']) assert.ok(!json.includes(v), `output echoes an answer: ${v}`);
 });
 
 test('a description that no longer matches the page is flagged formChanged', async () => {

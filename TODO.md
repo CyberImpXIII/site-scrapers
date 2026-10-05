@@ -221,6 +221,24 @@ fixture `test/fixtures/ats/`). Open:
   a very tall form is untested past the fixture. (c) the image is taken after
   the fill and before any submit; there is no submit click anywhere in the path
   (zero-submit asserted on every fixture run).
+- **"0 options offered" on every combobox (applications, 2026-10-05): NOT a regression,
+  NOT a site change -- the input.** Evidence numbers from their `./apply prepare` dry
+  fills at f5a9f78: Discord 8 filled / 5 failed / 19 unfilled, Twitch 9/4/46. Their
+  fixture appdata now holds made-up values (`tests/fixtures/application-data.md`:
+  `Country: Fixtureland`, `Fixture gender`, ...); on 2026-10-03 the scratch appdata
+  said `United States`. Counterfactual, live Discord 8815116002, same answers at each
+  commit, one browser at a time: `United States` -> `1 options offered, none matches
+  exactly: United States +1` (Location `Brooklyn` -> 10 offered) at a04d824, fbd96ee
+  AND f5a9f78, identical; `Fixtureland`/`Fixtureville` -> `0 options offered` at
+  a04d824 AND f5a9f78. react-select's own filter shows "No options" for text no option
+  contains. Twitch 8623401002 at HEAD with `United States`: same 1/10 offered.
+  describe_application_form has no option listing (not part of its output), so only
+  fill details were compared. FIXED the wording: an opened-but-empty list now reads
+  "the control offered no options for the typed answer (its own filter or search
+  found none)" -- no `none matches exactly: ` marker, so applications' `offered()`
+  parser still returns None. Gated in test/fill.test.js "bad answers" (3 offered and
+  listed for `United`; made-up gender -> the new detail). Script: scratchpad
+  `cf/combo-cf.sh <root> <label> <url> <answers.json>`. Reported back via dispatcher.
 - **The phone-country picker is labelled just "Country"** on live Greenhouse and its
   options carry the dial code (`United States +1`). A caller matching on the label
   will answer `United States` and get `no_matching_option` (detail lists offers).
