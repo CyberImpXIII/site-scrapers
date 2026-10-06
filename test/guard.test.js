@@ -216,6 +216,24 @@ test('a guarded change rejects a regression and rolls it back', () => {
 // failure inside a referenced action is the hardest kind to attribute — it
 // happens in code the recipe did not write.
 
+test('a severity downgrade is not an introduced finding; an upgrade or a new one is', () => {
+  // Whole-string comparison rolled back a change for turning an error into a
+  // warning (TODO section 0, the gate.js item).
+  const { introducedFindings } = require('../lib/gate');
+  const before = ['error|a.com#listing|bad thing', 'warn|b.com#listing|meh', 'info|c.com#article|fyi'];
+  assert.deepEqual(introducedFindings(before, ['warn|a.com#listing|bad thing']), [], 'error -> warn is better');
+  assert.deepEqual(introducedFindings(before, ['ok|a.com#listing|bad thing']), []);
+  assert.deepEqual(introducedFindings(before, ['error|b.com#listing|meh']), ['error|b.com#listing|meh'], 'warn -> error is worse');
+  assert.deepEqual(introducedFindings(before, ['warn|c.com#article|fyi']), ['warn|c.com#article|fyi']);
+  assert.deepEqual(introducedFindings(before, ['warn|d.com#listing|new']), ['warn|d.com#listing|new']);
+  assert.deepEqual(introducedFindings(before, before), [], 'unchanged is nothing');
+  // A problem text containing "|" keeps its whole tail as the key.
+  assert.deepEqual(introducedFindings(['error|u|p|q'], ['warn|u|p|q']), []);
+  // An unknown shape is compared whole, never guessed at.
+  assert.deepEqual(introducedFindings(['fatal|u|p'], ['fatal|u|p', 'odd string']), ['odd string']);
+  assert.deepEqual(introducedFindings(['fatal|u|p'], ['warn|u|p']), ['warn|u|p'], 'no known rank to compare against');
+});
+
 test('referenced actions are found at any depth, including inside a repeat', () => {
   const { referencedActions } = require('../lib/gate');
   const refs = referencedActions([
