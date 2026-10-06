@@ -75,6 +75,18 @@ test('a run that landed on NOT-THE-PAGE writes no status, whatever else it saw',
   assert.equal(decideVerdict({ extracted: false, wall: null, alreadyProven: false }), 'broken');
 });
 
+test('a run FORWARDED off the site writes no status, whatever else it saw', () => {
+  // lib/forwarded.js: records are null, the board was never read. Before
+  // 2026-10-06 an unproven definition read as "broken" on such a run.
+  for (const attended of [false, true]) {
+    for (const alreadyProven of [false, true]) {
+      for (const wall of [null, ['cloudflare']]) {
+        assert.equal(decideVerdict({ extracted: false, wall, attended, alreadyProven, forwarded: true }), 'inconclusive');
+      }
+    }
+  }
+});
+
 // --- Attended paths --------------------------------------------------------
 
 test('attended with records and no wall means the recipe simply works', () => {

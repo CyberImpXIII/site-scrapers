@@ -573,11 +573,12 @@ refuses keys it does not write. Open:
   ensure that you're human, on https://p3m.dev, what are there sixteen
   thousand of?*" -- a human-check challenge needing a visit to another site.
   Not an engine-detected wall; NOT answered by any agent; Jacob's call, told
-  applications via the report. (b) verify.js takes params only inline (no `@path.json` as
-  engine.js has), so a fill verify puts answers on argv; fake values here,
-  but real ones must not go that way. (c) verify.js's `fill` report omits
-  `dryRun` and `navigatedDuringFill` (a navigation still fails the verdict,
-  via status `error`), so the dry-run proof had to come from a scrape.sh run.
+  applications via the report. (b) and (c) DONE 2026-10-06: verify.js takes
+  `@params.json` and hands the engine a 0600 temp file (never argv); its `fill`
+  report carries `dryRun` and `navigatedDuringFill` (test/fill.test.js "verify.js
+  takes a fill by @file", fails on the old verify.js). Still true: INLINE params
+  on a blocked-attn verdict are quoted into the recipe's notes (NEXT STEP line);
+  with @path only the path is.
 - **Labels are whole since 2026-10-05** (`MAX_LABEL_CHARS` 1000 in
   lib/probes.js, `labelsTruncated` count; test/long-labels.test.js, fails 4/4
   on the old code). Live posit 7999513003: 4 labels were over 60 (90-180
@@ -601,9 +602,6 @@ refuses keys it does not write. Open:
 - **`accessor` still red on `data/failures.db`** (second store, own CLI;
   cli.json takes one `cli`): tools/checks' decision, reported. And `./dev.sh
   check` never runs tools/checks, so this red is invisible there.
-- **`forwarded` is not inconclusive in verify.js** the way `notThePage` now is:
-  a forwarded board run with alreadyProven=false would read as broken. Fold it
-  into `decideVerdict` with a test.
 - **The article path falls back to `document.body`** when content_selector is
   missing or misses, which is how the closed posting read as success. expect_url
   covers Greenhouse; other article recipes still accept any page.

@@ -41,6 +41,8 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const {
   openDb,
   getSite,
@@ -68,7 +70,7 @@ async function main() {
   if (!target) {
     out({
       success: false,
-      error: "Usage: node verify.js <hostname>[#page_type[:recipe_name]] '<json params>' [--dry] [--attended]",
+      error: "Usage: node verify.js <hostname>[#page_type[:recipe_name]] '<json params>'|@params.json [--dry] [--attended]",
     });
     process.exit(1);
   }
@@ -81,12 +83,16 @@ async function main() {
     process.exit(1);
   }
 
+  // `@path.json` reads params from a file, as engine.js and lab.js set do. A
+  // fill's answers are personal data: inline they sit on argv (`ps`, shell
+  // history) and, on a blocked-attn verdict, in the NEXT STEP note written to
+  // the recipe's notes, which quotes paramsArg. With @path only the path is.
   let params = {};
   if (paramsArg && !paramsArg.startsWith('--')) {
     try {
-      params = JSON.parse(paramsArg);
+      params = JSON.parse(paramsArg.startsWith('@') ? fs.readFileSync(paramsArg.slice(1), 'utf8') : paramsArg);
     } catch (e) {
-      out({ success: false, error: `params is not valid JSON: ${e.message}` });
+      out({ success: false, error: `params is not valid JSON${paramsArg.startsWith('@') ? ` in ${paramsArg.slice(1)}` : ''}: ${e.message}` });
       process.exit(1);
     }
   }
@@ -108,9 +114,15 @@ async function main() {
         '(a challenge, a sign-in), then leave it — the run continues by itself the moment the records appear.\n'
     );
   }
+  // Handed to the engine as `@file` (mode 0600, removed after), never on its
+  // argv, so @path params stay off every command line on the way through.
+  const paramsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-params-'));
+  const paramsFile = path.join(paramsDir, 'params.json');
+  fs.writeFileSync(paramsFile, runParams, { mode: 0o600 });
   let result;
+  let engineFailure = null;
   try {
-    const { stdout } = await execFileAsync(process.execPath, [path.join(REPO_ROOT, 'engine.js'), target, runParams], {
+    const { stdout } = await execFileAsync(process.execPath, [path.join(REPO_ROOT, 'engine.js'), target, `@${paramsFile}`], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
@@ -121,9 +133,15 @@ async function main() {
     try {
       result = JSON.parse(e.stdout);
     } catch {
-      out({ success: false, error: `engine.js produced no parseable output: ${(e.stderr || e.message || '').slice(0, 400)}` });
-      process.exit(1);
+      engineFailure = (e.stderr || e.message || '').slice(0, 400);
     }
+  } finally {
+    // Before any exit below: process.exit would skip a later cleanup.
+    fs.rmSync(paramsDir, { recursive: true, force: true });
+  }
+  if (engineFailure !== null) {
+    out({ success: false, error: `engine.js produced no parseable output: ${engineFailure}` });
+    process.exit(1);
   }
 
   // A blocked-guard refusal (lib/blockedGuard.js) is not a run, so it earns
@@ -232,7 +250,15 @@ async function main() {
   // Getting this wrong made indeed.com "blocked" on no evidence of
   // attendability, which is exactly the discretion this is meant to remove.
   const notThePage = result.notThePage ?? null;
-  const verdict = decideVerdict({ extracted, wall, attended, alreadyProven, notThePage: Boolean(notThePage) });
+  const forwarded = result.forwarded ?? null;
+  const verdict = decideVerdict({
+    extracted,
+    wall,
+    attended,
+    alreadyProven,
+    notThePage: Boolean(notThePage),
+    forwarded: Boolean(forwarded),
+  });
 
   const report = {
     target,
@@ -250,6 +276,7 @@ async function main() {
     debugDir: result.debugDir ?? null,
     previousStatus: site.status,
     ...(notThePage ? { notThePage } : {}),
+    ...(forwarded ? { forwarded } : {}),
     ...(describeVerdict ? { describe: { fields: describeVerdict.fields, url: result.url ?? null } } : {}),
     ...(result.fill
       ? {
@@ -259,6 +286,11 @@ async function main() {
             counts: result.fill.counts,
             formChanged: result.fill.formChanged,
             wall: result.fill.wall,
+            // The two facts that say nothing was sent: a fill never submits
+            // (dryRun) and never left the page. Missing here until 2026-10-06,
+            // so the dry-run proof had to come from a separate scrape.sh run.
+            dryRun: result.fill.dryRun ?? null,
+            navigatedDuringFill: result.fill.navigatedDuringFill ?? null,
             failed: (result.fill.fields || []).filter(f => f.outcome === 'failed').map(f => `${f.selector}: ${f.reason}`),
           },
         }
@@ -279,6 +311,19 @@ async function main() {
         `Inconclusive, status unchanged: the run landed on ${notThePage.landed}, not a page this recipe reads ` +
         `(expect_url ${notThePage.expected}). The params most likely name something that no longer exists (a closed ` +
         'posting redirects to its board), which says nothing about the recipe. Re-run with params that name a live page.',
+    });
+    process.exit(0);
+  }
+
+  if (verdict === 'inconclusive' && forwarded) {
+    out({
+      ...report,
+      newStatus: site.status,
+      definitionHasPassingRun: alreadyProven,
+      note:
+        `Inconclusive, status unchanged: the page forwarded off ${forwarded.fromHost} to ${forwarded.to}, so nothing ` +
+        'this recipe reads was there (records null, not 0). The params most likely name a company that lists its jobs ' +
+        'on its own site, which says nothing about the recipe. Re-run with params that name a board on this host.',
     });
     process.exit(0);
   }

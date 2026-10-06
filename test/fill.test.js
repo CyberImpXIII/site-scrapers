@@ -507,6 +507,33 @@ test('answers never reach scrape_runs: only their keys are logged', async () => 
   assert.deepEqual(redactRunParams({ answers: '{"#a":"secret"}' }).answers, { redacted: true, keys: ['#a'] });
 });
 
+// verify.js reads params from @file too (since 2026-10-06; inline only before,
+// so a fill verify put answers on argv), and its fill report carries the two
+// facts that say nothing was sent. Before, the dry-run proof needed a second
+// scrape.sh run.
+test('verify.js takes a fill by @file and reports dryRun and navigatedDuringFill', async () => {
+  const url = ats.url('greenhouse');
+  const forms = await describe(url);
+  const { A } = answerMaps(forms.fields);
+  const pfile = path.join(tmp, 'verify-params.json');
+  fs.writeFileSync(pfile, JSON.stringify({ noSession: true, noDiagnostics: true, url, fields: forms.fields, answers: A }));
+  ats.reset();
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(process.execPath, ['verify.js', '127.0.0.1#action:fill_test_fill', `@${pfile}`, '--dry'], { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }));
+  } catch (e) {
+    stdout = e.stdout;
+  }
+  const v = JSON.parse(stdout);
+  assert.equal(v.fill?.status, 'done', JSON.stringify(v).slice(0, 600));
+  assert.equal(v.fill.dryRun, true);
+  assert.equal(v.fill.navigatedDuringFill, false);
+  assert.equal(v.verdict, 'working');
+  assert.equal(ats.state().first_name, 'Fixturea', 'the answers from the file reached the page');
+  assert.ok(!stdout.includes('fixture.a@example.invalid'), 'verify.js output must not echo an answer value');
+  assert.equal(ats.submits(), 0);
+});
+
 test('formHash covers structure, not state: hasValue and placeholder do not change it', () => {
   const f = [{ selector: '#a', tag: 'input', type: 'text', name: 'a', label: 'A', required: true, role: null, ariaHidden: false, hasValue: false, placeholder: 'x' }];
   assert.equal(formHash(f), formHash([{ ...f[0], hasValue: true, placeholder: 'y' }]));

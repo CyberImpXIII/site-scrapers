@@ -165,6 +165,45 @@ test('engine: a script forward during the card wait is reported as forwarded too
   assert.strictEqual(r.count, null);
 });
 
+// ---- verify.js: a forwarded run earns no status --------------------------
+//
+// The fixture has never returned a record, so before 2026-10-06 verify.js read
+// this run as "ran, produced nothing" and wrote `broken` over a recipe whose
+// board simply lives elsewhere. Params go in by `@file` here, the path a
+// fill's personal answers should take (also covered: a bad file is an error).
+
+async function runVerify(target, paramsArg, ...flags) {
+  try {
+    const { stdout } = await execFileAsync(process.execPath, ['verify.js', target, paramsArg, ...flags], { cwd: REPO_ROOT, encoding: 'utf8' });
+    return JSON.parse(stdout);
+  } catch (e) {
+    return JSON.parse(e.stdout);
+  }
+}
+
+test('verify.js: a forwarded run is inconclusive and leaves the status alone', async () => {
+  await runListing('fwd_verify', '/fwd'); // registers the fixture
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-fwd-'));
+  try {
+    const file = path.join(dir, 'p.json');
+    fs.writeFileSync(file, '{"noSession":true,"noDiagnostics":true}');
+    const r = await runVerify('127.0.0.1#listing:fwd_verify', `@${file}`);
+    assert.strictEqual(r.verdict, 'inconclusive', JSON.stringify(r).slice(0, 600));
+    assert.strictEqual(r.definitionHasPassingRun, false, 'the counterfactual: unproven, so without the rule this is "broken"');
+    assert.strictEqual(r.forwarded.toHost, 'localhost');
+    assert.match(r.note, /forwarded off 127\.0\.0\.1/);
+    assert.strictEqual(r.newStatus, 'working');
+    const row = db.prepare("SELECT status FROM sites WHERE hostname = '127.0.0.1' AND recipe_name = 'fwd_verify'").get();
+    assert.strictEqual(row.status, 'working', 'nothing written');
+
+    const bad = await runVerify('127.0.0.1#listing:fwd_verify', `@${path.join(dir, 'missing.json')}`, '--dry');
+    assert.strictEqual(bad.success, false);
+    assert.match(bad.error, /params is not valid JSON in .*missing\.json/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---- dev.sh board: a forwarded board is not a board ------------------------
 //
 // curl is replaced on PATH by a fake that prints a page and then the effective
