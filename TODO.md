@@ -606,9 +606,10 @@ refuses keys it does not write. Open:
   missing or misses, which is how the closed posting read as success. expect_url
   covers Greenhouse; other article recipes still accept any page.
 - **check-hooks.sh still picks `.[0]` working host** (the 127.0.0.1 race in 0i).
-- **lab.js forms-probe crash fix (non-array `fields`) has no test.**
-- Scrape.sh printed Puppeteer's "x64 Node on arm64, Rosetta" warning on
-  2026-10-05 runs (UNCONFIRMED which node; settle: `file $(which node)`).
+- Scrape.sh prints Puppeteer's "x64 Node on arm64, Rosetta" warning. SETTLED
+  2026-10-06: `file $(which node)` = nvm v22.20.0 Mach-O x86_64, and
+  `sysctl sysctl.proc_translated` = 1 (running translated). Switching to arm64
+  node is Jacob's decision (see "This machine runs x64 node under Rosetta").
 
 ## 0g. LinkedIn remote filter reported ignored by emailTools (recorded 2026-10-04)
 
@@ -631,10 +632,6 @@ Evidence on this side, before any new run:
 URL unencoded. Wrong -- url_param navigation uses `buildUrl()`, which
 `encodeURIComponent`s every value; a live run with `keywords:"x&f_WT=2"` sent
 `keywords=x%26f_WT%3D2`. `substitute()` is raw, but it is not on that path.)
-
-**Small bug seen 2026-10-04, NOT fixed:** `node lab.js new bandcamp.com#article`
-prints a skeleton with `hostname: "bandcamp.com#article"` and `page_type:
-"listing"`: it does not parse the target with `parseSiteArg`.
 
 **Settled 2026-10-04: f_WT=2 is IGNORED, by identity.** Registered
 `linkedin.com#listing:remote` (needs-review, = default + `&f_WT=2`) as the
@@ -1031,16 +1028,6 @@ does not exist.** Write it here when you see it, not at the end.
   severity, which is a workaround rather than a fix. Wanted: compare on
   `unit|problem` and only count a finding as introduced when its severity got
   *worse*. Flagged mid-session and then not recorded, which is why it is here.
-- **`lab.js probe` reports `prober run failed: undefined`** when the underlying
-  run fails without setting `error` — hit for real on a 404 board slug. The one
-  thing the message must carry is why, and it carries the word "undefined".
-  Wanted: fall back to the run's `failedStep`, `timedOut` or final URL, and say
-  "the page did not load" rather than printing a missing field.
-- **`register.js` takes a bare path; `lab.js set` requires `@path`.** Two CLIs
-  in the same repo reading a JSON file two different ways, which cost one
-  failed call this session (`register.js @file.json` → "Bad JSON: Unexpected
-  token '@'"). Wanted: accept both spellings in both, or reject the wrong one
-  with a message naming the right one.
 - **The four `CLAUDE.md` copies** are kept in sync by a prose instruction
   ("Keeping these rules in sync"), which is exactly the arrangement that had
   already drifted for the hooks. Wanted: a check that the shared sections agree

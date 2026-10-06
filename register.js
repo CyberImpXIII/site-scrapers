@@ -555,8 +555,16 @@ function main() {
     process.exit(1);
   }
 
+  // A bare path or `@path` (lab.js set's and engine.js's spelling): both read
+  // the file. `@file.json` used to fail as "Bad JSON: Unexpected token '@'".
   let raw;
-  if (fs.existsSync(arg)) {
+  if (arg.startsWith('@')) {
+    if (!fs.existsSync(arg.slice(1))) {
+      console.log(JSON.stringify({ success: false, error: `No such file: ${arg.slice(1)}` }));
+      process.exit(1);
+    }
+    raw = fs.readFileSync(arg.slice(1), 'utf8');
+  } else if (fs.existsSync(arg)) {
     raw = fs.readFileSync(arg, 'utf8');
   } else {
     raw = arg;

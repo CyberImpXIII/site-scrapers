@@ -44,6 +44,7 @@ const { recordsOf, countOf, recordIdentities, sameRecords } = require('./lib/out
 const { distinctByField, crossFieldValues } = require('./lib/distinctValues');
 const { grepRaw, searchableCount } = require('./lib/rawGrep');
 const { isBlockedRefusal } = require('./lib/blockedGuard');
+const { formsSummary, proberFailure } = require('./lib/labReport');
 
 const REPO_ROOT = __dirname;
 const PROBER = 'lab-prober.internal';
@@ -177,7 +178,7 @@ async function main() {
       ...(noSession || !sessionHostname ? { noSession: true } : { sessionHostname }),
       noDiagnostics: true,
     });
-    if (!r.success) die(`prober run failed: ${r.error}`);
+    if (!r.success) die(`prober run failed: ${proberFailure(r)}`);
     for (const p of r.diagnostics || []) {
       if (p.kind === 'blockers') out({ blockers: { blocked: p.blocked, flags: p.flags, bodyTextLength: p.bodyTextLength, title: p.title } });
       if (p.kind === 'antibot') {
@@ -208,14 +209,8 @@ async function main() {
         });
       }
       // Same reason as `selectors` above: an errored forms probe has no
-      // `fields`, and reading its length threw (pantheon.io, 2026-10-05).
-      if (p.kind === 'forms') {
-        out({
-          forms: Array.isArray(p.fields)
-            ? { fields: p.fields.length, required: p.requiredCount, fileUpload: p.fileUploadPresent, submits: p.submits }
-            : { fields: null, error: p.error ?? 'forms probe returned no field list' },
-        });
-      }
+      // `fields` (lib/labReport.js).
+      if (p.kind === 'forms') out({ forms: formsSummary(p) });
       if (p.kind === 'repeated_structure') {
         out({
           cardCandidates: (p.candidates || []).slice(0, 5).map(x => ({
@@ -318,7 +313,7 @@ async function main() {
       ...(matchSessionHost ? { sessionHostname: matchSessionHost } : { noSession: true }),
       noDiagnostics: true,
     });
-    if (!p.success) die(`prober run failed: ${p.error}`);
+    if (!p.success) die(`prober run failed: ${proberFailure(p)}`);
     const probe = (p.diagnostics || []).find(d => d.kind === 'card_match');
     if (!probe) die('the card_match probe did not report — check that probe_card_match is registered');
     if (probe.error) die(`card_match: ${probe.error}`);
@@ -424,7 +419,10 @@ async function main() {
     try {
       def = JSON.parse(raw);
     } catch (e) {
-      die(`not valid JSON${b.startsWith('@') ? ` in ${b.slice(1)}` : ''}: ${e.message}`);
+      // A bare path is register.js's spelling; say the right one here rather
+      // than a bare JSON error (it cost a failed call once).
+      const hint = !b.startsWith('@') && require('fs').existsSync(b) ? ` -- "${b}" is a file: pass it as @${b}` : '';
+      die(`not valid JSON${b.startsWith('@') ? ` in ${b.slice(1)}` : ''}: ${e.message}${hint}`);
     }
 
     // The same gate register.js enforces, because a second write path that
@@ -688,11 +686,15 @@ async function main() {
   }
 
   if (cmd === 'new') {
+    // The target is parsed like every other command's: `bandcamp.com#article`
+    // printed hostname "bandcamp.com#article", page_type "listing" until
+    // 2026-10-06 (test/lab-report.test.js).
+    const t = a ? parseSiteArg(a) : { hostname: 'example.com', pageType: 'listing', recipeName: 'default' };
     out({
       skeleton: {
-        hostname: a || 'example.com',
-        page_type: 'listing',
-        recipe_name: 'default',
+        hostname: t.hostname,
+        page_type: t.pageType,
+        recipe_name: t.recipeName,
         status: 'needs-review',
         nav_method: 'url_param',
         nav_template: 'https://example.com/jobs?q={{query}}',

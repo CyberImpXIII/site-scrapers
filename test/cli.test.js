@@ -201,6 +201,43 @@ test('register.js reads a definition from a file path as well as a string', asyn
   assert.ok(out.error && out.error.length > 5);
 });
 
+test('register.js reads @path too (lab.js set and engine.js spelling)', async () => {
+  // Until 2026-10-06 this failed as "Bad JSON: Unexpected token '@'". The
+  // definition is a refused one, so reaching the status refusal proves the
+  // file was read and nothing is written.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'register-at-'));
+  try {
+    const file = path.join(dir, 'def.json');
+    fs.writeFileSync(file, JSON.stringify({
+      hostname: 'cli-test.invalid', page_type: 'listing', status: 'working', nav_method: 'url_param',
+      nav_template: 'https://cli-test.invalid/?q={{q}}', card_selector: 'li.x',
+    }));
+    const ok = parse((await run('register.js', [`@${file}`])).stdout);
+    assert.equal(ok.success, false);
+    assert.match(ok.error, /cannot be set by hand/);
+    const missing = parse((await run('register.js', [`@${path.join(dir, 'nope.json')}`])).stdout);
+    assert.equal(missing.success, false);
+    assert.match(missing.error, /No such file: .*nope\.json/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- lab.js new -----------------------------------------------------------
+
+test('lab.js new parses its target like every other command', async () => {
+  // Until 2026-10-06 `bandcamp.com#article` came back as the hostname, with
+  // page_type "listing".
+  const art = parse((await run('lab.js', ['new', 'bandcamp.com#article'])).stdout).skeleton;
+  assert.equal(art.hostname, 'bandcamp.com');
+  assert.equal(art.page_type, 'article');
+  assert.equal(art.recipe_name, 'default');
+  const act = parse((await run('lab.js', ['new', 'example.org#action:apply'])).stdout).skeleton;
+  assert.deepEqual([act.hostname, act.page_type, act.recipe_name], ['example.org', 'action', 'apply']);
+  const none = parse((await run('lab.js', ['new'])).stdout).skeleton;
+  assert.deepEqual([none.hostname, none.page_type, none.recipe_name], ['example.com', 'listing', 'default']);
+});
+
 // --- verify.js ------------------------------------------------------------
 
 test('verify.js reports an unknown target without running a browser', async () => {

@@ -34,6 +34,21 @@ async function labSet(def) {
   }
 }
 
+test('a bare file path is refused with the @path spelling named', async () => {
+  // register.js takes a bare path; lab.js set takes @path. Refused before any
+  // write: the argument does not parse as JSON.
+  const file = path.join(REPO_ROOT, 'package.json'); // any existing file
+  let out;
+  try {
+    await execFileAsync(process.execPath, [path.join(REPO_ROOT, 'lab.js'), 'set', TARGET, file], { cwd: REPO_ROOT, encoding: 'utf8' });
+    assert.fail('lab.js set accepted a bare path');
+  } catch (e) {
+    out = JSON.parse(e.stdout || '{}');
+  }
+  assert.equal(out.success, false);
+  assert.ok(out.error.includes(`pass it as @${file}`), out.error);
+});
+
 test('an unknown key is refused by name, not silently dropped', async () => {
   const { code, out } = await labSet({ nav_methd: 'ui_steps', note: 'typo should be refused' });
   assert.equal(out.success, false);
