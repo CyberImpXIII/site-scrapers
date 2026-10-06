@@ -221,7 +221,9 @@ Labels (and a multi-option question's `group.question`) are returned whole,
 in describe and in the fill report alike (since 2026-10-05; they were cut at
 60 characters plus "…", which hid Posit's required human-check question).
 `MAX_LABEL_CHARS` (1000, lib/probes.js) caps them only against a hostile page,
-and `labelsTruncated` counts the fields it shortened. `label` is hashed, so a
+and `labelsTruncated` counts the fields it shortened. `placeholder` is held to
+the same cap and counted (since 2026-10-06; it was cut at 60): a field with no
+label is asked by its placeholder. `label` is hashed, so a
 description stored with a cut label reads `formChanged:true` once: re-describe.
 
 **Recipes are versioned — use that instead of guessing what changed.** Every

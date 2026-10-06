@@ -586,9 +586,18 @@ refuses keys it does not write. Open:
   Reported to applications (via dispatcher): their `batch.label_cut_off`
   matches the old 60+"…" shape exactly and will stop firing -- read
   `labelsTruncated` instead; answers keyed by a cut label will not match the
-  whole one; re-describe stored packets. `placeholder` is still cut at 60
-  (cosmetic, not hashed) -- untouched, unconfirmed whether any form puts the
-  question there.
+  whole one; re-describe stored packets.
+  **2026-10-06, two findings from applications (read from code), both
+  CONFIRMED by a run and fixed:** (1) a label describe capped (1000 + "…") was
+  cut again in fill's row to 1000 + "..." -- the row now uses describe's own
+  cap (`capLabel`, idempotent); (2) `placeholder` was cut at 60 and uncounted,
+  but applications asks a label-less field by its placeholder -- now capped
+  at MAX_LABEL_CHARS and counted in `labelsTruncated`. Not hashed, so no
+  formHash moves. test/long-labels.test.js tests 4-5 failed on 8a3194b, pass
+  after. **Applications must update** `PROBES_LABEL_RULES`' placeholder line
+  (their reconcile now says DIFF "a placeholder is cut at 60", as designed)
+  and `batch._legacy_cut`'s placeholder branch. The label/question lines
+  they read by text were kept byte-identical (comment in lib/probes.js).
 - **`accessor` still red on `data/failures.db`** (second store, own CLI;
   cli.json takes one `cli`): tools/checks' decision, reported. And `./dev.sh
   check` never runs tools/checks, so this red is invisible there.

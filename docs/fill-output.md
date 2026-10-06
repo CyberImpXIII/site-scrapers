@@ -132,7 +132,12 @@ The `describe_application_form` output now carries the same `formHash` on its
 A row's `label` (and a described `group.question`) is the whole text, as
 describe reports it (since 2026-10-05; both were cut at 60 characters plus an
 ellipsis before). Only a hostile page hits `MAX_LABEL_CHARS` (1000,
-lib/probes.js), and describe's `labelsTruncated` counts those fields.
+lib/probes.js), and describe's `labelsTruncated` counts those fields. A label
+describe capped (1000 characters + `…`) comes back in the row unchanged (since
+2026-10-06; the row cut it again to 1000 + `...` before). A described
+`placeholder` is held to the same cap and counted in `labelsTruncated` too
+(since 2026-10-06; it was cut at 60 + `…` and not counted), because a field
+with no label is asked by its placeholder.
 
 ### Multi-option questions (new in `/2`)
 

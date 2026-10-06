@@ -37,8 +37,22 @@ const HTML = `<!doctype html><html><body><form>
   </fieldset>
 </form></body></html>`;
 
+// A placeholder is the question when a field has no label (the applications
+// side reads it that way), so it is held to the label cap, not the old 60.
+const PLACEHOLDER_Q = `Tell us, in your own words, which ${'fixture broadcast systems '.repeat(4)}you have supported and for how long`;
+// Hostile: over MAX_LABEL_CHARS, so describe caps them and says so.
+const HOSTILE_LABEL = `H${'hostile label text '.repeat(80)}`;
+const HOSTILE_PLACEHOLDER = `P${'hostile placeholder text '.repeat(60)}`;
+const HOSTILE_HTML = `<!doctype html><html><body><form>
+  <label for="h1">${HOSTILE_LABEL}</label><input id="h1" name="h1" type="text">
+  <input id="p1" name="p1" type="text" placeholder="${PLACEHOLDER_Q}">
+  <input id="p2" name="p2" type="text" placeholder="${HOSTILE_PLACEHOLDER}">
+</form></body></html>`;
+
 let described;
 let filled;
+let hostileDescribed;
+let hostileFilled;
 
 test.before(async () => {
   await withPage(async page => {
@@ -46,6 +60,9 @@ test.before(async () => {
     described = await probeForms(page, 80);
     // No answers: nothing is typed, only the report's rows are read.
     filled = await fillForm(page, { fields: described.fields, answers: {} });
+    await page.setContent(HOSTILE_HTML);
+    hostileDescribed = await probeForms(page, 80);
+    hostileFilled = await fillForm(page, { fields: hostileDescribed.fields, answers: {} });
   });
 });
 
@@ -72,6 +89,35 @@ test('the fill report returns the same whole label', () => {
   assert.equal(q1.label, `${Q1}*`);
   assert.equal(q2.label, Q2);
   assert.equal(filled.formChanged, false, 'a whole label hashes the same on both sides');
+});
+
+// Reported by applications (2026-10-06, from reading the code): a label describe
+// had capped (1000 + "…") was cut AGAIN by the fill report, to 1000 + "...", so
+// the two reports disagreed on that field. Counterfactual: on 8a3194b this
+// fails with the fill row ending "..." and 1003 characters long.
+test('a label describe capped comes back identical in the fill report', () => {
+  const d = hostileDescribed.fields.find(f => f.selector === '#h1');
+  const r = hostileFilled.fields.find(f => f.selector === '#h1');
+  assert.ok(HOSTILE_LABEL.length > MAX_LABEL_CHARS, 'fixture label must exceed the cap');
+  assert.equal(d.label.length, MAX_LABEL_CHARS + 1);
+  assert.ok(d.label.endsWith('…'));
+  assert.equal(r.label, d.label);
+});
+
+// Reported by applications (2026-10-06): placeholder was cut at 60 and not
+// counted, and a label-less field's placeholder is its question there.
+// Counterfactual: on 8a3194b the placeholder comes back 61 characters ending
+// "…", and labelsTruncated is 1 (the label only).
+test('a long placeholder is returned whole, and one over the cap is counted', () => {
+  assert.ok(PLACEHOLDER_Q.length > 60 && PLACEHOLDER_Q.length < MAX_LABEL_CHARS);
+  const p1 = hostileDescribed.fields.find(f => f.selector === '#p1');
+  const p2 = hostileDescribed.fields.find(f => f.selector === '#p2');
+  assert.equal(p1.label, null, 'the fixture field must have no label, so the placeholder is its question');
+  assert.equal(p1.placeholder, PLACEHOLDER_Q);
+  assert.equal(p2.placeholder.length, MAX_LABEL_CHARS + 1);
+  assert.ok(p2.placeholder.endsWith('…'));
+  assert.equal(hostileDescribed.labelsTruncated, 2, 'the capped label (#h1) and the capped placeholder (#p2)');
+  assert.equal(described.labelsTruncated, 0);
 });
 
 test('the hostile-page cap is far above any real question', () => {
