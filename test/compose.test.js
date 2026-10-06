@@ -10,6 +10,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { expandSteps, applyWith, refKey, genericRefKey, stepsNeedHeaded } = require('../lib/composeActions');
 const { openDb, upsertSite, insertField, deleteSite } = require('../db');
 const { authorizeForTests } = require('../lib/writeGuard');
@@ -139,6 +141,36 @@ test('a reference cycle is detected instead of expanding forever', () => {
     /cycle detected/,
     'self-reference must be caught before it becomes an infinite list'
   );
+
+  // Through the CLI: engine.js reports the cycle and STOPS. Its exit fires
+  // from a stdout-write callback, so without a `return` main() ran on past
+  // the error (TODO 0j) -- the signature is a second JSON document on stdout.
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'engine.js'), 'cycle.test#action:loop', '{}'], {
+    encoding: 'utf8',
+    timeout: 60000,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+  });
+  const docs = r.stdout.trim().split('\n').filter(Boolean);
+  assert.equal(docs.length, 1, `exactly one JSON document, got:\n${r.stdout}`);
+  const out = JSON.parse(docs[0]);
+  assert.equal(out.success, false);
+  assert.match(out.error, /cycle detected/);
+  assert.equal(r.status, 1);
+});
+
+test('engine.js bad-JSON params: one refusal, nothing run after it', () => {
+  // 2026-10-06, before the fix: `engine.js no-such-host.invalid '{bad'`
+  // printed "Bad JSON in params" AND then "No site documented" -- it went on
+  // to look the recipe up, and on a real one would have run it with {}.
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'engine.js'), 'no-such-host.invalid', '{bad'], {
+    encoding: 'utf8',
+    timeout: 30000,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+  });
+  const docs = r.stdout.trim().split('\n').filter(Boolean);
+  assert.equal(docs.length, 1, `exactly one JSON document, got:\n${r.stdout}`);
+  assert.match(JSON.parse(docs[0]).error, /Bad JSON in params/);
+  assert.equal(r.status, 1);
 });
 
 // --- stepsNeedHeaded(): does this require a visible browser? ---------------

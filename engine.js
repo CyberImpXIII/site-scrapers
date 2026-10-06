@@ -919,7 +919,9 @@ async function main() {
   const includeRaw = flags.includes('--raw');
 
   if (!hostnameArg) {
-    emitAndExit(JSON.stringify({ success: false, documented: false, error: 'Usage: node engine.js <hostname> \'<json params>\' [--raw] [--attended]' }), 1);
+    // Every early exit `return`s: emitAndExit exits from a write callback, so
+    // main() otherwise runs on (test/compose.test.js, TODO 0j).
+    return emitAndExit(JSON.stringify({ success: false, documented: false, error: 'Usage: node engine.js <hostname> \'<json params>\' [--raw] [--attended]' }), 1);
   }
 
   let hostnamePart = hostnameArg;
@@ -939,7 +941,7 @@ async function main() {
       // description runs to kilobytes. (test/fill.test.js runs one fill this way.)
       params = JSON.parse(paramsArg.startsWith('@') ? fs.readFileSync(paramsArg.slice(1), 'utf8') : paramsArg);
     } catch (e) {
-      emitAndExit(JSON.stringify({ success: false, documented: false, error: `Bad JSON in params: ${e.message}` }), 1);
+      return emitAndExit(JSON.stringify({ success: false, documented: false, error: `Bad JSON in params: ${e.message}` }), 1);
     }
   }
   // `--attended` is the same as {"attended": true}: the flag the
@@ -1016,7 +1018,7 @@ async function main() {
     try {
       expandedSteps = expandSteps(db, JSON.parse(site.nav_template), site.hostname, new Set([refKey(siteMeta)]));
     } catch (e) {
-      emitAndExit(JSON.stringify({ success: false, documented: true, error: e.message }), 1);
+      return emitAndExit(JSON.stringify({ success: false, documented: true, error: e.message }), 1);
     }
   }
   // pagination_method 'steps': pagination_config is a ui_steps array (usually
@@ -1027,7 +1029,7 @@ async function main() {
     try {
       paginationSteps = expandSteps(db, JSON.parse(site.pagination_config), site.hostname, new Set([refKey(siteMeta)]));
     } catch (e) {
-      emitAndExit(JSON.stringify({ success: false, documented: true, error: `pagination_config: ${e.message}` }), 1);
+      return emitAndExit(JSON.stringify({ success: false, documented: true, error: `pagination_config: ${e.message}` }), 1);
     }
   }
   // `attended` forces a visible window and gives the person time to clear

@@ -149,11 +149,12 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
   false (the CLI refuses regardless of allowUnverified). Expected: the message
   says the CLI refuses too. Not edited here: the hook copies are synced from
   that source, and 5 hook-copy drift errors are waiting on Jacob.
-- **engine.js early exits still fall through.** `emitAndExit` exits from a write
-  callback, so code after it keeps running until then. The `!site`, status and
-  blocked-guard exits now `return`; the usage and bad-JSON exits above them do
-  not. Observed harmless for usage: `node engine.js` with no args printed the
-  usage JSON, exit 1, nothing on stderr. Bad-JSON path not probed.
+- **engine.js early exits** -- DONE 2026-10-06: usage, bad-JSON and both
+  expandSteps exits now `return`. Bad JSON was NOT harmless: it printed a second
+  document ("No site documented") after the refusal, i.e. it looked the recipe
+  up and would have run it with `{}`. Gated in test/compose.test.js (the
+  bad-JSON test failed before the fix; the cycle-through-CLI test passed before
+  it too, so it guards the output shape, not the fall-through itself).
 
 ## 0k. Reported BY `hooks` (2026-10-05, relayed by the dispatcher) — open
 
