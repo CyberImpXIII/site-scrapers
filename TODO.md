@@ -206,7 +206,18 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
   plus 3 undeclared folders: income, tools/usage, and now tools/transcripts.
   Suite 529/529 in the same run. Not touched by the store-export session.
   **Later 2026-10-05: copies rebuilt and folders declared (0m); `hooks
-  copies` agrees.**
+  copies` agrees.** **2026-10-06 `./dev.sh check`: 10 ERRORS** -- 3 drifted
+  (troubleshooting.sh, test-troubleshooting.sh, test-prefer-recipes.sh) and 7
+  tools/hooks hooks (ask-first, git-stamp, no-secrets, primary-guard, push-gate,
+  settings-guard, write-ledger) missing from the TOP-LEVEL `.claude/hooks`.
+  Here they are present but unwired, so hooks.test.js "every hook is wired"
+  fails: wiring them is Jacob's settings.proposed.json step. Owner of the rest:
+  hooks (tools/hooks/source). Suite 562/564: that one plus the flake below.
+- **SUSPICION (unconfirmed): extraction.test.js "value_pattern overrides
+  segment_index" flakes under load.** 2026-10-06 full check: `records` undefined
+  (the run failed) at 3.9 s; alone, 12/12 pass. Another agent's full check ran
+  at the same time (rule 7 contention). Settle: `./dev.sh test extraction` x10
+  alone; if it ever fails alone, read the run's error instead of `records[0]`.
 
 **`accessor` (tools/checks) is red on site-scrapers** — `tools/checks/checks
 one accessor site-scrapers`. Since 0l added `cli.json` (store data/scrapers.db,
