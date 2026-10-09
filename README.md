@@ -1042,6 +1042,15 @@ at exactly Puppeteer's 30s navigation timeout; switched to async `execFile`.
   and flags a `consistencyWarning` if they disagree — this is the check that
   would have caught the ALA JobLIST failure mode (checkbox visibly checked,
   UI looked right, but the underlying result set never changed).
+- When that claimed count is a plain number larger than what the run
+  returned, the output carries `moreAvailable: {claimed, atLeast, returned}`
+  (`atLeast` when the site wrote "11,000+"). This is how a per-search cap is
+  visible: linkedin.com's guest search returns its first 60 cards and the
+  rest load by infinite scroll the recipe does not drive, so 45 searches in
+  scripts' 2026-10-09 sweep came back with exactly 60 and looked complete.
+  No `result_count_regex`, or a count we cannot parse cleanly ("1.2K"), means
+  no key: absent is "unknown", not "this is everything".
+  `lib/moreAvailable.js`, `test/more-available.test.js`.
 - A page-load timeout is reported explicitly (`timedOut: true`), separate
   from "genuinely zero results for a valid query" — these used to look
   identical.

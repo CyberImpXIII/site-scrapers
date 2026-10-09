@@ -82,6 +82,7 @@ const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 const { resolveUrlFields } = require('./lib/urlAttrs');
 const { decodeTextFields } = require('./lib/textEntities');
+const { moreAvailable } = require('./lib/moreAvailable');
 const { forwardedOff } = require('./lib/forwarded');
 const { NotThePage, checkExpectUrl, notThePageError } = require('./lib/notThePage');
 const { isAttended, blockedAttnGate, blockedAttnRefusal } = require('./lib/blockedGuard');
@@ -1499,6 +1500,7 @@ async function main() {
       consistencyWarning = `Site claims ${claimed} results but we extracted ${outcome.jobs.length} cards — likely stale/cached DOM.`;
     }
   }
+  const moreOnSite = moreAvailable(outcome.claimedCount, outcome.jobs.length);
 
   const output = {
     success,
@@ -1518,6 +1520,10 @@ async function main() {
     url: outcome.url,
     claimedCount: outcome.claimedCount,
     consistencyWarning,
+    // Present only when the site's own count is larger than what came back:
+    // { claimed, atLeast, returned }. A silent cap (linkedin: 60 of "11,000+")
+    // is otherwise indistinguishable from a small result set. lib/moreAvailable.js.
+    ...(moreOnSite ? { moreAvailable: moreOnSite } : {}),
     // Present only when a value changed: { values, fields }. The site's own
     // text carried an entity (double encoding); lib/textEntities.js.
     ...(outcome.entitiesDecoded ? { entitiesDecoded: outcome.entitiesDecoded } : {}),

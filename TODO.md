@@ -95,6 +95,54 @@ the harness agent's fix, not this repo's.
 
 ---
 
+## 0o. Scripts dry-sweep findings (scripts/TODO.md item 15), probed 2026-10-09
+
+- **wellfound: CONFIRMED wrong answer, FIXED.** Counterfactual
+  `{"role":"zzqx-nonsense-slug-4471"}` landed on https://wellfound.com/remote
+  (same host) and returned success:true, 48 records, claimedCount 11756. Same
+  for archivist and av-integration-specialist. Recipe v1.5 is now ui_steps:
+  goto + expect_url `^https://wellfound\.com/role/r/...`; unknown slug ->
+  notThePage, records null; sales 47 and software-engineer 39 (verify.js:
+  working). Gate: test/not-the-page.test.js "stored recipe wellfound".
+  `audit.js params` cannot catch this kind (two real slugs differ whatever an
+  unknown one does); docs/recipes.md says to probe a nonsense slug.
+  Open: the sweep's set with no `records` key was the "Engine threw" output,
+  which omits records/count entirely (listing path, engine.js catch). Unknown
+  what threw then; the same slug is now notThePage. Decide whether the
+  engine-threw output should carry `records: null, count: null`.
+- **builtin `&amp;`: FIXED** generically: lib/textEntities.js decodes ONE
+  level of the XML five, nbsp and numeric refs in non-attribute fields of a
+  listing run and reports `entitiesDecoded: {values, fields}`. Live
+  `{"search":"Software Engineer Lead"}`: PNC title now "... Risk & Compliance",
+  entitiesDecoded {values:1, fields:[title]}. Test: test/text-entities.test.js
+  (engine test fails with the decode removed). NOT done for the article path
+  (descriptions) -- same decode would apply; decide.
+- **builtin 0-record timeouts: REAL EMPTIES** (Archivist probe): the page
+  shows "No job results. To see more jobs, try:" and the run waits the full
+  60 s and reports success:false timedOut:true. Not a wrong answer, but an
+  empty search and a broken wait are indistinguishable in the output. Proposed
+  (not built): a recipe-declared empty-results marker (selector/text) so a
+  real empty ends early as `empty: true, count: 0`. Needs a sites column.
+- **glassdoor all-52-timeouts: NOT REPRODUCED, not a wall.** 2026-10-09
+  06:27-06:33, alone on the browser, load avg ~20: support 30, archivist 1,
+  sales-engineer 30 (the last one failed in the sweep at 04:30), all
+  success:true, no wall in the output. Successful runs took 42.8-54.0 s
+  against ready_timeout_ms 50000; sweep failures were 55.3 s each (= the
+  timeout). Suspicion, unconfirmed: render time sits near the 50 s limit and
+  the sweep ran under heavy load (load avg 70-125 that night). Debug captures
+  from the sweep were already pruned. Settle: rerun a few sets at the next
+  timeout and read failureContext/debugDir before deciding to raise the
+  timeout.
+- **linkedin 60-record cap: VISIBLE now, not lifted.** Every listing output
+  whose site count (result_count_regex) is a clean number above `count` now
+  carries `moreAvailable: {claimed, atLeast, returned}` (lib/moreAvailable.js,
+  test/more-available.test.js, mutation-checked; README). Live
+  `{"keywords":"archivist","session":"guest"}`: count 60, moreAvailable
+  {claimed 5000, atLeast true, returned 60}. Chose a derived field over a
+  declared `result_cap` column: no schema change, and it covers every recipe
+  with a count regex. Gap: a capped recipe with NO result_count_regex still
+  says nothing. Lifting the cap (driving the infinite scroll) is not done.
+
 ## 0n. submit_application_form (PLAN-applications §12.2 step 3) — DONE 2026-10-08, open items
 
 Built against fixtures only; nothing live ran. Code: `lib/submitForm.js` (the
