@@ -92,10 +92,51 @@ function multiControls(mode) {
 // Submit controls, by ?submit=. Every one of these submits the form when
 // clicked, and the page counts it: typed, a <button> with no type INSIDE the
 // form (submit by default), and a <button form=...> OUTSIDE it (form-owned).
+// For test/submit.test.js: `two` (two visible submit controls -- which one
+// is meant cannot be known) and `none` (the form owns no submit control).
 function submitControl(kind, text) {
+  if (kind === 'two') {
+    return { inForm: `<button type="submit" id="submit_app" class="btn btn--pill">${text}</button><input type="submit" id="submit_app_2" value="Send">`, outside: '' };
+  }
+  if (kind === 'none') return { inForm: '', outside: '' };
   if (kind === 'untyped') return { inForm: `<button id="submit_app" class="btn btn--pill">${text}</button>`, outside: '' };
   if (kind === 'form_attr') return { inForm: '', outside: `<button form="application-form" id="submit_app" class="btn btn--pill">${text}</button>` };
   return { inForm: `<button type="submit" id="submit_app" class="btn btn--pill">${text}</button>`, outside: '' };
+}
+
+// --- submit outcomes (test/submit.test.js) -----------------------------------
+// What /apply answers a real submit with, by ?outcome=. The HTTP status is
+// set separately (&status=), so a test can serve a confirmation with a 500
+// and an error page with a 200: the status plays no part in the verdict.
+// The confirmation text and /confirmation path mirror what Greenhouse is
+// believed to show -- unverified live (TODO.md), and it is the recipe's
+// confirm_text / confirm_url_includes that carry it, not this file.
+const CONFIRM_HTML =
+  '<!doctype html><html><head><meta charset="utf-8"><title>Application submitted</title></head><body>' +
+  '<h1>Thank you for applying.</h1><p>Your application to Example Corp (fixture) has been received.</p></body></html>';
+const ERROR_BANNER = '<div class="application--error" role="alert">There was a problem with your application. Please review the fields below.</div>';
+const OUTCOMES = {
+  confirm: true, // 303 to /<ats>/confirmation, as a successful form post would
+  error: true, // the form again, with ERROR_BANNER
+  wall: true, // a CAPTCHA challenge page
+  silent: true, // a page that says nothing either way
+};
+// ?drift=: the form is not the one described. `1` an extra required
+// question; `fill` the same question, appearing on the first input event.
+const DRIFT_FIELD =
+  '<div class="field"><label for="question_9009">Fixture drift question<span aria-hidden="true">*</span></label>' +
+  '<input id="question_9009" name="question_9009" type="text" aria-required="true"></div>';
+const DRIFT = {
+  1: DRIFT_FIELD,
+  fill:
+    '<div id="drift-slot"></div><script>(function () { var done = false; document.addEventListener("input", function () {' +
+    ` if (done) return; done = true; document.getElementById("drift-slot").innerHTML = ${JSON.stringify(DRIFT_FIELD).replace(/</g, '\\u003c')}; }, true); })();</script>`,
+};
+
+function outcomePage(ats, outcome) {
+  if (outcome === 'error') return render(ats, new URLSearchParams('banner=error'));
+  if (outcome === 'wall') return `<!doctype html><html><head><meta charset="utf-8"><title>Verify</title></head><body>${WALLS.captcha}</body></html>`;
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Processing</title></head><body><p>Processing.</p></body></html>';
 }
 
 function render(ats, query) {
@@ -120,7 +161,17 @@ function render(ats, query) {
     topApply = `<div id="late-entry"></div><script>setTimeout(function () { document.getElementById('late-entry').innerHTML = ${late}; }, ${Number(delay)});</script>`;
   }
   const submit = submitControl(query.get('submit'), submitText);
+  // ?outcome= (with optional &status=): the form posts to /apply carrying them,
+  // and the page lets that submit go (see greenhouse.html).
+  const outcome = query.get('outcome');
+  if (outcome !== null && !OUTCOMES[outcome]) return null; // unknown outcome -> 404, never a silent default
+  const applyQuery = outcome ? `?outcome=${outcome}${query.get('status') ? `&status=${encodeURIComponent(query.get('status'))}` : ''}` : '';
+  const drift = query.get('drift');
+  if (drift !== null && !DRIFT[drift]) return null;
   html = html
+    .replace('<!--APPLY_QUERY-->', applyQuery)
+    .replace('<!--BANNER-->', query.get('banner') === 'error' ? ERROR_BANNER : '')
+    .replace('<!--DRIFT-->', drift ? DRIFT[drift] : '')
     .replace('<!--WALL-->', wall)
     .replace('<!--TOP_APPLY-->', topApply)
     .replace('<!--SUBMIT_IN_FORM-->', submit.inForm)
@@ -147,6 +198,8 @@ function startAtsServer() {
   // entryClick is NOT a submit: it counts clicks on the data-entry control.
   const counters = { submitClick: 0, submitEvent: 0, enterKey: 0, applyPost: 0, entryClick: 0 };
   let lastState = null;
+  // The bodies of real submits (?outcome= mode), parsed: what was SENT.
+  const applyBodies = [];
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     let body = '';
@@ -164,10 +217,42 @@ function startAtsServer() {
         } else if (u.pathname === '/submit-click') counters.submitClick += 1;
         else if (u.pathname === '/submit-event') counters.submitEvent += 1;
         else if (u.pathname === '/enter-key') counters.enterKey += 1;
-        else if (u.pathname === '/apply') counters.applyPost += 1;
-        else if (u.pathname === '/entry-click') counters.entryClick += 1;
+        else if (u.pathname === '/apply') {
+          counters.applyPost += 1;
+          const outcome = u.searchParams.get('outcome');
+          if (outcome && OUTCOMES[outcome]) {
+            const sent = {};
+            for (const [k, v] of new URLSearchParams(body)) sent[k] = k in sent ? [].concat(sent[k], v) : v;
+            applyBodies.push(sent);
+            const status = Number(u.searchParams.get('status')) || 200;
+            if (outcome === 'confirm') {
+              res.statusCode = 303;
+              res.setHeader('Location', `/greenhouse/confirmation?status=${status}`);
+              res.end();
+              return;
+            }
+            res.statusCode = status;
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            res.end(outcomePage('greenhouse', outcome));
+            return;
+          }
+        } else if (u.pathname === '/entry-click') counters.entryClick += 1;
         res.setHeader('Content-Type', 'application/json');
         res.end('{}');
+        return;
+      }
+      if (u.pathname === '/greenhouse/confirmation') {
+        res.statusCode = Number(u.searchParams.get('status')) || 200;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(CONFIRM_HTML);
+        return;
+      }
+      // /redirect?to=/path: a 302, so the page lands somewhere other than the URL asked for.
+      if (u.pathname === '/redirect') {
+        const to = u.searchParams.get('to') || '';
+        res.statusCode = to.startsWith('/') && !to.startsWith('//') ? 302 : 404;
+        if (res.statusCode === 302) res.setHeader('Location', to);
+        res.end();
         return;
       }
       const m = u.pathname.match(/^\/([a-z]+)\/form$/);
@@ -187,12 +272,15 @@ function startAtsServer() {
       resolve({
         url: (ats, query = '') => `${base}/${ats}/form${query ? `?${query}` : ''}`,
         postingUrl: () => `${base}/posting`,
+        redirectUrl: to => `${base}/redirect?to=${encodeURIComponent(to)}`,
         counters,
         submits: () => counters.submitClick + counters.submitEvent + counters.enterKey + counters.applyPost,
         state: () => lastState,
+        applyBodies: () => applyBodies.slice(),
         reset: () => {
           for (const k of Object.keys(counters)) counters[k] = 0;
           lastState = null;
+          applyBodies.length = 0;
         },
         close: () => new Promise(r => server.close(r)),
       });

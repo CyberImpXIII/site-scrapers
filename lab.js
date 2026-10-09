@@ -61,6 +61,13 @@ function die(msg) {
 }
 
 async function runEngine(target, params, raw = false) {
+  // Never a submit (lib/submitGuard.js): lab runs are unattended experiments.
+  {
+    const g = require('./lib/submitGuard');
+    const t = parseSiteArg(target);
+    const db = openDb();
+    if (g.recipeSubmits(db, getSite(db, t.hostname, t.pageType, t.recipeName))) die(g.REFUSAL);
+  }
   const args = [path.join(REPO_ROOT, 'engine.js'), target, JSON.stringify({ allowUnverified: true, ...params })];
   if (raw) args.push('--raw');
   // `--attended` anywhere on lab.js's command line passes through, the way

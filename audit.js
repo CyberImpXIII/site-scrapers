@@ -692,6 +692,12 @@ async function auditParameters(db, { run = defaultRunner() } = {}) {
     }
     const declared = Object.keys(schema);
     if (!declared.length) continue;
+    // A submit is never swept (lib/submitGuard.js): the run would be an
+    // unattended submission.
+    if (require('./lib/submitGuard').recipeSubmits(db, site)) {
+      findings.push({ recipe: target, declaredParams: declared, result: 'skipped', why: 'it submits: never run unattended' });
+      continue;
+    }
     // blocked-attn: an unattended sweep run is exactly what blocked-guard
     // (lib/blockedGuard.js) refuses, and two refusals compared as record sets
     // would be a verdict about nothing.
@@ -778,6 +784,10 @@ async function auditWorking(db, { run = defaultRunner() } = {}) {
   const findings = [];
   // `.internal` hostnames are tool scaffolding, not recipes.
   for (const { site, target } of eachRecipe(db, s => s.status === 'working' && !/\.internal$/.test(s.hostname))) {
+    if (require('./lib/submitGuard').recipeSubmits(db, site)) {
+      findings.push({ recipe: target, result: 'skipped', why: 'it submits: never run unattended' });
+      continue;
+    }
     let schema = {};
     try {
       schema = JSON.parse(site.nav_params_schema || '{}');

@@ -83,6 +83,14 @@ async function main() {
     process.exit(1);
   }
 
+  // A submit is never run to earn a status: that run would be an unattended
+  // submission (lib/submitGuard.js). Refused before params are even read.
+  const submitGuard = require('./lib/submitGuard');
+  if (submitGuard.recipeSubmits(db, site)) {
+    out({ success: false, documented: true, refused: 'submits', error: submitGuard.REFUSAL });
+    process.exit(1);
+  }
+
   // `@path.json` reads params from a file, as engine.js and lab.js set do. A
   // fill's answers are personal data: inline they sit on argv (`ps`, shell
   // history) and, on a blocked-attn verdict, in the NEXT STEP note written to

@@ -29,6 +29,10 @@
   question, in the live Greenhouse and Lever markup; see server.js), and MULTI
   (?multi=1 adds a react-select isMulti combobox and a native <select multiple>;
   ?multi=pre starts the combobox with one option already chosen).
+  For test/submit.test.js: APPLY_QUERY (?outcome= sends the submit for real,
+  to /apply, which answers with that outcome's page), BANNER (?banner=error:
+  an error alert already on the form page) and DRIFT (?drift=1: an extra
+  required question; ?drift=fill: that question appears on the first input).
 -->
 <html>
 <head>
@@ -46,7 +50,8 @@
 <p>Example Corp is a fictional company used only by the site-scrapers test suite. This posting does not exist,
 and nothing entered here goes anywhere but a local test server that counts what happens to it.</p>
 <!--TOP_APPLY-->
-<form id="application-form" action="/apply" method="post">
+<!--BANNER-->
+<form id="application-form" action="/apply<!--APPLY_QUERY-->" method="post">
   <div class="field"><label for="first_name">First Name<span aria-hidden="true">*</span></label>
     <input id="first_name" name="first_name" type="text" maxlength="255" aria-required="true" autocomplete="given-name"></div>
   <div class="field"><label for="last_name">Last Name<span aria-hidden="true">*</span></label>
@@ -132,6 +137,7 @@ and nothing entered here goes anywhere but a local test server that counts what 
 
   <!--GROUPS-->
   <!--MULTI-->
+  <!--DRIFT-->
 
   <input type="text" id="website_hp" name="website_hp" style="display:none" autocomplete="off">
 
@@ -191,9 +197,12 @@ and nothing entered here goes anywhere but a local test server that counts what 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') post('/enter-key', { id: (e.target && e.target.id) || null });
   }, true);
+  // ?outcome= (test/submit.test.js only): the submit really goes, to the
+  // server's /apply, which answers with that outcome's page.
+  var submitGoes = !!new URLSearchParams(location.search).get('outcome');
   document.getElementById('application-form').addEventListener('submit', function (e) {
     post('/submit-event', {});
-    e.preventDefault();
+    if (!submitGoes) e.preventDefault();
   });
 
   // --- the top Apply button: scrolls to the form, like Greenhouse's ---------

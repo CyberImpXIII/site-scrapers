@@ -170,6 +170,15 @@ async function tryActions() {
         'Recording a trial for a name that does not exist would look like the action failing here.'
     );
   }
+  // A trial is an unattended run on an arbitrary page: never a submit
+  // (lib/submitGuard.js). The engine would also refuse it (a submit inside a
+  // repeat), but this says why, before a browser starts.
+  {
+    const g = require('./lib/submitGuard');
+    const gdb = openDb();
+    const submitting = actions.filter(a => g.actionSubmits(gdb, a));
+    if (submitting.length) die(`${submitting.join(', ')}: ${g.REFUSAL}`);
+  }
 
   let hostname;
   try { hostname = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); }

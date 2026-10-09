@@ -73,6 +73,7 @@ const { authorize: authorizeWrite } = require('./lib/writeGuard');
 const logRun = (db, run) =>
   authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run && run.params ? { ...run, params: redactRunParams(run.params) } : run));
 const { fillForm } = require('./lib/fillForm');
+const { submitForm, submitStepProblem, stepsSubmit } = require('./lib/submitForm');
 const { takeFillScreenshot } = require('./lib/fillScreenshot');
 const { redactRunParams, verdictInputsFromFill } = require('./lib/fillContract');
 const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
@@ -113,6 +114,10 @@ function emitAndExit(payload, code) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
   process.stdout.write(`${text}\n`, () => process.exit(code));
 }
+
+// The submit_form result of this run, if one ran (one per process: the
+// engine runs one recipe per process, and submitStepProblem allows one step).
+let submitRecord = null;
 
 function substitute(template, params) {
   if (typeof template !== 'string') return template;
@@ -677,6 +682,30 @@ async function runStepList(page, steps, params, siteMeta, hooks, depth, captures
         diagnostics.push({ kind: 'fill_screenshot', shot: await takeFillScreenshot(page, params.fillScreenshot, siteMeta) });
         break;
       }
+      case 'submit_form': {
+        // THE submit (PLAN-applications §3.5): lib/submitForm.js, which refuses
+        // by default and clicks at most once. Contract: lib/submitContract.js /
+        // docs/submit-output.md. Lifted to a top-level `submit` (see submitOf
+        // below). Also kept in `submitRecord`, so a throw after this step
+        // still reports whether the click happened.
+        const result = await submitForm(page, {
+          url: substitute(step.url ?? '{{url}}', params),
+          fields: fillParam(step.fields, params, 'fields'),
+          answers: fillParam(step.answers, params, 'answers'),
+          packetId: substitute(step.packet_id ?? '{{packetId}}', params),
+          approval: fillParam(step.approval, params, 'approval'),
+          signals: {
+            confirmText: substitute(step.confirm_text, params),
+            confirmUrlIncludes: substitute(step.confirm_url_includes, params),
+            errorSelector: substitute(step.error_selector, params),
+            errorText: substitute(step.error_text, params),
+          },
+          outcomeTimeoutMs: substitute(step.outcome_timeout_ms, params),
+        });
+        submitRecord = result;
+        diagnostics.push(result);
+        break;
+      }
       default:
         throw new Error(`Unknown ui_steps action: ${step.action}`);
     }
@@ -1020,6 +1049,10 @@ async function main() {
     } catch (e) {
       return emitAndExit(JSON.stringify({ success: false, documented: true, error: e.message }), 1);
     }
+    // A submit's shape is checked before any browser launches
+    // (lib/submitForm.js submitStepProblem): at most once, last, not in a repeat.
+    const submitProblem = submitStepProblem(expandedSteps, { pageType: site.page_type });
+    if (submitProblem) return emitAndExit(JSON.stringify({ success: false, documented: true, error: `refused: ${submitProblem}` }), 1);
   }
   // pagination_method 'steps': pagination_config is a ui_steps array (usually
   // just a run_generic_action of 'paginate') run after the first page's cards
@@ -1030,6 +1063,9 @@ async function main() {
       paginationSteps = expandSteps(db, JSON.parse(site.pagination_config), site.hostname, new Set([refKey(siteMeta)]));
     } catch (e) {
       return emitAndExit(JSON.stringify({ success: false, documented: true, error: `pagination_config: ${e.message}` }), 1);
+    }
+    if (stepsSubmit(paginationSteps)) {
+      return emitAndExit(JSON.stringify({ success: false, documented: true, error: 'refused: submit_form is not allowed in pagination_config' }), 1);
     }
   }
   // `attended` forces a visible window and gives the person time to clear
@@ -1167,7 +1203,16 @@ async function main() {
         return;
       }
       logRun(db, { siteId: site.id, params, success: false, error: e.message, durationMs: Date.now() - startedAt, versionId, versionLabel });
-      emitAndExit(JSON.stringify({ success: false, documented: true, error: `Engine threw: ${e.message}`, failedStep: e.failedStep ?? null, debugDir: e.debugDir ?? null }), 1);
+      // A submit that ran before the throw is still reported: whether the
+      // click happened is the one fact a caller must never lose.
+      emitAndExit(JSON.stringify({
+        ...(submitRecord ? { submit: submitRecord } : {}),
+        success: false,
+        documented: true,
+        error: `Engine threw: ${e.message}${submitRecord?.clicked ? ' (AFTER the submit click: see `submit`, do not retry)' : ''}`,
+        failedStep: e.failedStep ?? null,
+        debugDir: e.debugDir ?? null,
+      }), 1);
       // Without this, the code below ran on with articleOutcome undefined
       // and threw while stdout was still draining.
       return;
@@ -1192,11 +1237,21 @@ async function main() {
       }
       articleOutcome.record = null;
     }
-    const success = fill ? fill.status === 'done' : !articleOutcome.timedOut && articleOutcome.blobLen > 0;
+    // A submit_form run (lib/submitForm.js) is judged by what the page showed
+    // after the click: success only for `submitted`. Its fill travels inside
+    // it. The page text is dropped, as for a fill: it echoes answers.
+    const submitOf = (articleOutcome.probeResults || []).filter(d => d && d.kind === 'submit');
+    const submit = submitOf.length ? submitOf[submitOf.length - 1] : null;
+    if (submit) {
+      articleOutcome.probeResults = articleOutcome.probeResults.filter(d => !(d && d.kind === 'submit'));
+      articleOutcome.record = null;
+    }
+    const success = submit ? submit.status === 'submitted' : fill ? fill.status === 'done' : !articleOutcome.timedOut && articleOutcome.blobLen > 0;
     // Same just-past-the-deadline case as the listing flow below.
-    const partialResults = !fill && isPartial(articleOutcome.timedOut, articleOutcome.blobLen);
+    const partialResults = !fill && !submit && isPartial(articleOutcome.timedOut, articleOutcome.blobLen);
 
     const output = {
+      ...(submit ? { submit } : {}),
       ...(fill ? { fill, fillScreenshot } : {}),
       success,
       documented: true,
@@ -1236,7 +1291,10 @@ async function main() {
       // For a describe_form recipe a result is a described field, the same bar
       // verify.js applies (lib/describeVerdict.js): a run that read the posting
       // page and found no form must not read as a passing one either.
-      resultCount: fill
+      // A submit's one result is a confirmed submission.
+      resultCount: submit
+        ? (submit.status === 'submitted' ? 1 : 0)
+        : fill
         ? verdictInputsFromFill(fill).extracted ? fill.counts.filled : 0
         : describeVerdict
           ? (success ? describeVerdict.fields : 0)
