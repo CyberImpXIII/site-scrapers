@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // .env handling (Decision 12 revised, 2026-10-04): every env-file shape is
 // gitignored, and the key-names-only example/sample/template is NOT, so it
 // can be committed. Both directions are checked: a pattern that ignored

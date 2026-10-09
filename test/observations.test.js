@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // Deciding whether a generic action did anything on a page.
 //
 // This is the judgement the whole slice rests on, and the failure mode is

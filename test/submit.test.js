@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // Gates for the `submit_form` step and the `submit_application_form` generic
 // action (PLAN-applications.md §3.5, §4 "Submit", §12.2 step 3). Everything
 // runs offline against test/fixtures/ats/ (loopback only), through engine.js --

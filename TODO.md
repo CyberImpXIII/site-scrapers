@@ -95,6 +95,76 @@ the harness agent's fix, not this repo's.
 
 ---
 
+## 0p. Tasks B-G of the 2026-10-09 brief ("Yes I approve all") — status and open edges
+
+- **C DONE: the suite no longer touches the live stores.** db.js reads
+  `SS_DB`, failuresDb.js `SS_FAILURES_DB`, at load; test.sh snapshots both
+  (devtools/snapshot-stores.js, VACUUM INTO, read-only source) and fingerprints
+  the live ones before/after (devtools/db-fingerprint.js); a difference prints
+  `not ok 0 - the LIVE store changed`. Gates: test/db-isolation.test.js,
+  test/fixture-hosts.test.js. Tests that build a FRESH copy of db.js /
+  failuresDb.js must drop the override (builtins.test.js FRESH_ENV,
+  failures.test.js), or the copy opens the snapshot.
+  Caveat: another session writing the live store during a run also trips the
+  fingerprint; the message says so.
+- **Gate flake DONE:** lib/gate.js parseTap counts failed = max(`# fail`,
+  failure details at any indent), so a subtest failure is never read as a pass
+  (test/hooks.test.js).
+- **check-hooks.sh `.[0]` DONE:** the probe host comes from
+  devtools/probe-host.js: sorted, a real host always wins, a fixture host only
+  when no real one works (check-hooks's own fixture workspace has only
+  example.com).
+- **B DONE (key names only):** scrape_runs had 1560 rows; the only
+  credential-named param key was `answers` (61 rows, all already redacted).
+  Opaque values only under `url` and `submissionHash`; the `error` column
+  quotes url/role params. No credential value found. The structural gap is
+  closed: db.js logRun redacts params (lib/fillContract.js redactRunParams via
+  lib/credentialShapes.js CRED_KEY) and any secret value quoted in `error`
+  (test/run-redaction.test.js). Open, unbuilt: (a) register.js / lab.js set do
+  not refuse a credential-shaped value in a recipe (only store export does);
+  (b) FIXED: verify.js's blocked-attn NEXT STEP note quoted the raw params
+  argument into sites.notes (confirmed in code); it now goes through
+  lib/fillContract.js noteParamsArg (credential/answer values redacted;
+  test/run-redaction.test.js); (c) the mode-600 half of handoff files is not asserted by any test.
+- **G PARTLY BY ANOTHER AGENT:** the hook copies were re-rendered by commit
+  4730d85 (not mine). `tools/wizard` added to DECLARED in check-hooks.sh here.
+  `./check-hooks.sh` still reports ERRORS (drift / missing copies at the top
+  level and tools/* folders) -- owners hooks, harness, setup; reported.
+- **D DONE: cli.json names both stores** (`data/scrapers.db`,
+  `data/failures.db`) and the real writers as store.sh verbs: register, set,
+  verify-recipe, scrape (engine.js, which records the run), failures --
+  forwarded unchanged (args, stdout, exit code; test/store-export.test.js,
+  mutation-checked). store-guard's block message now names them (probed: a
+  Write to data/failures.db exits 2 naming store.sh and the verbs). `store.sh
+  import` creates an empty failures store beside the recipe store if absent
+  (setup wants every named store on disk). checks.json accessor impl adds
+  failuresDb.js; lib/builtinActions.js is excluded (rendered; a changeNote
+  quotes "failures.db"); comments elsewhere say "the failures store".
+  Reported to hooks: .claude/lib/extra-stores.sh's `data/failures.db` entry is
+  now redundant with cli.json. Open: `store.sh verify` still compares only the
+  recipe store (the failures store is history, never exported).
+- **E DONE (R5):** lib/exportBuiltins.js exportMatchesRender(db) byte-compares
+  lib/builtinActions.js with a fresh render (renderBuiltins); test in
+  test/guard.test.js with four mutants. Limit: a DB with NO builtin change_log
+  (fresh clone) takes the notes from the file, so a note-only hand edit is not
+  caught there (everything else is).
+- **F DONE:** CLAUDE.md carries the setup-installed `shared:rules` block
+  (@7867132c3871 at install); the hand copy is gone; repo-specific sentences
+  moved to "How the shared rules apply here"; gates.json classifies every own
+  section (`checks one rules-gated` OK, 52 rows); test/gates-json.test.js
+  (mutation-checked: a renamed heading fails it). Row id `prefer-recipes`
+  collided with tools/checks' registry, so it is `ss-prefer-recipes`.
+- **Load flakes seen 2026-10-09 (full check, load avg ~15):**
+  test/forwarded.test.js:141 ("took 37102 ms" against its time bound) and
+  test/steps.test.js:96 ("expected the click to have fired") failed in the
+  full `./dev.sh check` and passed alone (18/18) right after. Suspicion,
+  unconfirmed: timing bounds too tight under load. Settle: run both files 10x
+  under load and count.
+- **Reported, not mine to fix:** site-scrapers/.claude/settings.json does not
+  wire `store-guard.sh` (test/hooks.test.js "every hook is wired" fails on it).
+  settings.json is Jacob's; the fix is his or harness's. The suite stays red on
+  that one test until then.
+
 ## 0o. Scripts dry-sweep findings (scripts/TODO.md item 15), probed 2026-10-09
 
 - **wellfound: CONFIRMED wrong answer, FIXED.** Counterfactual
@@ -289,7 +359,10 @@ as a run; `audit.js params` skips `blocked-attn`. Tests: `test/blocked-guard.tes
 
 ## 0k. Reported BY `hooks` (2026-10-05, relayed by the dispatcher) — open
 
-1. **The suite writes fixture recipes into the LIVE `data/scrapers.db`.**
+1. **FIXED 2026-10-09 (0p C).** SS_DB / SS_FAILURES_DB overrides; test.sh
+   runs the suite on VACUUM INTO snapshots and fails on any live-store
+   fingerprint change (test/db-isolation.test.js, mutation-checked). Original
+   report kept for the record: **The suite writes fixture recipes into the LIVE `data/scrapers.db`.**
    Their evidence: 1 failure in 50 sequential runs of `test-prefer-recipes.sh`
    (run 33), the DB's last write inside that run; `./dev.sh known 127.0.0.1`
    printed 18-22 lines while the suite ran, nothing after. Expected: tests use a

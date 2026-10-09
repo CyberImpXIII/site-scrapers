@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // Unit tests for the duplication audit's pure logic (audit.js).
 //
 // These matter because a wrong answer here is not a crash, it is bad advice:

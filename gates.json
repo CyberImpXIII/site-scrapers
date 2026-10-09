@@ -1,0 +1,233 @@
+{
+  "_comment": "This repo's own CLAUDE.md sections (outside the shared:rules block), each rule classified for the shared checks' rules-gated (tools/checks: its gates.json holds the vocabulary and the shared block's rows). Paths are from the workspace top. A `gate` row's test is run by ./dev.sh check (the suite), which is why the dev.sh rows name it; a hook row's test is run by check-hooks.sh and test/hooks.test.js. Held by test/gates-json.test.js (parses, one unedited block, and `checks one rules-gated` is ok here), which ./dev.sh check runs. A prose row whose probe is not built is listed in TODO.md.",
+  "rules": [
+    {
+      "id": "ss-prefer-recipes",
+      "section": "Rules",
+      "rule": "This engine is the primary way to read a web page here, not a fallback.",
+      "kind": "gate",
+      "how": "block",
+      "gate": "site-scrapers/.claude/hooks/prefer-recipes.sh",
+      "test": "site-scrapers/.claude/hooks/test-prefer-recipes.sh",
+      "note": "a WebFetch or browser navigation to a host with a working recipe is refused; check-hooks.sh also RUNS every copy on a covered host and requires a block"
+    },
+    {
+      "id": "second-recipe-read-page",
+      "section": "Rules",
+      "rule": "Building a SECOND recipe on a known host? Read the page first.",
+      "kind": "prose",
+      "why": "a habit before building: nothing marks the moment a second recipe is started, so nothing can ask whether `dev.sh page` was read first"
+    },
+    {
+      "id": "observations-earned",
+      "section": "Rules",
+      "rule": "Observations are earned",
+      "kind": "gate",
+      "how": "refuse",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/observations.test.js",
+      "note": "recordObservation is a guarded write; the trial runner is its only sanctioned caller"
+    },
+    {
+      "id": "writes-blocked",
+      "section": "Rules",
+      "rule": "Writes are BLOCKED outside a sanctioned path.",
+      "kind": "gate",
+      "how": "refuse",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/guard.test.js",
+      "note": "lib/writeGuard.js refuses an unauthorized write; guard.test.js holds that every definition-mutating db.js export is guarded"
+    },
+    {
+      "id": "no-raw-sql",
+      "section": "Rules",
+      "rule": "Never use raw SQL or inline node -e to change data.",
+      "kind": "gate",
+      "how": "block",
+      "gate": "site-scrapers/.claude/hooks/store-guard.sh",
+      "test": "site-scrapers/.claude/hooks/test-store-guard.sh",
+      "note": "store-guard refuses a raw sqlite3 or shell write to a store cli.json names; the inline half is no-inline-blobs-here"
+    },
+    {
+      "id": "status-earned",
+      "section": "Rules",
+      "rule": "status is earned, never asserted.",
+      "kind": "prose",
+      "why": "no check can tell an earned status from an asserted one: the write guard (test/guard.test.js) holds who may write a status, not that a run chose the value"
+    },
+    {
+      "id": "blocked-attn-attended",
+      "section": "Rules",
+      "rule": "Do NOT retry, that already failed",
+      "kind": "gate",
+      "how": "block",
+      "gate": "site-scrapers/.claude/hooks/troubleshooting.sh",
+      "test": "site-scrapers/.claude/hooks/test-troubleshooting.sh",
+      "note": "the hook blocks an unattended re-run; the CLI refuses it again (lib/blockedGuard.js, test/blocked-guard.test.js)"
+    },
+    {
+      "id": "no-inline-blobs-here",
+      "section": "Rules",
+      "rule": "Never write an inline script blob. This one is ENFORCED, not advised.",
+      "kind": "gate",
+      "how": "block",
+      "gate": "site-scrapers/.claude/hooks/no-inline-blobs.sh",
+      "test": "site-scrapers/.claude/hooks/test-no-inline-blobs.sh"
+    },
+    {
+      "id": "prove-a-parameter",
+      "section": "Rules",
+      "rule": "Prove a parameter does something.",
+      "kind": "prose",
+      "why": "the proof is a LIVE run (audit.js params: a browser, minutes per site), which ./dev.sh check does not run; the offline half (param_probe_values declared) is not a gate either. TODO.md holds wiring it"
+    },
+    {
+      "id": "recipe-unique",
+      "section": "Rules",
+      "rule": "The recipe is the unique document; the actions it performs are not.",
+      "kind": "prose",
+      "why": "what is site-specific is a judgement; audit.js inline and repeats report candidates as warnings, never errors"
+    },
+    {
+      "id": "parallelise-processes",
+      "section": "Rules",
+      "rule": "Never run two live audits or sweeps at once",
+      "kind": "prose",
+      "why": "contention is between processes and sessions; nothing inside one run can see another"
+    },
+    {
+      "id": "confirm-before-storing",
+      "section": "Rules",
+      "rule": "Confirm before storing an action.",
+      "kind": "prose",
+      "why": "the answer is Jacob's, given in conversation"
+    },
+    {
+      "id": "check-before-commit",
+      "section": "Commands",
+      "rule": "Before committing: ./dev.sh check",
+      "kind": "gate",
+      "how": "check",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/check-json.test.js",
+      "note": "check-json.test.js holds the check's gates and its red/green verdict; the commit itself is held by the githooks setup installs"
+    },
+    {
+      "id": "commands-documented",
+      "section": "Commands",
+      "rule": "dev.sh is the human-readable layer over those CLIs",
+      "kind": "gate",
+      "how": "check",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/hooks.test.js",
+      "note": "dev.sh documents every subcommand it implements and implements every one it documents; the CLIs' own lists are not compared with this section (TODO.md)"
+    },
+    {
+      "id": "waive-not-rederive",
+      "section": "Commands",
+      "rule": "A warning you have checked gets waived, not re-derived.",
+      "kind": "gate",
+      "how": "check",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/audit.test.js",
+      "note": "a waiver needs a date and a reason, silences only its rule, and never an error"
+    },
+    {
+      "id": "applies-wall-clock",
+      "section": "How the shared rules apply here",
+      "rule": "query.js efficiency tracks output_chars",
+      "kind": "prose",
+      "why": "a value, not a behaviour (PLAN-hard-gates.md §4)"
+    },
+    {
+      "id": "applies-todo-now",
+      "section": "How the shared rules apply here",
+      "rule": "Write it at the moment you notice it.",
+      "kind": "prose",
+      "why": "the moment something is noticed is in a session's head; no check sees it"
+    },
+    {
+      "id": "applies-consumers",
+      "section": "How the shared rules apply here",
+      "rule": "Consumers see what audits cannot.",
+      "kind": "prose",
+      "why": "a reason to read and relay consumer reports, not a behaviour a check can hold"
+    },
+    {
+      "id": "applies-push-master",
+      "section": "How the shared rules apply here",
+      "rule": "Commit and push to origin master right away",
+      "kind": "prose",
+      "why": "when to commit is a habit; push-gate (tools/hooks) holds what may be pushed, not that it was"
+    },
+    {
+      "id": "applications-confirm",
+      "section": "Absolute constraints",
+      "rule": "Job applications are prepare-then-confirm, one yes per batch",
+      "kind": "gate",
+      "how": "refuse",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/submit.test.js",
+      "note": "the engine refuses a submit without its approval input (zero submit attempts at the fixture); that the yes covered exactly the presented batch is Jacob's, in conversation"
+    },
+    {
+      "id": "no-account-without-yes",
+      "section": "Absolute constraints",
+      "rule": "Never create an account, or do anything else public or irreversible",
+      "kind": "prose",
+      "why": "an account form is an ordinary form until a person reads it; the submit half is applications-confirm"
+    },
+    {
+      "id": "credentials-from-jacob",
+      "section": "Absolute constraints",
+      "rule": "Never enter real credentials without Jacob.",
+      "kind": "prose",
+      "why": "a real credential and a fixture one are the same shape to code"
+    },
+    {
+      "id": "credentials-not-stored",
+      "section": "Absolute constraints",
+      "rule": "Credential-shaped values are caller-supplied params at run time, never written into a stored recipe.",
+      "kind": "gate",
+      "how": "refuse",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/store-export.test.js",
+      "note": "a literal credential in a recipe is refused at EXPORT, not at register (TODO.md); run telemetry is redacted in db.js logRun (test/run-redaction.test.js)"
+    },
+    {
+      "id": "no-bot-bypass",
+      "section": "Absolute constraints",
+      "rule": "Never attempt to bypass bot detection.",
+      "kind": "prose",
+      "why": "a bypass is an intent, not a shape; a detected wall is marked blocked-attn, which the blocked-attn gate then holds"
+    },
+    {
+      "id": "handoff-values-private",
+      "section": "Absolute constraints",
+      "rule": "Captured handoff values go to gitignored mode-600 files.",
+      "kind": "gate",
+      "how": "check",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/gitignore-env.test.js",
+      "note": "the gitignore half only: that every captured-value file is written mode 600 is not asserted by one test (TODO.md)"
+    },
+    {
+      "id": "rules-sync-list",
+      "section": "Keeping these rules in sync",
+      "rule": "test/rules-sync.test.js checks this list",
+      "kind": "gate",
+      "how": "check",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/rules-sync.test.js"
+    },
+    {
+      "id": "own-sections-rowed",
+      "section": "Keeping these rules in sync",
+      "rule": "Every section outside the markers has a row in gates.json",
+      "kind": "gate",
+      "how": "check",
+      "gate": "site-scrapers/dev.sh",
+      "test": "site-scrapers/test/gates-json.test.js"
+    }
+  ]
+}

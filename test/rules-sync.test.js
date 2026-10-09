@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // The "Keeping these rules in sync" list in CLAUDE.md is a documented list of
 // files, so it is checked both ways against the top level's own list: every
 // copy the top level names (other than this one) is named here, every one
