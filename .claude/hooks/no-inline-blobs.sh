@@ -118,19 +118,33 @@ _flush() {
 _hd_scan() {
   local LC_ALL=C
   local s=$1 depth=$2 n=${#1} i=0 c nx rest part k d strip body pre p cut=0 code="" pend="" lastpipe=0
+  # THE WINDOW. Bash's ${s:i:1} costs the length of $s (measured on macOS's
+  # 3.2: time grew with the square of the command), so reading a long command
+  # a character at a time was QUADRATIC: 4000 filler lines (~170KB) took 171s
+  # in a test, and every long Bash call paid its share. The per-character and
+  # short lookahead reads (at most i+3) go to $w, a copy of s[wb, wb+W)
+  # refilled at the loop top once i nears its end; i stays an index into s.
+  # Reads that run to an unknown length (a quote's close, a comment, a heredoc
+  # delimiter and body, a run of spaces or digits) stay on $s: one O(n) read
+  # per token, not per character. Past the end both read "", alike. And a run
+  # of ordinary characters is taken in one step (the `*)` branch), not one
+  # loop turn per character. test-no-inline-blobs.sh times the long case.
+  local w wb=0 W=4096 tab=$'\t' nl=$'\n'
+  w=${s:0:W}
   local shells=()
   _d=0; _C_I=(0); _C_S=(0); _C_H=(""); _C_P=(1); _C_K=(top); _C_DQ=(0); _C_W=(""); _C_IW=(0)
   _HD_D=(); _HD_X=(); _HD_B=(); _HD_K=()
   _word=""; _inword=0; _skip=0; _in_dq=0
   while [ "$i" -lt "$n" ]; do
-    c=${s:i:1}
+    if [ $((i - wb)) -gt $((W - 16)) ]; then wb=$i; w=${s:i:W}; fi
+    c=${w:i-wb:1}
     if [ "$_in_dq" = 1 ]; then
       case "$c" in
         '"') _in_dq=0; i=$((i+1)) ;;
-        \\)  _word+=${s:i+1:1}; i=$((i+2)) ;;
-        '$') if [ "${s:i+1:2}" = '((' ]; then
+        \\)  _word+=${w:i-wb+1:1}; i=$((i+2)) ;;
+        '$') if [ "${w:i-wb+1:2}" = '((' ]; then
                rest=${s:i+3}; part=${rest%%'))'*}; i=$((i + ${#part} + 5))
-             elif [ "${s:i+1:1}" = '(' ]; then _ctx_open sub 1; i=$((i+2))
+             elif [ "${w:i-wb+1:1}" = '(' ]; then _ctx_open sub 1; i=$((i+2))
              else _word+=$c; i=$((i+1)); fi ;;
         '`') _ctx_open tick 1; i=$((i+1)) ;;
         *)   _word+=$c; i=$((i+1)) ;;
@@ -140,7 +154,7 @@ _hd_scan() {
     [ "$c" = '|' ] || case "$c" in ' '|$'\t'|$'\n'|'#') ;; *) lastpipe=0 ;; esac
     case "$c" in
       \\)
-        nx=${s:i+1:1}
+        nx=${w:i-wb+1:1}
         if [ "$nx" = $'\n' ]; then i=$((i+2)); else _word+=$nx; _inword=1; i=$((i+2)); fi ;;
       "'")
         rest=${s:i+1}; part=${rest%%"'"*}; _word+=$part; _inword=1; i=$((i + ${#part} + 2)) ;;
@@ -181,17 +195,17 @@ _hd_scan() {
       ';')
         _flush; _pl_end; i=$((i+1)) ;;
       '&')
-        _flush; nx=${s:i+1:1}
+        _flush; nx=${w:i-wb+1:1}
         if [ "$nx" = '&' ]; then _pl_end; i=$((i+2))
-        elif [ "$nx" = '>' ]; then _skip=1; i=$((i+2)); [ "${s:i:1}" = '>' ] && i=$((i+1))
+        elif [ "$nx" = '>' ]; then _skip=1; i=$((i+2)); [ "${w:i-wb:1}" = '>' ] && i=$((i+1))
         else _pl_end; i=$((i+1)); fi ;;
       '|')
-        _flush; nx=${s:i+1:1}
+        _flush; nx=${w:i-wb+1:1}
         if [ "$nx" = '|' ]; then _pl_end; i=$((i+2))
         else _C_P[_d]=1; lastpipe=1; i=$((i+1)); [ "$nx" = '&' ] && i=$((i+1)); fi ;;
       '(')
         _flush
-        if [ "${s:i+1:1}" = '(' ]; then rest=${s:i+2}; part=${rest%%'))'*}; i=$((i + ${#part} + 4))
+        if [ "${w:i-wb+1:1}" = '(' ]; then rest=${s:i+2}; part=${rest%%'))'*}; i=$((i + ${#part} + 4))
         else _ctx_open sub 0; i=$((i+1)); fi ;;
       ')')
         if [ "$_d" -gt 0 ]; then _ctx_close; else _flush; _pl_end; fi
@@ -200,18 +214,18 @@ _hd_scan() {
         if [ "${_C_K[_d]}" = tick ]; then _ctx_close; else _flush; _ctx_open tick 0; fi
         i=$((i+1)) ;;
       '$')
-        nx=${s:i+1:1}
-        if [ "${s:i+1:2}" = '((' ]; then rest=${s:i+3}; part=${rest%%'))'*}; i=$((i + ${#part} + 5)); _inword=1
+        nx=${w:i-wb+1:1}
+        if [ "${w:i-wb+1:2}" = '((' ]; then rest=${s:i+3}; part=${rest%%'))'*}; i=$((i + ${#part} + 5)); _inword=1
         elif [ "$nx" = '(' ]; then _ctx_open sub 0; i=$((i+2))
         elif [ "$nx" = "'" ]; then rest=${s:i+2}; part=${rest%%"'"*}; _word+=$part; _inword=1; i=$((i + ${#part} + 3))
         else _word+=$c; _inword=1; i=$((i+1)); fi ;;
       '<')
         if [ "$_inword" = 1 ] && [[ $_word =~ ^[0-9]+$ ]]; then _word=""; _inword=0; fi
         _flush
-        if [ "${s:i:3}" = '<<<' ]; then _skip=1; i=$((i+3))     # here-string: its word is data
-        elif [ "${s:i:2}" = '<<' ]; then
+        if [ "${w:i-wb:3}" = '<<<' ]; then _skip=1; i=$((i+3))     # here-string: its word is data
+        elif [ "${w:i-wb:2}" = '<<' ]; then
           i=$((i+2)); strip=0
-          [ "${s:i:1}" = '-' ] && { strip=1; i=$((i+1)); }
+          [ "${w:i-wb:1}" = '-' ] && { strip=1; i=$((i+1)); }
           while [ "${s:i:1}" = ' ' ] || [ "${s:i:1}" = $'\t' ]; do i=$((i+1)); done
           d=""
           while [ "$i" -lt "$n" ]; do
@@ -228,16 +242,20 @@ _hd_scan() {
             k=${#_HD_D[@]}; _HD_D[k]=$d; _HD_X[k]=$strip; _HD_B[k]=""; _HD_K[k]=data
             _C_H[_d]="${_C_H[_d]} $k"; pend="$pend $k"
           fi
-        elif [ "${s:i+1:1}" = '(' ]; then _ctx_open sub 0; i=$((i+2))   # <( process substitution
-        else _skip=1; i=$((i+1)); case "${s:i:1}" in '&'|'>') i=$((i+1)) ;; esac; fi ;;
+        elif [ "${w:i-wb+1:1}" = '(' ]; then _ctx_open sub 0; i=$((i+2))   # <( process substitution
+        else _skip=1; i=$((i+1)); case "${w:i-wb:1}" in '&'|'>') i=$((i+1)) ;; esac; fi ;;
       '>')
         if [ "$_inword" = 1 ] && [[ $_word =~ ^[0-9]+$ ]]; then _word=""; _inword=0; fi
-        _flush; nx=${s:i+1:1}
+        _flush; nx=${w:i-wb+1:1}
         if [ "$nx" = '(' ]; then _ctx_open sub 0; i=$((i+2))
-        elif [ "$nx" = '&' ] && [[ ${s:i+2:1} =~ [0-9-] ]]; then i=$((i+2)); while [[ ${s:i:1} =~ [0-9-] ]]; do i=$((i+1)); done
+        elif [ "$nx" = '&' ] && [[ ${w:i-wb+2:1} =~ [0-9-] ]]; then i=$((i+2)); while [[ ${s:i:1} =~ [0-9-] ]]; do i=$((i+1)); done
         else _skip=1; i=$((i+1)); case "$nx" in '>'|'|'|'&') i=$((i+1)) ;; esac; fi ;;
       *)
-        _word+=$c; _inword=1; i=$((i+1)) ;;
+        # c and every ordinary character after it, up to the next one a
+        # branch above handles (or the window's end): the same word, at once.
+        rest=${w:i-wb}; part=${rest%%[\\\'\"\`\$\;\&\|\(\)\<\>\#\ $tab$nl]*}
+        [ -n "$part" ] || part=${s:i:1}   # never empty while i < n: always progress
+        _word+=$part; _inword=1; i=$((i + ${#part})) ;;
     esac
   done
   _flush

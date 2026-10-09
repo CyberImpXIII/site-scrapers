@@ -123,9 +123,14 @@ known=$("$REPO/dev.sh" known "$host" 2>/dev/null) || exit 0
 # hook switched off, and then it protects nothing. So: the recipe's host must be
 # the host itself, or a parent of it (a recipe on lever.co may serve
 # jobs.lever.co; the reverse does not hold).
+#
+# The recipe's host is normalised exactly as $host is (lowercased, `www.`
+# stripped): `dev.sh known` strips www on both sides when it MATCHES but prints
+# the hostname as stored, and db.js upsertSite stores what it is given. Compared
+# raw, a recipe stored as `www.x.com` was listed by `known` and never blocked.
 working=$(printf '%s' "$known" | awk -F'\t' -v h="$host" '
   $2 != "working" { next }
-  { split($1, parts, "#"); rh = parts[1] }
+  { split($1, parts, "#"); rh = tolower(parts[1]); sub(/^www\./, "", rh) }
   rh == h || substr(h, length(h) - length(rh)) == "." rh { print $1 }
 ')
 [ -n "$working" ] || exit 0

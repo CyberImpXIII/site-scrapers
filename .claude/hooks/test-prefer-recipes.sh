@@ -156,6 +156,53 @@ selfcheck "covered host is a real domain"   "$PICK_COVERED"    "linkedin.com"
 selfcheck "not-working host has no cover"   "$PICK_NOTWORKING" "indeed.com"
 selfcheck "subdomain host is a real domain" "$PICK_SUB"        "jobs.lever.co"
 
+# The hook's host match, on planted `known` lines (fixture-free, so it runs in a
+# lone clone too): a copy of the hook in a scratch tree beside a stand-in
+# site-scrapers whose `dev.sh known` prints known.tsv whatever it is asked --
+# the hook does the matching, which is what is under test. `known` prints the
+# hostname AS STORED; db.js upsertSite stores what it is given, so `www.` and
+# capitals can reach the hook. Compared raw, a recipe stored as www.<host> was
+# listed and never blocked (the first two cases fail on the old awk).
+echo "the host match (stand-in site-scrapers, planted recipes):"
+SCRATCH="$(mktemp -d)" || SCRATCH=""
+if [ -z "$SCRATCH" ]; then
+  echo "  FAIL  mktemp -d failed: the host-match cases did not run"
+  fails=$((fails + 1))
+else
+  trap 'rm -f "$SS_BROWSER_OK"; rm -rf "$SCRATCH"' EXIT
+  mkdir -p "$SCRATCH/site-scrapers" "$SCRATCH/.claude/hooks"
+  printf '{ "name": "site-scrapers" }\n' > "$SCRATCH/site-scrapers/package.json"
+  printf '%s\t%s\n' \
+    'www.stored-www.example#listing:default' working \
+    'Stored-Caps.example#listing:default'    working \
+    'jobs.parent-fixture.example#listing:default' working \
+    'broken-fixture.example#listing:default' broken \
+    > "$SCRATCH/site-scrapers/known.tsv"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    '[ "$1" = known ] && cat "$(dirname "$0")/known.tsv"' 'exit 0' > "$SCRATCH/site-scrapers/dev.sh"
+  chmod +x "$SCRATCH/site-scrapers/dev.sh"
+  cp "$HOOK" "$SCRATCH/.claude/hooks/prefer-recipes.sh"
+  standin() {  # $1 want, $2 desc, $3 url
+    local got
+    printf '{"tool_name":"WebFetch","tool_input":{"url":%s}}' "$(printf '%s' "$3" | jq -Rs .)" \
+      | bash "$SCRATCH/.claude/hooks/prefer-recipes.sh" >/dev/null 2>&1
+    got=$?
+    if [ "$got" = "$1" ]; then
+      printf '  ok    %-34s (exit %s)\n' "$2" "$got"
+    else
+      printf '  FAIL  %-34s expected exit %s, got %s\n' "$2" "$1" "$got"
+      fails=$((fails + 1))
+    fi
+  }
+  standin 2 "recipe stored with www., bare url"   'https://stored-www.example/jobs'
+  standin 2 "recipe stored with capitals"         'https://stored-caps.example/jobs'
+  standin 2 "recipe stored with www., www url"    'https://www.stored-www.example/jobs'
+  standin 2 "subdomain of a www. recipe"          'https://jobs.stored-www.example/x'
+  standin 0 "a subdomain's recipe, parent url"    'https://parent-fixture.example/about'
+  standin 0 "registered but not working"          'https://broken-fixture.example/jobs'
+  standin 0 "suffix that is not a subdomain"      'https://notstored-www.example/jobs'
+fi
+
 covered=$(pick "$PICK_COVERED")
 notworking=$(pick "$PICK_NOTWORKING")
 echo "fixtures: covered=${covered:-none} not-working=${notworking:-none}"

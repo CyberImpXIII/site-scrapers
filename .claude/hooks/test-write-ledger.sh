@@ -4,9 +4,10 @@
 # Each case feeds one PostToolUse input and reads the ledger file back: which
 # repo's ledger got the row, how many rows, and every column. Plus: no row for
 # a read, a path outside any repo, or the user's home; a missing ledger is
-# created; an unwritable one is skipped; end rows on SubagentStop and SessionEnd;
+# created; an unwritable one gets no row but is reported (stderr, and the row
+# kept in the fallback marker), still exit 0; end rows on SubagentStop and SessionEnd;
 # write-targets.sh absent means no Bash rows, ledger.sh absent no rows; and
-# fail-open (exit 0, no output, ever) on malformed input, no jq, a broken git.
+# fail-open (exit 0, no output) on malformed input, no jq, a broken git.
 
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +17,7 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/write-ledger-test.XXXXXX") || exit 1
 T=$(cd "$T" && pwd -P)
 trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"
+export TMPDIR="$T/tmpd"; mkdir -p "$TMPDIR"   # a lost row's fallback marker lands here, never in the real one
 mkdir -p "$HOME/.claude"
 TAB=$'\t'
 HEAD="time${TAB}agent_type${TAB}agent_id${TAB}session${TAB}path${TAB}via${TAB}tool_use"
@@ -95,8 +97,20 @@ $(row some-agent agent-1 "$T/repo-nest/inner/g" bash-heuristic)"
 
 echo "a missing or unwritable ledger:"
 fresh ro;    printf 'x' > "$R/.claude/state"; run Edit file_path "$R/a" some-agent
-if [ "$CODE" = 0 ] && [ -z "$OUT" ] && [ "$(cat "$R/.claude/state")" = x ]; then pass "state is a file: skipped, exit 0"
-else fail "state is a file: skipped, exit 0" "exit $CODE: ${OUT:0:200}"; fi
+if [ "$CODE" = 0 ] && [ "$(cat "$R/.claude/state")" = x ]; then pass "state is a file: no row, still exit 0"
+else fail "state is a file: no row, still exit 0" "exit $CODE: ${OUT:0:200}"; fi
+case "$OUT" in
+  *"a row was not written to $R/.claude/state/writes.tsv"*"kept in $TMPDIR/ledger-append-failed.tsv"*) pass "  and says so on stderr (never silent)" ;;
+  *) fail "  and says so on stderr (never silent)" "got: ${OUT:0:300}" ;;
+esac
+if cut -f2,8 "$TMPDIR/ledger-append-failed.tsv" 2>/dev/null | grep -qxF "$R/.claude/state/writes.tsv${TAB}$R/a"; then
+  pass "  the lost row is kept in the fallback marker"
+else fail "  the lost row is kept in the fallback marker" "$(cat "$TMPDIR/ledger-append-failed.tsv" 2>&1)"; fi
+fresh dirl;  mkdir -p "$R/.claude/state/writes.tsv"; run Edit file_path "$R/a" some-agent   # the append itself fails
+if [ "$CODE" = 0 ] && cut -f2,8 "$R/.claude/state/writes.tsv.failed" 2>/dev/null | grep -qxF "$R/.claude/state/writes.tsv${TAB}$R/a" \
+   && case "$OUT" in *"kept in $R/.claude/state/writes.tsv.failed"*) true ;; *) false ;; esac; then
+  pass "a failed append: exit 0, said on stderr, row kept in writes.tsv.failed"
+else fail "a failed append: exit 0, said on stderr, row kept in writes.tsv.failed" "exit $CODE: ${OUT:0:300}"; fi
 
 echo "end rows (SubagentStop, SessionEnd) in every ledger under the project dir holding the writer's rows:"
 # end <event> <agent_id or ''> <session> [project dir]

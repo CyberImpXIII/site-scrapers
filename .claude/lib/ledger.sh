@@ -32,7 +32,9 @@
 #   ledger_esc <text>           -> LEDGER_E, the escaped field (`-` when empty)
 #   ledger_append <ledger> <agent_type> <agent_id> <session> <path> <via> <tool_use>
 #                               one row, stamped now; creates the file and its
-#                               header when missing; return 1 when not written
+#                               header when missing; when not written,
+#                               return 1 AND say so: a line on stderr and the
+#                               row kept in <ledger>.failed (ledger_fail)
 #   ledger_cutoff <hours>       prints the UTC time <hours> ago; empty when
 #                               neither BSD nor GNU date can say
 #   ledger_last <ledger> [cutoff] [escaped path]
@@ -43,8 +45,11 @@
 #   ledger_files <root>         every ledger under <root> (depth 7: a repo up to
 #                               4 deep, plus .claude/state/writes.tsv; .git and
 #                               node_modules pruned), one per line
+#   ledger_failures <root>      every <ledger>.failed marker under <root>, then
+#                               the fallback marker in $TMPDIR when it holds rows
 #
-# Every function only prints or sets a variable, and never exits: each caller
+# Every function only prints, sets a variable or (on a failed append)
+# writes its marker, and never exits: each caller
 # fails OPEN.
 
 LEDGER_REL=.claude/state/writes.tsv
@@ -68,17 +73,54 @@ ledger_esc() {
 }
 
 ledger_append() {
-  local ledger=$1 now row f
-  now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || return 1
+  local ledger=$1 now row f err
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || now=-
   row=$now
   shift
   for f in "$@"; do ledger_esc "$f"; row+=$'\t'"$LEDGER_E"; done
-  mkdir -p "${ledger%/*}" 2>/dev/null || return 1
+  [ "$now" != - ] || { ledger_fail "$ledger" "date gave no time" "$row"; return 1; }
+  err=$(mkdir -p "${ledger%/*}" 2>&1) || { ledger_fail "$ledger" "${err:-mkdir failed}" "$row"; return 1; }
   if [ ! -e "$ledger" ]; then
-    ( set -C; printf '%s\n' "$LEDGER_HEADER" > "$ledger" ) 2>/dev/null
+    ( set -C; printf '%s\n' "$LEDGER_HEADER" > "$ledger" ) 2>/dev/null   # another writer may win the race
   fi
   # One write per row, so concurrent agents do not interleave within a row.
-  printf '%s\n' "$row" >> "$ledger" 2>/dev/null
+  err=$( { printf '%s\n' "$row" >> "$ledger"; } 2>&1 ) && return 0
+  ledger_fail "$ledger" "append: ${err:-failed}" "$row"
+  return 1
+}
+
+# A failed append is never silent (PLAN-architecture-review.md §4, W20/O2):
+# one line on stderr, and the row kept in a marker beside the ledger,
+# <ledger>.failed (or, when that cannot be written either, in
+# ${TMPDIR:-/tmp}/ledger-append-failed.tsv), one line per lost row:
+#   time  ledger  reason  the row as it would have been written
+# Every field is escaped like a ledger field. The caller still fails open.
+LEDGER_FAILED_SUFFIX=.failed
+LEDGER_FAILED_FALLBACK=ledger-append-failed.tsv
+ledger_fail() {   # <ledger> <reason> <row>
+  local t m line kept
+  t=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || t=-
+  ledger_esc "$1"; line=$t$'\t'$LEDGER_E
+  ledger_esc "${2//$'\n'/ }"; line+=$'\t'$LEDGER_E$'\t'$3
+  kept=""
+  for m in "$1$LEDGER_FAILED_SUFFIX" "${TMPDIR:-/tmp}"; do
+    [ "$m" = "${TMPDIR:-/tmp}" ] && m=${m%/}/$LEDGER_FAILED_FALLBACK
+    if { printf '%s\n' "$line" >> "$m"; } 2>/dev/null; then kept=$m; break; fi
+  done
+  if [ -n "$kept" ]; then
+    printf 'ledger: a row was not written to %s (%s); it is kept in %s\n' "$1" "$2" "$kept" >&2
+  else
+    printf 'ledger: a row was not written to %s (%s), and no marker could be written either: %s\n' "$1" "$2" "$line" >&2
+  fi
+}
+
+ledger_failures() {   # <root>: every marker of a lost row under <root>, then the fallback if it exists
+  local fb=${TMPDIR:-/tmp}
+  fb=${fb%/}/$LEDGER_FAILED_FALLBACK
+  [ -d "$1" ] && find "$1" -maxdepth 7 \( -type d \( -name .git -o -name node_modules \) -prune \) \
+    -o -type f -path "*/$LEDGER_REL$LEDGER_FAILED_SUFFIX" -print 2>/dev/null
+  [ -s "$fb" ] && printf '%s\n' "$fb"
+  return 0
 }
 
 ledger_cutoff() {
