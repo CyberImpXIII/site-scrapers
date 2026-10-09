@@ -290,3 +290,45 @@ for (const target of ['job-boards.greenhouse.io#article', 'job-boards.greenhouse
     }
   });
 }
+
+// ---- the stored wellfound recipe ------------------------------------------------
+//
+// Found 2026-10-09 (scripts' dry sweep, scripts/TODO.md item 15): 38 of 52
+// profile titles returned exactly 48 records each from wellfound.com#listing.
+// Counterfactual run the same day: role=zzqx-nonsense-slug-4471 asked for
+// /role/r/zzqx-nonsense-slug-4471, landed on https://wellfound.com/remote (same
+// host, so lib/forwarded.js stays quiet) and returned success:true with 48
+// records of the general remote listing -- the role parameter changed nothing
+// for any slug wellfound does not know. Real slugs (sales, software-engineer)
+// stay on /role/r/<slug>. So the stored recipe must reject the /remote landing
+// and accept the real shapes; a run of an unknown slug is then notThePage with
+// records null (the engine side is held by the listing test above).
+
+const WELLFOUND_FALLBACK = [
+  'https://wellfound.com/remote',
+  'https://wellfound.com/role/r/', // a blank slug is not a role page either
+  'https://wellfound.com/jobs',
+];
+const WELLFOUND_REAL = [
+  'https://wellfound.com/role/r/sales',
+  'https://wellfound.com/role/r/software-engineer',
+  'https://wellfound.com/role/r/software-engineer?page=2',
+];
+
+test('stored recipe wellfound.com#listing: expect_url rejects the /remote fallback, accepts a real role page', (t) => {
+  const site = getSite(db, 'wellfound.com', 'listing', 'default');
+  if (!site) return t.skip('no wellfound.com#listing in this DB (a fresh clone has no recipes)');
+  assert.strictEqual(site.nav_method, 'ui_steps', 'wellfound must run steps so expect_url can run');
+  const steps = JSON.parse(site.nav_template);
+  const at = steps.findIndex((s) => s.action === 'expect_url');
+  assert.ok(at > 0, 'wellfound has no expect_url step: an unknown role slug reads as the /remote listing');
+  assert.strictEqual(steps[at - 1].action, 'goto', 'wellfound: expect_url must follow the goto directly');
+  assert.match(steps[at - 1].url, /\{\{role\}\}/, 'wellfound: the goto must carry the role parameter');
+  const pattern = steps[at].pattern;
+  for (const landed of WELLFOUND_FALLBACK) {
+    assert.ok(checkExpectUrl({ pattern, landed }), `wellfound pattern ${pattern} accepts the fallback ${landed}`);
+  }
+  for (const landed of WELLFOUND_REAL) {
+    assert.strictEqual(checkExpectUrl({ pattern, landed }), null, `wellfound pattern ${pattern} rejects ${landed}`);
+  }
+});

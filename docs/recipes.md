@@ -26,6 +26,14 @@ and reports success. Follow the `goto` with
 miss ends the run as not-the-page (`notThePage` set, records null) and
 `verify.js` leaves the status alone. Step reference in the README.
 
+A **listing** whose param is a slug in the path has the same fault: wellfound
+sends an unknown `/role/r/<slug>` to `/remote`, and for months every unknown
+role "returned" the same 48 general listings with `success:true` (2026-10-09).
+Such a recipe needs `nav_method: ui_steps` (goto, then expect_url), because a
+`url_param` recipe has no step to put the check in. Prove it with a nonsense
+slug, never only with two real ones: `audit.js params` passes on two real slugs
+whatever an unknown one does.
+
 ## Declaring parameters
 
 `nav_params_schema` is JSON documenting what a caller may pass, keyed by param
