@@ -3,8 +3,14 @@ const { assertAuthorized, authorize } = require('./lib/writeGuard');
 const path = require('path');
 const fs = require('fs');
 const { BUILTIN_ACTIONS } = require('./lib/builtinActions');
+const { redactRunParams, redactRunError } = require('./lib/fillContract');
 
-const DB_PATH = path.join(__dirname, 'data', 'scrapers.db');
+// The live store. SS_DB points every process at another file instead: test.sh
+// sets it to a throwaway snapshot so the suite never writes the live one (TODO
+// 0k: tests left 127.0.0.1 fixtures in it). Read once, at load, so a child
+// process inherits it through the environment. test/db-isolation.test.js.
+const LIVE_DB_PATH = path.join(__dirname, 'data', 'scrapers.db');
+const DB_PATH = process.env.SS_DB ? path.resolve(process.env.SS_DB) : LIVE_DB_PATH;
 
 const SITES_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS sites (
@@ -548,9 +554,8 @@ function applyConcurrencyPragmas(db) {
   db.exec('PRAGMA busy_timeout = 10000');
 }
 
-// `file` defaults to the live store. store.js (its `--db`) and tests pass
-// another, so they can work on a private copy; every CLI otherwise opens the
-// live file as before (TODO 0k: no env override yet).
+// `file` defaults to DB_PATH: the live store, or SS_DB when set (test.sh sets
+// it). store.js (its `--db`) and some tests pass another file explicitly.
 function openDb(file = DB_PATH) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
@@ -1103,18 +1108,23 @@ function logRun(db, run) {
   // prevent — reached through a different door. engine.js and verify.js
   // authorize around their own calls.
   assertAuthorized('logRun');
+  // Redacted HERE, the table's only writer, so no caller can store a raw
+  // `answers` or a credential-named param, or an error quoting one
+  // (lib/fillContract.js; test/run-redaction.test.js).
+  const params = redactRunParams(run.params ?? {});
+  const error = redactRunError(run.error ?? null, run.params ?? {});
   db.prepare(
     `INSERT INTO scrape_runs (site_id, params_json, success, result_count, claimed_count, timed_out, duration_ms, error, version_id, version_label, output_chars, ran_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     run.siteId ?? null,
-    JSON.stringify(run.params ?? {}),
+    JSON.stringify(params),
     run.success ? 1 : 0,
     run.resultCount ?? null,
     run.claimedCount ?? null,
     run.timedOut ? 1 : 0,
     run.durationMs ?? null,
-    run.error ?? null,
+    error,
     run.versionId ?? null,
     run.versionLabel ?? null,
     run.outputChars ?? null,
@@ -1289,4 +1299,5 @@ module.exports = {
   upsertGenericAction,
   ACTION_TYPES_SEED,
   DB_PATH,
+  LIVE_DB_PATH,
 };

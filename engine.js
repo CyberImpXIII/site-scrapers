@@ -68,14 +68,13 @@ const { authorize: authorizeWrite } = require('./lib/writeGuard');
 // A run recording its own outcome is a sanctioned write, but a narrow one: this
 // authorizes the single insert rather than the whole run, so nothing else in
 // engine.js can write to the recipe DB under cover of it.
-// Params are redacted first: an application's `answers` are Jacob's personal
-// data and scrape_runs is long-lived (lib/fillContract.js redactRunParams).
-const logRun = (db, run) =>
-  authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run && run.params ? { ...run, params: redactRunParams(run.params) } : run));
+// Params and error text are redacted inside db.js logRun itself (answers,
+// credential-named keys; lib/fillContract.js), the table's one writer.
+const logRun = (db, run) => authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run));
 const { fillForm } = require('./lib/fillForm');
 const { submitForm, submitStepProblem, stepsSubmit } = require('./lib/submitForm');
 const { takeFillScreenshot } = require('./lib/fillScreenshot');
-const { redactRunParams, verdictInputsFromFill } = require('./lib/fillContract');
+const { verdictInputsFromFill } = require('./lib/fillContract');
 const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
 const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');

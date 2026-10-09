@@ -16,16 +16,20 @@ const { BUILTIN_ACTIONS } = require('../lib/builtinActions');
 
 const REPO_ROOT = path.join(__dirname, '..');
 
-// db.js hardcodes its path, so exercise a genuinely fresh DB by running a
-// throwaway copy of the repo's db.js against a temp HOME-like directory.
-// Simplest faithful approach: copy the repo's js files into a temp dir and
-// require db.js there, so DB_PATH resolves to that dir's data/scrapers.db.
+// Exercise a genuinely fresh DB by running a throwaway copy of the repo's db.js
+// against a temp directory: copy the js files there and require db.js, so
+// DB_PATH resolves to that dir's data/scrapers.db. The children get an env
+// WITHOUT SS_DB, which test.sh sets: with it, the copy would open the suite's
+// snapshot instead of the fresh file this test is about.
+const FRESH_ENV = { ...process.env };
+delete FRESH_ENV.SS_DB;
+delete FRESH_ENV.SS_FAILURES_DB;
 function withFreshDb(fn) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-builtins-'));
   try {
     fs.mkdirSync(path.join(tmp, 'lib'), { recursive: true });
     fs.copyFileSync(path.join(REPO_ROOT, 'db.js'), path.join(tmp, 'db.js'));
-    for (const f of ['builtinActions.js', 'writeGuard.js']) {
+    for (const f of ['builtinActions.js', 'writeGuard.js', 'fillContract.js', 'credentialShapes.js']) {
       fs.copyFileSync(path.join(REPO_ROOT, 'lib', f), path.join(tmp, 'lib', f));
     }
     return fn(tmp);
@@ -41,7 +45,7 @@ test('a fresh DB is seeded with the built-in library from code', () => {
       const db = openDb();
       process.stdout.write(JSON.stringify(listGenericActions(db).map(g => [g.name, g.source])));
     `;
-    const out = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    const out = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: FRESH_ENV });
     const rows = JSON.parse(out);
     assert.ok(fs.existsSync(path.join(tmp, 'data', 'scrapers.db')), 'a fresh DB file should have been created');
     assert.equal(rows.length, BUILTIN_ACTIONS.length, 'every builtin should be present in a fresh DB');
@@ -94,7 +98,7 @@ test('re-seeding restores an edited builtin but leaves user actions alone', () =
       db.prepare('UPDATE generic_actions SET steps = ? WHERE name = ?').run('[{"action":"wait","ms":1}]', ${JSON.stringify(target)});
       upsertGenericAction(db, { name: 'user_made', description: 'mine', steps: '[{"action":"wait","ms":2}]' });
     `;
-    execFileSync(process.execPath, ['-e', mutate], { encoding: 'utf8' });
+    execFileSync(process.execPath, ['-e', mutate], { encoding: 'utf8', env: FRESH_ENV });
 
     const check = `
       const { openDb, getGenericAction } = require(${dbPath});
@@ -103,7 +107,7 @@ test('re-seeding restores an edited builtin but leaves user actions alone', () =
       const u = getGenericAction(db, 'user_made');
       process.stdout.write(JSON.stringify({ builtinSteps: b.steps, builtinSource: b.source, user: u && { steps: u.steps, source: u.source } }));
     `;
-    const res = JSON.parse(execFileSync(process.execPath, ['-e', check], { encoding: 'utf8' }));
+    const res = JSON.parse(execFileSync(process.execPath, ['-e', check], { encoding: 'utf8', env: FRESH_ENV }));
 
     assert.equal(
       res.builtinSteps,

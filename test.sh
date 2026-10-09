@@ -43,17 +43,51 @@ for a in "$@"; do
 done
 [ ${#files[@]} -gt 0 ] || files=("$DIR"/test/*.test.js)
 
+# THE SUITE RUNS ON COPIES OF THE STORES, never the live files (TODO 0k: tests
+# left 127.0.0.1 fixtures in the live recipe store). devtools/snapshot-stores.js
+# copies whatever this process is pointed at -- the live stores, or the
+# caller's copies when test.sh runs inside a suite (lib/gate.js) -- and SS_DB /
+# SS_FAILURES_DB send every test and every child it spawns there (db.js and
+# failuresDb.js read them at load). A store that does not exist yet is not
+# copied; openDb creates a fresh one at the override path.
+#
+# Then the live stores are fingerprinted before and after
+# (devtools/db-fingerprint.js) and any difference fails the run: a path that
+# still opens the live file shows up here instead of as a stray fixture weeks
+# later. Another session writing the live store during the run also differs;
+# the message says so. test/db-isolation.test.js asserts this wiring.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/ss-suite-XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+if ! "$NODE_BIN" --no-warnings "$DIR/devtools/snapshot-stores.js" "$tmp" >/dev/null; then
+  echo "not ok 0 - could not snapshot the stores (devtools/snapshot-stores.js); refusing to run the suite against the live ones"
+  echo "# fail 1"
+  exit 1
+fi
+export SS_DB="$tmp/recipes.sqlite"
+export SS_FAILURES_DB="$tmp/failures.sqlite"
+"$NODE_BIN" --no-warnings "$DIR/devtools/db-fingerprint.js" > "$tmp/live-before.json" 2>/dev/null
+
 if [ "$verbose" = true ]; then
-  exec "$NODE_BIN" --test "${files[@]}"
+  "$NODE_BIN" --test "${files[@]}"
+  rc=$?
+else
+  # Keep: every `not ok` and the YAML diagnostic block under it, plus the counts.
+  # Drop: the `ok` lines and their blocks, which is the bulk of the stream.
+  "$NODE_BIN" --test "${files[@]}" 2>&1 | awk '
+    /^[[:space:]]*not ok / { infail = 1; print; next }
+    infail && /^[[:space:]]*\.\.\.[[:space:]]*$/ { infail = 0; print; next }
+    infail { print; next }
+    /^# (tests|pass|fail) / { print; next }
+    /^# (cancelled|skipped|todo) / { if ($3 != "0") print; next }
+  '
+  rc="${PIPESTATUS[0]}"
 fi
 
-# Keep: every `not ok` and the YAML diagnostic block under it, plus the counts.
-# Drop: the `ok` lines and their blocks, which is the bulk of the stream.
-"$NODE_BIN" --test "${files[@]}" 2>&1 | awk '
-  /^[[:space:]]*not ok / { infail = 1; print; next }
-  infail && /^[[:space:]]*\.\.\.[[:space:]]*$/ { infail = 0; print; next }
-  infail { print; next }
-  /^# (tests|pass|fail) / { print; next }
-  /^# (cancelled|skipped|todo) / { if ($3 != "0") print; next }
-'
-exit "${PIPESTATUS[0]}"
+"$NODE_BIN" --no-warnings "$DIR/devtools/db-fingerprint.js" > "$tmp/live-after.json" 2>/dev/null
+if ! changed="$("$NODE_BIN" --no-warnings "$DIR/devtools/db-fingerprint.js" --diff "$tmp/live-before.json" "$tmp/live-after.json" 2>&1)"; then
+  # A top-level `not ok` line: lib/gate.js's parseTap counts it as a failure.
+  echo "not ok 0 - the LIVE store changed during the suite (devtools/db-fingerprint.js; rerun if another session was writing it)"
+  printf '%s\n' "$changed" | sed 's/^/  # /'
+  [ "$rc" -ne 0 ] || rc=1
+fi
+exit "$rc"

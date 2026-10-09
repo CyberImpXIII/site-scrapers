@@ -63,7 +63,19 @@ test('the taxonomy is seeded from code, so a fresh clone has the vocabulary', ()
     for (const f of new Set(deps)) {
       fs.copyFileSync(path.join(REPO_ROOT, 'lib', f), path.join(tmp, 'lib', f));
     }
-    const { openFailuresDb: openFresh, listFailureTypes: listFresh } = require(path.join(tmp, 'failuresDb.js'));
+    // The copy reads SS_FAILURES_DB at load (test.sh points it at the suite's
+    // snapshot); without it, it opens <tmp>/data/failures.db, the fresh file
+    // this test is about.
+    const saved = process.env.SS_FAILURES_DB;
+    delete process.env.SS_FAILURES_DB;
+    let freshModule;
+    try {
+      freshModule = require(path.join(tmp, 'failuresDb.js'));
+    } finally {
+      if (saved !== undefined) process.env.SS_FAILURES_DB = saved;
+    }
+    const { openFailuresDb: openFresh, listFailureTypes: listFresh, FAILURES_DB_PATH: freshPath } = freshModule;
+    assert.equal(freshPath, path.join(fs.realpathSync(tmp), 'data', 'failures.db'), 'the copy opens its own fresh file');
     const fresh = openFresh();
     const names = listFresh(fresh).map(t => t.name);
     assert.equal(names.length, FAILURE_TYPES.length);

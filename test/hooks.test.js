@@ -459,6 +459,11 @@ function withRecipes(fx) {
     fs.copyFileSync(path.join(FIXTURE_SS, f), path.join(fx.repo, f));
   }
   fs.chmodSync(path.join(fx.repo, 'dev.sh'), 0o755);
+  // check-hooks.sh picks its probe host through these (the real ones).
+  for (const f of ['devtools/probe-host.js', 'lib/fixtureHosts.js']) {
+    fs.mkdirSync(path.dirname(path.join(fx.repo, f)), { recursive: true });
+    fs.copyFileSync(path.join(REPO, f), path.join(fx.repo, f));
+  }
 }
 
 test('check-hooks: a copy that is present, identical and does NOT block is an ERROR', () => {
@@ -794,6 +799,12 @@ test('a failing run is detected on BOTH the quiet and the verbose path', () => {
     assert.equal(parsed.failed, 1, `${label}: parseTap must see the failure`);
     assert.equal(parsed.passed, 1, `${label}: parseTap must see the pass`);
     assert.deepEqual(parsed.failures, ['fails and must be loud'], `${label}: the failing test must be named`);
+    // The gate keeps WHY, not only which: a flake under load was undiagnosable
+    // because the gate printed the name and the evidence was gone on rerun.
+    assert.equal(parsed.failureDetails.length, 1, `${label}: one failure detail`);
+    assert.equal(parsed.failureDetails[0].name, 'fails and must be loud');
+    assert.match(parsed.failureDetails[0].error || '', /the extraction returned the wrong field/, `${label}: the error text is kept`);
+    assert.match(parsed.failureDetails[0].location || '', /deliberate\.test\.js:3:\d+/, `${label}: the file:line is kept`);
   }
 
   // Loud on failure: the assertion message has to survive the filter, or a

@@ -23,7 +23,10 @@ const { FAILURE_TYPES } = require('./lib/failureTypes');
 const { BLOCKER_SIGNATURES, WALL_SERVICES } = require('./lib/blockerSignatures');
 const { PROBE_KNOWLEDGE } = require('./lib/probeKnowledge');
 
-const FAILURES_DB_PATH = path.join(__dirname, 'data', 'failures.db');
+// The live store, or SS_FAILURES_DB when set (test.sh points it at a snapshot;
+// same reasoning as SS_DB in db.js). test/db-isolation.test.js.
+const LIVE_FAILURES_DB_PATH = path.join(__dirname, 'data', 'failures.db');
+const FAILURES_DB_PATH = process.env.SS_FAILURES_DB ? path.resolve(process.env.SS_FAILURES_DB) : LIVE_FAILURES_DB_PATH;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS failure_types (
@@ -235,9 +238,11 @@ function insertProbeKnowledge(db, k) {
   ).run(k.probe_kind, k.category, k.value_kind ?? 'pattern', k.value, k.notes ?? null, new Date().toISOString());
 }
 
-function openFailuresDb() {
-  fs.mkdirSync(path.dirname(FAILURES_DB_PATH), { recursive: true });
-  const db = new DatabaseSync(FAILURES_DB_PATH);
+// `file` is for store.js import (a store folder other than data/); every other
+// caller opens FAILURES_DB_PATH.
+function openFailuresDb(file = FAILURES_DB_PATH) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
   applyConcurrencyPragmas(db);
   db.exec(SCHEMA);
   authorize('failuresDb.js seeding from code', () => {
@@ -419,6 +424,7 @@ function deleteFailure(db, id) {
 
 module.exports = {
   FAILURES_DB_PATH,
+  LIVE_FAILURES_DB_PATH,
   openFailuresDb,
   listFailureTypes,
   getFailureType,

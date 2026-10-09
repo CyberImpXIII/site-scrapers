@@ -52,7 +52,7 @@ const {
   definitionHasPassingRun,
 } = require('./db');
 const { decideVerdict } = require('./lib/verdict');
-const { verdictInputsFromFill } = require('./lib/fillContract');
+const { verdictInputsFromFill, noteParamsArg } = require('./lib/fillContract');
 const { verdictInputsFromDescribe } = require('./lib/describeVerdict');
 const { authorizeAsync } = require('./lib/writeGuard');
 const { isBlockedRefusal } = require('./lib/blockedGuard');
@@ -359,7 +359,7 @@ async function main() {
         : 'A person being present was not enough to complete the run.';
       const next = attended
         ? 'An attended run has already been tried and did not succeed, so this needs real work, not another attempt: read debugDir/diagnostics.json.'
-        : `NEXT STEP FOR THE USER: run \`node verify.js ${target} '${paramsArg && paramsArg !== '--attended' ? paramsArg : '{}'}' --attended\` and clear the wall in the window that opens. If records come back, this becomes "blocked" (needs a person each run). If not, it needs real work.`;
+        : `NEXT STEP FOR THE USER: run \`node verify.js ${target} '${noteParamsArg(paramsArg, params).arg}' --attended\`${noteParamsArg(paramsArg, params).redacted ? ' (credential and answer values are redacted here: supply them at run time)' : ''} and clear the wall in the window that opens. If records come back, this becomes "blocked" (needs a person each run). If not, it needs real work.`;
       const stamp = `[verify.js ${new Date().toISOString().slice(0, 10)}] ${reason} ${next}`;
       db.prepare('UPDATE sites SET notes = ? WHERE id = ?').run(
         site.notes ? `${site.notes}\n${stamp}` : stamp,

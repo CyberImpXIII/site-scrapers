@@ -68,7 +68,9 @@ unchecked=0
 # 2026-10-05: income, tools/context-hygiene, tools/transcripts and tools/usage
 # (each found holding the twins, undeclared, by this check after setup's
 # --rebuild gave this repo the 7 hooks it had been missing).
-DECLARED=". addon-bench applications emailTools income knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/checks tools/context-hygiene tools/hooks tools/hub tools/setup tools/todo tools/transcripts tools/usage"
+# 2026-10-09: tools/wizard (holds the twins since 2026-10-08; Jacob approved
+# the dispatcher's brief that asked for it).
+DECLARED=". addon-bench applications emailTools income knowledge-base scripts scriptingTools/chronjobScheduler scriptingTools/data-bridge tools/checks tools/context-hygiene tools/hooks tools/hub tools/setup tools/todo tools/transcripts tools/usage tools/wizard"
 WORKSPACE_MARKER=".claude/agents.manifest.json"
 if [ -f "$TOOLS/$WORKSPACE_MARKER" ]; then mode=workspace; else mode=standalone; fi
 
@@ -333,8 +335,11 @@ NODE_BIN="$HOME/.nvm/versions/node/v22.20.0/bin/node"
 [ -x "$NODE_BIN" ] || NODE_BIN="$(command -v node 2>/dev/null || true)"
 covered=""
 if [ -f "$REPO/query.js" ] && [ -n "$NODE_BIN" ]; then
+  # A real host, sorted, never a 127.0.0.1/.test fixture a concurrent test may
+  # have just inserted (it was the first working row, so it depended on timing:
+  # TODO 0i/0m). devtools/probe-host.js, test/fixture-hosts.test.js.
   covered=$(cd "$REPO" && "$NODE_BIN" query.js sites 2>/dev/null \
-    | jq -r 'map(select(.status == "working")) | .[0].hostname // empty' 2>/dev/null)
+    | "$NODE_BIN" devtools/probe-host.js 2>/dev/null)
 fi
 if [ -z "$covered" ]; then
   printf '  UNCHECKED  enforcement not probed -- no working recipe here to probe with\n'
