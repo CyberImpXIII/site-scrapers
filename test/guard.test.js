@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // The write guard (lib/writeGuard.js) and the validation gate (lib/gate.js).
 //
 // These exist because detecting off-path edits after the fact was not enough —
@@ -421,6 +422,47 @@ test('the committed export matches the DB', () => {
   const { openDb } = require('../db');
   const state = exportIsCurrent(openDb());
   assert.equal(state.current, true, `lib/builtinActions.js has drifted from the DB: ${state.reason}`);
+});
+
+// R5. exportIsCurrent compares steps/description/schema only; this compares
+// the whole file with a fresh render, so a hand edit to a changeNote, an
+// action_type, the header or the order is caught too. Mutation-checked: each
+// edit below fails it, the untouched file passes.
+test('the committed export is byte for byte a fresh render of the DB', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { exportMatchesRender, TARGET } = require('../lib/exportBuiltins');
+  const { openDb } = require('../db');
+  const db = openDb();
+  const state = exportMatchesRender(db);
+  assert.equal(state.matches, true, `lib/builtinActions.js differs from a fresh render: ${JSON.stringify(state.firstDiff)}`);
+
+  const original = fs.readFileSync(TARGET, 'utf8');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-render-'));
+  try {
+    const mutants = {
+      header: original.replace('GENERATED FILE', 'GENERATED  FILE'),
+      actionType: original.replace('"action_type": null', '"action_type": "login"'),
+      changeNote: original.replace(/"changeNote": "([^"]{10})/, '"changeNote": "X$1'),
+      trailing: original + '\n',
+    };
+    // A fresh clone's DB has no builtin history, so its notes come from the
+    // file and a note-only edit is the one thing it cannot see (documented in
+    // exportMatchesRender).
+    const history = db.prepare("SELECT COUNT(*) AS n FROM change_log WHERE target LIKE 'generic:%' AND rolled_back = 0").get().n;
+    if (!history) delete mutants.changeNote;
+    for (const [name, text] of Object.entries(mutants)) {
+      assert.notEqual(text, original, `mutant ${name} changed nothing; fix the test`);
+      const f = path.join(tmp, `${name}.js`);
+      fs.writeFileSync(f, text);
+      const r = exportMatchesRender(db, f);
+      assert.equal(r.matches, false, `a hand edit (${name}) must not match the render`);
+      assert.ok(r.firstDiff && r.firstDiff.line > 0, name);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('the export carries a DO-NOT-EDIT header naming the gated path', () => {
