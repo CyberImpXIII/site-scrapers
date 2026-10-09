@@ -81,6 +81,7 @@ const { withPage, captureFailureDiagnostics } = require('./lib/runner');
 const { runProbe } = require('./lib/probes');
 const { expandSteps, stepsNeedHeaded, refKey } = require('./lib/composeActions');
 const { resolveUrlFields } = require('./lib/urlAttrs');
+const { decodeTextFields } = require('./lib/textEntities');
 const { forwardedOff } = require('./lib/forwarded');
 const { NotThePage, checkExpectUrl, notThePageError } = require('./lib/notThePage');
 const { isAttended, blockedAttnGate, blockedAttnRefusal } = require('./lib/blockedGuard');
@@ -1405,6 +1406,10 @@ async function main() {
         seen.add(key);
         jobs.push(rec);
       }
+      // A site that encoded its text twice shows `&amp;` on screen
+      // (builtin.com, 2026-10-09); one level is decoded and the count is
+      // reported. lib/textEntities.js.
+      const entitiesDecoded = decodeTextFields(jobs, fields);
 
       let claimedCount = null;
       if (site.result_count_regex) {
@@ -1419,7 +1424,7 @@ async function main() {
         debugDir = await captureFailureDiagnostics(page, siteMeta, { error: null, ...diagnostics });
       }
 
-      return { timedOut, jobs, claimedCount, url: page.url(), captures, probeResults, pagesVisited: pagesCollected + 1, debugDir };
+      return { timedOut, jobs, claimedCount, url: page.url(), captures, probeResults, pagesVisited: pagesCollected + 1, debugDir, entitiesDecoded };
     }, { headed, session: sessionOpt, debugMeta: debugOpt, rolling: rollingOpt });
   } catch (e) {
     if (e instanceof NotThePage) {
@@ -1513,6 +1518,9 @@ async function main() {
     url: outcome.url,
     claimedCount: outcome.claimedCount,
     consistencyWarning,
+    // Present only when a value changed: { values, fields }. The site's own
+    // text carried an entity (double encoding); lib/textEntities.js.
+    ...(outcome.entitiesDecoded ? { entitiesDecoded: outcome.entitiesDecoded } : {}),
     count: outcome.jobs.length,
     pagesVisited: outcome.pagesVisited,
     // `records`, not `jobs`: the engine is generic, so naming its output after
