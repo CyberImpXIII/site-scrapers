@@ -186,6 +186,12 @@ test('it groups the pages that actually exist, and merges nothing else', () => {
     // inside the gate while passing in isolation and in a full suite run, the
     // moment one more file gained a fixture.
     .filter(s => String(s.hostname) !== '127.0.0.1')
+    // Same for the RFC 2606 reserved names other suites use as fixture hosts
+    // (compose.test.js's `cycle.test`, failures' `*.example`, cli's `.invalid`):
+    // `cycle.test` is deliberately entry-less and surfaced here as "unkeyed"
+    // inside register.js's gate, which runs this file beside compose.test.js
+    // (2026-10-08). No real recipe can live on these TLDs.
+    .filter(s => !/\.(test|example|invalid|localhost)$/i.test(String(s.hostname)))
     .map(s => getSite(db, s.hostname, s.page_type, s.recipe_name))
     // A row can vanish between the list and the read: test files run in
     // PARALLEL, and another file's fixture cleanup deletes recipes from this
