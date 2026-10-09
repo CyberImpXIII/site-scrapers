@@ -81,6 +81,89 @@ establish `blocked` (the site needs a person **every** run). Do not retry it
 unattended: that already failed, and retrying is how a wall gets mistaken for a
 recipe bug. Do not attempt to work around the detection under any circumstances.
 
+**Arming a live submit is Jacob's code change (2026-10-08).** `lib/submitForm.js`
+`LIVE_SUBMIT_HOSTS` is `Object.freeze([])`: every non-loopback page returns
+`refused/live_submit_disarmed` before it is touched, approval or not. Arming
+`job-boards.greenhouse.io` means adding it there AND changing the `[live disarm]`
+test in `test/submit.test.js`, which pins the list empty on purpose. Not before
+PLAN-applications §12.2 step 7 (approve + submit wired in applications).
+
+**`.claude/settings.json` wiring (reported by the SessionStart hook, 2026-10-08):**
+"4 wiring requirement(s) missing, e.g. PostToolUse [Agent|Task]
+.claude/hooks/probe-model-served.sh -- run ./.claude/agents.sh wiring". His or
+the harness agent's fix, not this repo's.
+
+---
+
+## 0n. submit_application_form (PLAN-applications §12.2 step 3) — DONE 2026-10-08, open items
+
+Built against fixtures only; nothing live ran. Code: `lib/submitForm.js` (the
+step), `lib/submitContract.js` (contract, hash, approval check),
+`lib/submitLedger.js` (one click per batch+packet), `lib/submitGuard.js`
+(unattended tools refuse), `submit.js hash` (the CLI applications calls at
+approve time), `docs/submit-output.md`, `test/submit.test.js` (42 tests, each
+named by the gate it proves). Recipe `job-boards.greenhouse.io#action:submit_application_form`
+is `needs-review` and stays so.
+
+Decisions taken where §3.5/§4 were open — settled conservatively, any can be revisited:
+
+- **Approval shape** `{batchId, approvedAt, expiresAt, submissions:[{packetId, submissionHash}]}`
+  plus a `packetId` param. Life at most 24h; a future `approvedAt` is invalid.
+  The step checks CONSISTENCY, not authenticity: whoever can write params can
+  write an approval. Authenticity is applications' job (step 7) — the step's
+  promise is only "nothing differs from what was approved".
+- **submissionHash** binds url, the described form's hash, the answers and every
+  uploaded file's bytes. applications must compute it with `node submit.js hash
+  @params.json`, never re-implement it (test `[contract]` pins CLI == lib).
+- **Gates beyond §3.5:** the landed URL must equal the approved one; the form is
+  re-described after the fill (a question appearing mid-fill refuses); the
+  outcome signals must be ABSENT before the click (else the outcome is
+  unreadable); exactly one form and one visible enabled submit control; one DOM
+  click, never Enter, never a retry.
+- **Statuses beyond §3.5:** `refused` (nothing touched), `unknown` (clicked, no
+  signal — never retried; the ledger makes the retry impossible), `error`.
+- **Ledger** is a per-(batch, packet) file, `wx`, mode 0600, ids/hash/outcome
+  only. Unreadable → `ledger_unavailable` (fails safe).
+
+Open:
+
+- **`SS_SUBMIT_LEDGER_DIR` moves the ledger.** It exists so tests use a private
+  ledger; it also lets a caller with a fresh dir re-submit an approved packet.
+  Unguarded today. Options: refuse it unless the host is loopback, or have
+  applications keep its own record (step 7). Labelled, not fixed.
+- **The recipe can never earn `working`:** verify.js refuses any recipe that
+  submits (`lib/submitGuard.js`), as do `lab.js` runs, `primitives.js try` and
+  both live audits (test `[unattended]`). Callers pass `allowUnverified`. Decide
+  at step 7 whether an attended first submit should be able to set a status.
+- **UNVERIFIED LIVE:** Greenhouse's confirmation text/URL and error selector, and
+  whether its submit is a navigation or XHR (the fixture models a native POST;
+  an XHR submit with no URL change still reads via `confirm_text`). Settle on the
+  first attended, approved submit — never by a probe.
+- **Pre-existing, not mine to widen silently:** a plain `click` step can still
+  click a submit control (the guard catches only `submit_form`).
+  `verify.js:95` and `engine.js:973` echo `JSON.parse`'s `e.message`, which can
+  quote a param VALUE — the submit CLI prints only the error code.
+- **Gate flakes under load (2026-10-08, load avg 70-125 from parallel agents):**
+  register.js's gate failed twice on tests unrelated to the change. (1)
+  `page-identity.test.js` "groups the pages" saw compose.test.js's entry-less
+  `cycle.test` fixture mid-run → now filters RFC 2606 TLDs (fixed). (2) one
+  `[one control]` submit test failed inside the gate and passed in a standalone
+  rerun of the same file set; the gate prints no detail. Suspicion, unconfirmed:
+  browser launch timeout under load (seen once earlier as "Timed out after
+  30000 ms while waiting for the WS endpoint URL"). Settle: have lib/gate.js
+  keep the failing test's error text in its output.
+- **`./dev.sh check` on 2026-10-08:** suite 605/606, the one failure is
+  hooks.test.js "every hook is wired" (ask-first.sh unwired: Jacob's settings
+  step, known). The hooks gate reported 14 ERRORS NOT from this change, all in
+  others' in-flight work — reported to the dispatcher for `harness` / `hooks` /
+  `setup`: the top-level `.claude/hooks/` copies of no-inline-blobs,
+  prefer-recipes, troubleshooting and their tests differ from all 18 others
+  (hashes from `./check-hooks.sh`); 7 shared hooks (ask-first, git-stamp,
+  no-secrets, primary-guard, push-gate, settings-guard, write-ledger) "missing
+  from .claude/hooks"; `tools/wizard/.claude/hooks` holds twinned hooks but is
+  not in `DECLARED` (check-hooks.sh — this repo's file; add it once the wizard
+  agent says the folder is staying).
+
 ---
 
 ## 0l. Store export / import / verify (PLAN-repo-setup §7.11) — DONE 2026-10-05, open decisions
