@@ -1,5 +1,5 @@
 {
-  "store": "data/scrapers.db",
+  "store": ["data/scrapers.db", "data/failures.db"],
   "cli": "store.sh",
-  "verbs": ["export", "import", "verify"]
+  "verbs": ["export", "import", "verify", "register", "set", "verify-recipe", "scrape", "failures"]
 }

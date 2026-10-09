@@ -1,3 +1,4 @@
+// Run by ./dev.sh check (the suite), the gate gates.json names for this file.
 // The store's export / import / verify (PLAN-repo-setup.md §7.11): store.sh,
 // store.js, lib/storeExport.js, cli.json.
 //
@@ -133,10 +134,17 @@ test('round trip: export, import into an empty store, verify says every item sam
     'the export writes only the four places its layout names'
   );
 
-  const target = fresh('dst') + '.db';
+  const targetDir = fresh('dstdir');
+  fs.mkdirSync(targetDir);
+  const target = path.join(targetDir, 'recipes.sqlite');
   assert.equal(fs.existsSync(target), false);
   const im = cli(['import', '--db', target], { DATA_REPO: data });
   assert.equal(im.code, 0, im.stdout + im.stderr);
+  // cli.json names two stores and setup wants both on disk after an import:
+  // the failures store (history, never exported) is created empty beside it.
+  const failuresFile = path.join(targetDir, 'failures.db');
+  assert.equal(im.json.failuresStore, 'created');
+  assert.ok(fs.existsSync(failuresFile));
   assert.equal(im.json.imported.recipes, 2);
   assert.equal(im.json.imported.genericActions, 1);
   assert.equal(im.json.imported.actionTypes, 1);
@@ -320,9 +328,15 @@ test('a credential literal stops the export, named by item and place, value neve
 
 test("cli.json's verbs are exactly what `store.sh help` lists, and the CLI is executable", () => {
   const decl = JSON.parse(fs.readFileSync(path.join(REPO, 'cli.json'), 'utf8'));
-  assert.deepEqual(Object.keys(decl).sort(), ['cli', 'store', 'verbs']);
-  assert.equal(decl.store, 'data/scrapers.db');
-  assert.equal(path.join(REPO, decl.store), dbApi.DB_PATH, 'cli.json names the store db.js opens');
+  assert.deepEqual(Object.keys(decl).filter(k => !k.startsWith('_')).sort(), ['cli', 'store', 'verbs']);
+  // Both stores, exactly the files db.js and failuresDb.js open (unless
+  // SS_DB / SS_FAILURES_DB point elsewhere), so store-guard covers both.
+  const { LIVE_FAILURES_DB_PATH } = require('../failuresDb');
+  assert.deepEqual(
+    decl.store.map(s => path.join(REPO, s)).sort(),
+    [dbApi.LIVE_DB_PATH, LIVE_FAILURES_DB_PATH].sort(),
+    'cli.json names the two stores this repo opens'
+  );
   fs.accessSync(path.join(REPO, decl.cli), fs.constants.X_OK);
   const help = cli(['help']);
   assert.equal(help.code, 0);
@@ -333,9 +347,38 @@ test("cli.json's verbs are exactly what `store.sh help` lists, and the CLI is ex
   const indent = first.match(/^\s+/)[0];
   const listed = lines.filter(l => l.startsWith(indent) && /^[a-z]/.test(l.slice(indent.length))).map(l => l.trim().split(/\s+/)[0]);
   assert.deepEqual(listed.filter(v => v !== 'help').sort(), [...decl.verbs].sort(), 'declared == implemented, both ways');
-  for (const v of decl.verbs) {
+  const DATA_VERBS = ['export', 'import', 'verify'];
+  for (const v of DATA_VERBS) {
+    assert.ok(decl.verbs.includes(v), v);
     const r = cli([v], { DATA_REPO: '' });
     assert.equal(r.code, 2, `${v} is a verb store.js handles (refused only for DATA_REPO)`);
     assert.match(r.json.error, /DATA_REPO/);
+  }
+});
+
+// The writer verbs are the existing writers, forwarded: same stdout, same exit
+// code, for the same arguments. Each is run with an argument it refuses before
+// opening any store (no args, or a bad one), so nothing is written.
+test('the writer verbs forward to the real writers, output and exit code unchanged', () => {
+  const decl = JSON.parse(fs.readFileSync(path.join(REPO, 'cli.json'), 'utf8'));
+  const pairs = {
+    register: [['register.js'], []],
+    set: [['lab.js', 'set'], []],
+    'verify-recipe': [['verify.js'], []],
+    scrape: [['engine.js'], []],
+    failures: [['failures.js'], ['record', 'not json']],
+  };
+  assert.deepEqual(
+    decl.verbs.filter(v => !['export', 'import', 'verify'].includes(v)).sort(),
+    Object.keys(pairs).sort(),
+    'every writer verb cli.json declares is checked here'
+  );
+  for (const [verb, [direct, args]] of Object.entries(pairs)) {
+    const viaStore = cli([verb, ...args]);
+    const [script, ...pre] = direct;
+    const d = spawnSync(process.execPath, [path.join(REPO, script), ...pre, ...args], { cwd: REPO, encoding: 'utf8' });
+    assert.equal(viaStore.code, d.status, `${verb}: exit code`);
+    assert.equal(viaStore.stdout, d.stdout, `${verb}: stdout`);
+    assert.ok(viaStore.stdout.length + viaStore.stderr.length > 0, `${verb}: said something`);
   }
 });

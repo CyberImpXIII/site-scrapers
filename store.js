@@ -10,21 +10,52 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const dbApi = require('./db');
+const failuresDb = require('./failuresDb');
 const { authorize } = require('./lib/writeGuard');
 const store = require('./lib/storeExport');
 
+// The verbs that WRITE the two stores (cli.json names both) are the CLIs that
+// already do it, forwarded unchanged: arguments, stdout, stderr and the exit
+// code pass straight through, so `store.sh set <target> <json>` is exactly
+// `node lab.js set <target> <json>`. One CLI per repo (tools/checks' accessor)
+// without a second copy of any writer. test/store-export.test.js.
+const FORWARD = {
+  register: ['register.js'],
+  set: ['lab.js', 'set'],
+  'verify-recipe': ['verify.js'],
+  scrape: ['engine.js'],
+  failures: ['failures.js'],
+};
+
 const HELP = `store.sh <verb> [--db PATH] [--json]
 
-  export   write the store's exported form into $DATA_REPO/site-scrapers/ (changed files only; removes what the store no longer has)
-  import   recreate an absent or empty store from $DATA_REPO/site-scrapers/, then verify it
-  verify   compare the store with its export: each item same, differs or missing (exit 1 unless all same)
-  help     this text
+  export          write the recipe store's exported form into $DATA_REPO/site-scrapers/ (changed files only; removes what the store no longer has)
+  import          recreate an absent or empty recipe store from $DATA_REPO/site-scrapers/, then verify it; creates an empty failures store beside it if absent
+  verify          compare the recipe store with its export: each item same, differs or missing (exit 1 unless all same)
+  register        create a recipe: node register.js '<json>' (the recipe store's writer)
+  set             edit a recipe: node lab.js set <target> '<json>'
+  verify-recipe   earn a status by a run: node verify.js <target> '<params>'
+  scrape          run a recipe; the run is recorded in scrape_runs: node engine.js <target> '<params>'
+  failures        the failures store's CLI: node failures.js record | forget | add-signature | ... (failures.js help)
+  help            this text
 
-  --db PATH   the store file (default data/scrapers.db); tests and copies use this
+  --db PATH   the recipe store file for export/import/verify (default data/scrapers.db); tests and copies use this
   --json      accepted for the checks contract; output is always JSON
   DATA_REPO   the private data repo, from the caller's environment (setup reads .claude/local.env)
+  The writer verbs take exactly their CLI's own arguments; output and exit code are that CLI's.
 `;
+
+function forward(verb, rest) {
+  const [script, ...pre] = FORWARD[verb];
+  const r = spawnSync(process.execPath, [path.join(__dirname, script), ...pre, ...rest], { stdio: 'inherit', cwd: __dirname });
+  if (r.error) {
+    process.stderr.write(`store.sh ${verb}: could not run ${script}: ${r.error.message}\n`);
+    return 2;
+  }
+  return r.status ?? 1;
+}
 
 function out(doc, code) {
   process.stdout.write(JSON.stringify(doc, null, 2) + '\n');
@@ -54,7 +85,12 @@ function summary(items) {
 }
 
 function main() {
-  const a = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (Object.hasOwn(FORWARD, argv[0])) {
+    process.exitCode = forward(argv[0], argv.slice(1));
+    return;
+  }
+  const a = parseArgs(argv);
   if (!a.verb || a.verb === 'help' || a.verb === '--help' || a.verb === '-h') {
     process.stdout.write(HELP);
     return;
@@ -104,7 +140,17 @@ function main() {
   }
   const report = store.verify(db, d.dir);
   const notSame = report.items.filter(i => i.status !== 'same');
-  out({ imported, verify: summary(report.items), notSame }, notSame.length ? 1 : 0);
+  // The second store cli.json names. It holds history (never exported), so an
+  // import cannot fill it, but setup requires every named store on disk after
+  // an import: an absent one is created empty (seeded vocabulary only), an
+  // existing one is never opened. Beside --db when given, else the default.
+  const failuresFile = a.db === dbApi.DB_PATH ? failuresDb.FAILURES_DB_PATH : path.join(path.dirname(a.db), 'failures.db');
+  let failuresStore = 'present';
+  if (!fs.existsSync(failuresFile)) {
+    failuresDb.openFailuresDb(failuresFile).close();
+    failuresStore = 'created';
+  }
+  out({ imported, failuresStore, verify: summary(report.items), notSame }, notSame.length ? 1 : 0);
 }
 
 main();

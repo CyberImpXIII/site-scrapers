@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The troubleshooting memory: what has broken before, and what fixed it.
-// Backed by data/failures.db, separate from the recipe DB (see failuresDb.js
+// Backed by the failures store, separate from the recipe DB (see failuresDb.js
 // for why).
 //
 // Usage:

@@ -89,7 +89,7 @@ function main() {
   const report = {
     createdDatabases: [
       ...(before.scrapers ? [] : [require('path').relative(__dirname, require('./db').DB_PATH)]),
-      ...(before.failures ? [] : ['data/failures.db']),
+      ...(before.failures ? [] : [require('path').relative(__dirname, require('./failuresDb').FAILURES_DB_PATH)]),
     ],
     sharedLibrary: {
       genericActions: listGenericActions(db).length,

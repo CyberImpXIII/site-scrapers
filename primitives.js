@@ -11,7 +11,7 @@
 // Three pages here already carry two recipes each, and each pair was
 // characterised twice because nothing connected them.
 //
-// Derived from the recipe DB and failures.db on every call — see lib/primitives.js
+// Derived from the recipe DB and the failures store on every call — see lib/primitives.js
 // for why there is no table behind it.
 
 process.removeAllListeners('warning');
@@ -42,7 +42,7 @@ function load() {
       (failuresByHost[f.hostname] ||= []).push(f);
     }
   } catch {
-    failuresByHost = {}; // a missing failures.db is not a reason to fail this
+    failuresByHost = {}; // a missing failures store is not a reason to fail this
   }
 
   const { listObservations } = require('./db');
