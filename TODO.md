@@ -95,6 +95,39 @@ the harness agent's fix, not this repo's.
 
 ---
 
+## 0r. Orphaned Chrome for Testing after a killed run (2026-10-10, reported by job-import-scripts via the dispatcher)
+
+- **Seen:** 4 headless browsers, ppid 1, idle, started 2026-10-09
+  01:01:20-23: pids 41927, 42019, 42025, 42466 (each with 6 helpers and 2
+  `chrome_crashpad_handler`s: 42218 42220 42238 42254 42256 42263 42644
+  42664). Binary `~/.cache/puppeteer/chrome/mac-131.0.6778.204` (ours).
+- **Ours, by their open tabs** (read-only, each profile's DevToolsActivePort
+  -> `/json/list`): `127.0.0.1:<port>/chips` (extraction.test.js),
+  `/greenhouse/form?multi=pre` (multi-select.test.js),
+  `/greenhouse/form?outcome=confirm` (submit.test.js), one about:blank. So a
+  full-suite run (files in parallel) killed mid-run. `scrape_runs` has no row
+  for them (only a sequential wellfound sweep in 04:55-05:08Z, all closed):
+  the drivers died before logging. WHO killed that suite run is unknown --
+  there is no suite-run log. Suspicion, unconfirmed: a Bash tool timeout on a
+  foreground `./dev.sh check` (the suite runs 13+ min, the tool cap is 10).
+  NOT killed: Jacob's call. Kill command if he wants it: `kill 41927 42019
+  42025 42466` (helpers and crashpads exit with them -- unverified).
+- **Cause, confirmed by a run:** Puppeteer launches Chrome detached (own
+  group) and kills it only from handlers in the driver; SIGKILL runs none.
+  FIXED: lib/browserReaper.js, armed in lib/runner.js withPage (the only
+  launch site, gated). test/browser-reaper.test.js: with the arm call removed,
+  a SIGKILLed driver left browser + 6 helpers alive (same shape as the
+  orphans); with it, all gone and the profile removed.
+- **Open:** (a) if `ps` cannot verify the pid as this browser the watcher
+  kills nothing (a leftover beats a wrong kill); (b) `$TMPDIR` holds 2059
+  `puppeteer_dev_chrome_profile-*` dirs, 2050 EMPTY: Puppeteer's own close
+  leaves the empty dir on this machine on (nearly) every launch -- 19 new
+  from one 18-test run. 9 non-empty: the 4 live orphans' and 5 from earlier
+  killed runs. Not fixed, not deleted; decide whether withPage should rmdir an
+  empty profile after close, or `dev.sh clean` should own a sweep. (c) run
+  `./dev.sh check` in the background, never as a foreground tool call that
+  can time out.
+
 ## 0q. A credential passed as a scrape param WAS stored when its name was neutral (2026-10-09, approved by Jacob via the planner)
 
 - **Probe (confirmed):** `node devtools/probe-run-params.js <scratch dir>` --
