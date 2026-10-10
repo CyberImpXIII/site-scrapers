@@ -69,7 +69,8 @@ const { authorize: authorizeWrite } = require('./lib/writeGuard');
 // authorizes the single insert rather than the whole run, so nothing else in
 // engine.js can write to the recipe DB under cover of it.
 // Params and error text are redacted inside db.js logRun itself (answers,
-// credential-named keys; lib/fillContract.js), the table's one writer.
+// credential-named keys, credential-shaped values; lib/fillContract.js), the
+// table's one writer.
 const logRun = (db, run) => authorizeWrite('engine.js run telemetry', () => logRunRaw(db, run));
 const { fillForm } = require('./lib/fillForm');
 const { submitForm, submitStepProblem, stepsSubmit } = require('./lib/submitForm');

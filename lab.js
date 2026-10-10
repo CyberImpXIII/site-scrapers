@@ -45,6 +45,10 @@ const { distinctByField, crossFieldValues } = require('./lib/distinctValues');
 const { grepRaw, searchableCount } = require('./lib/rawGrep');
 const { isBlockedRefusal } = require('./lib/blockedGuard');
 const { formsSummary, proberFailure } = require('./lib/labReport');
+// A run's stored params may hold a redaction marker (a credential, by name or
+// shape: lib/fillContract.js). It says a value was there, not what it was, so
+// history and adopt-history never offer it as a param to replay.
+const { holdsRedacted } = require('./lib/fillContract');
 
 const REPO_ROOT = __dirname;
 const PROBER = 'lab-prober.internal';
@@ -601,6 +605,7 @@ async function main() {
       .all(site.id);
     const seen = new Set();
     const distinct = [];
+    let redactedSets = 0;
     for (const r of rows) {
       let p;
       try {
@@ -615,6 +620,10 @@ async function main() {
       const key = JSON.stringify(p);
       if (key === '{}' || seen.has(key)) continue;
       seen.add(key);
+      if (holdsRedacted(p)) {
+        redactedSets++;
+        continue;
+      }
       distinct.push({ params: p, records: r.result_count, version: r.version_label, at: r.ran_at });
     }
     out({
@@ -622,6 +631,7 @@ async function main() {
       placeholdersInTemplate: [...String(site.nav_template || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]),
       currentProbeValues: site.param_probe_values ? JSON.parse(site.param_probe_values) : null,
       paramsThatReturnedRecords: distinct,
+      ...(redactedSets ? { skippedRedacted: redactedSets } : {}),
       note: distinct.length
         ? 'Pick two contrasting sets from these for param_probe_values — they are known to return records, so an empty comparison will not be a false alarm.'
         : 'No successful run with params on record. Run it once with real params first, then come back.',
@@ -665,6 +675,9 @@ async function main() {
       }
       // Must actually cover the template, or adopting it just moves the problem.
       if (!placeholders.every(n => n in p)) continue;
+      // A redaction marker is not a value: adopting it would store a probe
+      // value that can never fill the template.
+      if (holdsRedacted(p)) continue;
       const key = JSON.stringify(p);
       if (seen.has(key)) continue;
       seen.add(key);

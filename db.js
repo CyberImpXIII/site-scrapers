@@ -1109,7 +1109,8 @@ function logRun(db, run) {
   // authorize around their own calls.
   assertAuthorized('logRun');
   // Redacted HERE, the table's only writer, so no caller can store a raw
-  // `answers` or a credential-named param, or an error quoting one
+  // `answers`, a credential-named param or a credential-shaped value, or an
+  // error quoting one
   // (lib/fillContract.js; test/run-redaction.test.js).
   const params = redactRunParams(run.params ?? {});
   const error = redactRunError(run.error ?? null, run.params ?? {});

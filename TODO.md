@@ -95,6 +95,38 @@ the harness agent's fix, not this repo's.
 
 ---
 
+## 0q. A credential passed as a scrape param WAS stored when its name was neutral (2026-10-09, approved by Jacob via the planner)
+
+- **Probe (confirmed):** `node devtools/probe-run-params.js <scratch dir>` --
+  snapshot of the stores, a `.test` fixture recipe on a closed loopback port,
+  the real engine run once with fake values built at run time. Before the fix:
+  `password`, `token`, `api_key` redacted; a Slack-shaped token under `x`, an
+  AWS key id inside `note`, plain passwords under `user_password` and
+  `authToken` STORED VERBATIM; the `error` column quoted the `x` token inside
+  the URL. After: all seven redacted, error quotes none, `q` kept as given.
+- **Fix:** lib/credentialShapes.js -- key names by suffix (+camelCase), and
+  VALUE_SHAPES (the nine kinds of tools/checks `no-secrets`, as in the
+  installed .claude/hooks/no-secrets.sh). lib/fillContract.js redacts by both
+  (`{redacted:true, shape}`), cuts values (raw, JSON-escaped, URL-encoded) and
+  any leftover shape from `error`. lab.js history/adopt-history skip a param
+  set holding a marker (`holdsRedacted`). Tests: test/credential-shapes.test.js
+  (hook agreement by meaning, key names, run-secrets, lab.js), and
+  test/run-redaction.test.js (planted value through logRun; fails without).
+- **Count:** `node query.js run-secrets` on the live store, 2026-10-09: 1473
+  rows, 0 with a credential by name or shape, 0 unredacted `answers`. Nothing
+  to scrub. Same command on the pre-fix probe snapshot reported its 1 row
+  (key names user_password/authToken, shapes in `x`/`note`/error) -- the
+  counterfactual that the count can see one.
+- **Open, not built:** (a) a plain password under a neutral name is invisible
+  to any shape rule -- only its key can say; (b) failed-run diagnostics
+  (`query.js debug-captures`: DOM/console/network dirs under data/) record the
+  URL the run opened, which can hold a param value -- unconfirmed; probe: a
+  failing run WITHOUT noDiagnostics carrying a planted `x`, then grep its
+  capture dir for the value; (c) JWTs / bearer tokens are not in the shared
+  shape list (tools/checks owns it; suggested to them via the dispatcher);
+  (d) register.js / lab.js set still do not refuse a credential-shaped literal
+  in a recipe (0p B (a)).
+
 ## 0p. Tasks B-G of the 2026-10-09 brief ("Yes I approve all") — status and open edges
 
 - **C DONE: the suite no longer touches the live stores.** db.js reads
@@ -312,14 +344,14 @@ Open decisions (each my call this session, stated in the contract, revisitable):
   (export after each sanctioned write) is not built; until then the export is
   only as fresh as the last `store.sh export`, and `stores-exported` will say
   `differs` after any lab.js/register.js/verify.js write.
-- **Credential guard is structural only** (a literal typed into a password-like
-  selector, a literal under a credential-named key). Value shapes are left to the
-  data repo's `no-secrets` check rather than a third copy of its patterns.
+- **The EXPORT's credential guard is structural only** (a literal typed into a
+  password-like selector, a literal under a credential-named key). Value shapes
+  are left to the data repo's `no-secrets` check. (The run log, scrape_runs, now
+  redacts by value shape too: lib/credentialShapes.js VALUE_SHAPES, held to the
+  installed no-secrets.sh by test/credential-shapes.test.js; see 0q.)
   `checks one no-secrets` on the scratch export: no value findings, only
   ".env: not git-ignored" (the scratch folder had no .gitignore; the data
   repo's .gitignore is setup's).
-- **Isolation is `--db PATH` only** (`openDb(file)`); 0k's `SS_DB` env override
-  is still not built, so engine/verify/lab children cannot be pointed elsewhere.
 
 **Found and fixed on the way: a fresh store lacked 2 builtins after its first
 open.** Seeding validated each builtin against the DB, so one whose steps

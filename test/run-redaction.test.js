@@ -8,6 +8,12 @@
 // in `error`. Redaction now happens inside db.js logRun, the table's only
 // writer, using lib/credentialShapes.js -- the same list the store export
 // refuses literals by.
+//
+// Probed again 2026-10-09 through the real engine (devtools/probe-run-params.js,
+// on a snapshot): a token under a NEUTRAL name (`x`, `note`) and a password
+// under `user_password` / `authToken` were stored verbatim, and the error
+// column quoted the `x` token in the URL it failed to open. Redaction is now by
+// value shape as well as by key name (lib/credentialShapes.js VALUE_SHAPES).
 
 'use strict';
 const test = require('node:test');
@@ -87,6 +93,51 @@ test('logRun (the only writer) stores neither the value nor an error quoting it'
     }
     assert.deepEqual(JSON.parse(row.params_json).password, { redacted: true });
     assert.match(row.error, /could not type \[redacted\] into #password/);
+  } finally {
+    deleteSite(db, id);
+    db.close();
+  }
+});
+
+// The planted-value probe, as a test: a credential-SHAPED value under names no
+// key rule knows changes what logRun stores. Fails without the shape rule.
+test('logRun stores no credential-shaped value under a neutral name, nor an error quoting it', () => {
+  authorizeForTests();
+  const db = openDb();
+  const host = `run-redaction-shape-${process.pid}.test`;
+  const tok = ['gh', 'p_', 'aB3dE5gH7k'.repeat(4)].join(''); // GitHub-token shaped, built at run time
+  const pw = ['Fx', 'pw-8842!'].join('');
+  const id = upsertSite(db, {
+    hostname: host,
+    page_type: 'listing',
+    recipe_name: 'default',
+    status: 'needs-review',
+    nav_method: 'url_param',
+    nav_template: 'http://127.0.0.1:9/{{q}}/{{x}}',
+    card_selector: 'div.card',
+    notes: 'Test-only recipe for test/run-redaction.test.js.',
+  });
+  try {
+    const params = { q: 'archivist', x: tok, note: `key ${tok} here`, user_password: pw, authToken: pw.replace('8842', '9953') };
+    logRun(db, {
+      siteId: id,
+      params,
+      success: false,
+      error: `net::ERR_CONNECTION_REFUSED at http://127.0.0.1:9/archivist/${tok} (also ${encodeURIComponent(params.note)})`,
+    });
+    const row = db.prepare('SELECT params_json, error FROM scrape_runs WHERE site_id = ? ORDER BY id DESC LIMIT 1').get(id);
+    for (const v of [tok, pw, params.authToken]) {
+      assert.ok(!row.params_json.includes(v), 'params_json holds a planted value');
+      assert.ok(!row.error.includes(v), 'error holds a planted value');
+    }
+    assert.ok(!row.error.includes(encodeURIComponent(params.note)), 'error holds the URL-encoded value');
+    const stored = JSON.parse(row.params_json);
+    assert.equal(stored.q, 'archivist', 'an ordinary param is stored as given');
+    assert.deepEqual(stored.x, { redacted: true, shape: 'GitHub token' });
+    assert.deepEqual(stored.note, { redacted: true, shape: 'GitHub token' });
+    assert.deepEqual(stored.user_password, { redacted: true });
+    assert.deepEqual(stored.authToken, { redacted: true });
+    assert.match(row.error, /127\.0\.0\.1:9\/archivist\/\[redacted\]/);
   } finally {
     deleteSite(db, id);
     db.close();

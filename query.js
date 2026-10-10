@@ -20,6 +20,7 @@
 //   node query.js health [recentN]                            # observed reliability per recipe vs its declared status (default last 10 runs)
 //   node query.js efficiency                                  # real output-size history per recipe (avg/min/max chars + rough est. tokens)
 //   node query.js debug-captures                              # failed-run diagnostics (screenshot/DOM/console/network dirs), newest last
+//   node query.js run-secrets                                 # scrape_runs rows holding a credential by key name or value shape (counts + key names, never values)
 //
 // #page_type ('#listing' | '#article' | '#action') picks which recipe when a
 // hostname has more than one; omitting it defaults to 'listing'. A hostname
@@ -356,6 +357,14 @@ function main() {
     return;
   }
 
+  if (cmd === 'run-secrets') {
+    // Past scrape_runs rows holding a credential by key name or value shape.
+    // Counts, key names and shape kinds only -- never a value (lib/runSecrets.js).
+    const { scanRunRows } = require('./lib/runSecrets');
+    console.log(JSON.stringify(scanRunRows(db.prepare('SELECT params_json, error FROM scrape_runs').all()), null, 2));
+    return;
+  }
+
   if (cmd === 'runs') {
     if (!arg) {
       console.log(JSON.stringify({ error: 'Usage: node query.js runs <hostname>[#page_type[:recipe_name]] [limit]' }));
@@ -373,7 +382,7 @@ function main() {
   }
 
   console.log(JSON.stringify({
-    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name> | versions <hostname>[#...] | diff <hostname>[#...] [vA] [vB] | promote <hostname>[#...] [note] | efficiency | health [recentN] | debug-captures`,
+    error: `Unknown command "${cmd}". Use: sites | site <hostname>[#page_type[:recipe_name]] | runs <hostname>[#page_type[:recipe_name]] [n] | action-types | sessions [hostname] | clear-session <hostname>[:sessionName] | expand <hostname>#page_type:recipe_name | expand generic:<name> | generic-actions | generic-action <name> | versions <hostname>[#...] | diff <hostname>[#...] [vA] [vB] | promote <hostname>[#...] [note] | efficiency | health [recentN] | debug-captures | run-secrets`,
   }));
   process.exit(1);
 }

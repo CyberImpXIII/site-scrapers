@@ -213,6 +213,7 @@ for read-only lookups.
 scrape.sh   <target> '<params>' [--raw] [--attended]   (= engine.js; --attended is the only way to run a blocked-attn recipe)
 query.js    sites | site | runs | versions | diff | restore | promote | health
             generic-actions | expand | sessions | clear-session | debug-captures
+            run-secrets   (scrape_runs rows holding a credential by key name or value shape; counts and names, never values)
 lab.js      probe | sel | inside | match | peek | raw | set | params | history | adopt-history | new
             (probe/sel/inside/match take --wait=MS; the 5s default is too short for slow SPAs)
 verify.js   <target> '<params>' [--dry] [--attended]
